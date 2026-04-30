@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Outlet, Link, useNavigate, useLocation } from 'react-router';
 import { useAuth } from './AuthContext';
 import { Button } from './components/ui/button';
@@ -28,19 +28,37 @@ export default function Layout() {
     navigate('/login');
   };
 
-  const menuItems = [
-    { path: '/', label: 'Inicio', icon: Home },
-    { path: '/listado', label: 'Listado', icon: List },
-    { path: '/administracion', label: 'Administración', icon: Settings },
-    ...(user?.superUser === true
-      ? [{ path: '/usuarios' as const, label: 'Usuarios', icon: Shield }]
-      : []),
-    { path: '/monitoreo', label: 'Monitoreo', icon: Monitor },
-    { path: '/alarmas', label: 'Alarmas', icon: Bell },
-    { path: '/configuracion-alarmas', label: 'Configuración Alarmas', icon: BellPlus },
-    { path: '/ubicanos', label: 'Ubícanos', icon: MapPin },
-    { path: '/ayuda', label: 'Ayuda/Soporte', icon: HelpCircle },
-  ];
+  const soloListadoIifPeru = user?.username?.toLowerCase() === 'iifperu';
+
+  useEffect(() => {
+    if (!user || !soloListadoIifPeru) return;
+    const permitido =
+      location.pathname === '/listado' ||
+      location.pathname.startsWith('/listado/');
+    if (!permitido) {
+      navigate('/listado', { replace: true });
+    }
+  }, [user, soloListadoIifPeru, location.pathname, navigate]);
+
+  const menuItems = soloListadoIifPeru
+    ? [{ path: '/listado', label: 'Listado', icon: List }]
+    : [
+        { path: '/', label: 'Inicio', icon: Home },
+        { path: '/listado', label: 'Listado', icon: List },
+        { path: '/administracion', label: 'Administración', icon: Settings },
+        ...(user?.superUser === true
+          ? [{ path: '/usuarios' as const, label: 'Usuarios', icon: Shield }]
+          : []),
+        { path: '/monitoreo', label: 'Monitoreo', icon: Monitor },
+        { path: '/alarmas', label: 'Alarmas', icon: Bell },
+        {
+          path: '/configuracion-alarmas',
+          label: 'Configuración Alarmas',
+          icon: BellPlus,
+        },
+        { path: '/ubicanos', label: 'Ubícanos', icon: MapPin },
+        { path: '/ayuda', label: 'Ayuda/Soporte', icon: HelpCircle },
+      ];
 
   return (
     <div className="min-h-screen bg-gray-50 flex">

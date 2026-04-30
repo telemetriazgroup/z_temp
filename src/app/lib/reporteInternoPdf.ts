@@ -2,6 +2,8 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { REPORTE_SLOTS, type ReporteInternoFila } from './reporteInterno';
 
+type HeadCell = string | { content: string; rowSpan?: number; colSpan?: number; styles?: { halign?: 'left' | 'center' | 'right' } };
+
 export function descargarPdfReporteInterno(
   filas: ReporteInternoFila[],
   tituloExtra: string
@@ -14,20 +16,22 @@ export function descargarPdfReporteInterno(
   const lines = doc.splitTextToSize(tituloExtra, 280);
   doc.text(lines, 14, 17);
 
-  const head: string[] = [
-    'N',
-    'FECHA',
-    'CONTENEDOR',
-    'PRODUCTO',
-    'UBC',
-    'S.P.',
+  const headRow1: HeadCell[] = [
+    { content: 'N', rowSpan: 2 },
+    { content: 'FECHA', rowSpan: 2 },
+    { content: 'CONTENEDOR', rowSpan: 2 },
+    { content: 'PRODUCTO', rowSpan: 2 },
+    { content: 'UBC', rowSpan: 2 },
+    { content: 'S.P.', rowSpan: 2 },
+    ...REPORTE_SLOTS.map((h) => ({
+      content: `${String(h).padStart(2, '0')}:00 Hrs`,
+      colSpan: 2,
+      styles: { halign: 'center' as const },
+    })),
+    { content: 'OBSERVACIONES', rowSpan: 2 },
   ];
-  for (const h of REPORTE_SLOTS) {
-    const lbl = `${String(h).padStart(2, '0')}:00`;
-    head.push(`${lbl} SUP`);
-    head.push(`${lbl} RET`);
-  }
-  head.push('OBSERV.');
+
+  const headRow2: HeadCell[] = REPORTE_SLOTS.flatMap(() => ['SUP', 'RET']);
 
   const startY = 17 + lines.length * 5 + 4;
 
@@ -52,13 +56,13 @@ export function descargarPdfReporteInterno(
 
   autoTable(doc, {
     startY,
-    head: [head],
+    head: [headRow1, headRow2] as any,
     body,
     styles: { fontSize: 5, cellPadding: 0.5, overflow: 'linebreak' },
-    headStyles: { fillColor: [55, 65, 81], fontSize: 5 },
+    headStyles: { fillColor: [55, 65, 81], fontSize: 5, valign: 'middle' },
     margin: { left: 8, right: 8 },
     columnStyles: {
-      [head.length - 1]: { cellWidth: 42 },
+      18: { cellWidth: 42 },
     },
   });
 

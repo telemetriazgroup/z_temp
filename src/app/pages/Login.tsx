@@ -18,7 +18,9 @@ export default function Login() {
     setError('');
     
     if (login(username, password)) {
-      navigate('/');
+      navigate(
+        username.trim().toLowerCase() === 'iifperu' ? '/listado' : '/'
+      );
     } else {
       setError('Usuario o contraseña incorrectos');
     }
@@ -45,7 +47,7 @@ export default function Login() {
               <Input
                 id="username"
                 type="text"
-                placeholder="superadmin"
+                placeholder="Usuario"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 required
@@ -68,11 +70,6 @@ export default function Login() {
             <Button type="submit" className="w-full">
               Ingresar
             </Button>
-            <div className="text-xs text-center text-gray-500 mt-4">
-              Superadmin: <span className="font-mono">superadmin</span> / <span className="font-mono">Super.Ztrack2024</span>
-              {' · '}
-              IFF Perú: <span className="font-mono">iifperu</span> / <span className="font-mono">Iif.Peru2024</span>
-            </div>
           </form>
         </CardContent>
       </Card>

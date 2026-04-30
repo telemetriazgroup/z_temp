@@ -5,7 +5,6 @@ import { Button } from './ui/button';
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -127,12 +126,15 @@ export function ReporteInternoModal({
       setError('Genere primero la vista previa.');
       return;
     }
-    const paraPdf: ReporteInternoFila[] = filas.map((f) => ({
-      ...f,
-      observaciones: (obsPorFila[f.n] ?? f.observaciones).trim() || 'SIN OBSERVACIONES',
-    }));
     try {
       const titulo = `IMEI ${imei} · Origen ${codigo} · Contenedor ${nombreContenedor} · Producto ${producto.trim()} · UBC ${ubc.trim() || 'BASE'}`;
+      const paraPdf: ReporteInternoFila[] = filas.map((f) => {
+        const obsUser = (obsPorFila[f.n] ?? '').trim();
+        return {
+          ...f,
+          observaciones: obsUser.length > 0 ? obsUser : 'SIN OBSERVACIONES',
+        };
+      });
       descargarPdfReporteInterno(paraPdf, titulo);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error al generar el PDF');
@@ -154,12 +156,6 @@ export function ReporteInternoModal({
       >
         <DialogHeader>
           <DialogTitle>Reporte interno</DialogTitle>
-          <DialogDescription>
-            Defina el rango, el producto y genere la vista previa. Los valores SUP/RET
-            se toman del registro más cercano a cada franja (00:00, 04:00, …). Si SUP y
-            RET no están en ±10 % del setpoint, se promedian las lecturas de la ventana
-            horaria indicada (p. ej. 16:00–19:59 para la franja 16:00).
-          </DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-3 sm:grid-cols-2">
@@ -229,25 +225,47 @@ export function ReporteInternoModal({
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="whitespace-nowrap text-xs">N</TableHead>
-                  <TableHead className="whitespace-nowrap text-xs">FECHA</TableHead>
-                  <TableHead className="whitespace-nowrap text-xs min-w-[7rem]">
+                  <TableHead rowSpan={2} className="whitespace-nowrap text-xs align-middle">
+                    N
+                  </TableHead>
+                  <TableHead rowSpan={2} className="whitespace-nowrap text-xs align-middle">
+                    FECHA
+                  </TableHead>
+                  <TableHead
+                    rowSpan={2}
+                    className="whitespace-nowrap text-xs align-middle min-w-[7rem]"
+                  >
                     CONTENEDOR
                   </TableHead>
-                  <TableHead className="whitespace-nowrap text-xs">PRODUCTO</TableHead>
-                  <TableHead className="whitespace-nowrap text-xs">UBC</TableHead>
-                  <TableHead className="whitespace-nowrap text-xs">S.P.</TableHead>
+                  <TableHead rowSpan={2} className="whitespace-nowrap text-xs align-middle">
+                    PRODUCTO
+                  </TableHead>
+                  <TableHead rowSpan={2} className="whitespace-nowrap text-xs align-middle">
+                    UBC
+                  </TableHead>
+                  <TableHead rowSpan={2} className="whitespace-nowrap text-xs align-middle">
+                    S.P.
+                  </TableHead>
                   {REPORTE_SLOTS.map((h) => (
-                    <Fragment key={h}>
-                      <TableHead className="whitespace-nowrap text-xs">
-                        {String(h).padStart(2, '0')}:00 SUP
-                      </TableHead>
-                      <TableHead className="whitespace-nowrap text-xs">
-                        {String(h).padStart(2, '0')}:00 RET
-                      </TableHead>
+                    <TableHead
+                      key={h}
+                      colSpan={2}
+                      className="text-center text-xs border-x"
+                    >
+                      {String(h).padStart(2, '0')}:00 Hrs
+                    </TableHead>
+                  ))}
+                  <TableHead rowSpan={2} className="text-xs align-middle min-w-[12rem]">
+                    OBSERVACIONES
+                  </TableHead>
+                </TableRow>
+                <TableRow>
+                  {REPORTE_SLOTS.map((h) => (
+                    <Fragment key={`${h}-sub`}>
+                      <TableHead className="whitespace-nowrap text-xs">SUP</TableHead>
+                      <TableHead className="whitespace-nowrap text-xs">RET</TableHead>
                     </Fragment>
                   ))}
-                  <TableHead className="text-xs min-w-[12rem]">OBSERVACIONES</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

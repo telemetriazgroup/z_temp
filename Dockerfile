@@ -37,8 +37,8 @@ FROM nginx:alpine
 # Copiar configuración de nginx para SPA
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-# Copiar artefactos de build desde el stage anterior
-COPY --from=builder /app/dist /usr/share/nginx/html
+# Mismo prefijo que vite base '/reefer/': en nginx ha de existir html/reefer/index.html y html/reefer/assets/*
+COPY --from=builder /app/dist /usr/share/nginx/html/reefer
 
 EXPOSE 80
 

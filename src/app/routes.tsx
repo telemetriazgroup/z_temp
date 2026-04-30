@@ -23,7 +23,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-export const router = createBrowserRouter([
+const routeTree = [
   {
     path: "/login",
     element: <Login />,
@@ -78,4 +78,12 @@ export const router = createBrowserRouter([
       },
     ],
   },
-]);
+];
+
+const appBasename = import.meta.env.BASE_URL.replace(/\/$/, '');
+const routerOptions =
+  appBasename !== '' && appBasename !== '/'
+    ? { basename: appBasename }
+    : {};
+
+export const router = createBrowserRouter(routeTree, routerOptions);

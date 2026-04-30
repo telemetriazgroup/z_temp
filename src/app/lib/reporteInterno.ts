@@ -206,19 +206,6 @@ export function generarReporteInterno(
       resolverCelda(dia, slot, ld, sp)
     );
 
-    const notas: string[] = [];
-    celdas.forEach((c, i) => {
-      if (c.usoPromedio) {
-        const h = REPORTE_SLOTS[i];
-        const { desdeH, hastaH } = ventanaPromedioSlot(h);
-        notas.push(
-          `${String(h).padStart(2, '0')}:00 — promedio ${desdeH}:00–${hastaH}:59 h.`
-        );
-      }
-    });
-    const obs =
-      notas.length > 0 ? notas.join(' ') : 'SIN OBSERVACIONES';
-
     return {
       n: idx + 1,
       fecha: dia,
@@ -229,7 +216,7 @@ export function generarReporteInterno(
       setPoint: sp,
       setPointFmt: sp == null ? '—' : `${sp}°C`,
       celdas,
-      observaciones: obs,
+      observaciones: 'SIN OBSERVACIONES',
     };
   });
 }

@@ -111,7 +111,7 @@ export function celdaHistorial(
     key === 'cargo_4_temp'
   ) {
     const n = cargoTempValida(v as number | null | undefined);
-    return n == null ? 'Nulo' : String(n);
+    return n == null ? 'NA' : String(n);
   }
   if (v == null || (typeof v === 'number' && Number.isNaN(v))) return '—';
   return String(v);
