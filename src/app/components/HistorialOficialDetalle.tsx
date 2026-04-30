@@ -21,6 +21,7 @@ import {
   TableHeader,
   TableRow,
 } from './ui/table';
+import { cn } from './ui/utils';
 import { ReporteInternoModal } from './ReporteInternoModal';
 import {
   datosAGrafica,
