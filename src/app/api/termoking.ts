@@ -3,16 +3,20 @@ import type {
   UltimoEstadoDispositivosResponse,
   ResumenDispositivos,
 } from '../types';
+import {
+  TELEMETRY_STARCOOL_BASE,
+  TELEMETRY_TUNEL_TERMOKING_BASE,
+} from './telemetryBases';
 
 const SOURCE_TUNEL =
   import.meta.env.VITE_TUNEL_ULTIMO_ESTADO_URL ??
-  'http://161.132.53.51:9051/Tunel/ultimo_estado_dispositivos/';
+  `${TELEMETRY_TUNEL_TERMOKING_BASE}/Tunel/ultimo_estado_dispositivos/`;
 const SOURCE_STARCOOL =
   import.meta.env.VITE_STARCOOL_ULTIMO_ESTADO_URL ??
-  'http://161.132.206.104:9112/Starcool/ultimo_estado_dispositivos/';
+  `${TELEMETRY_STARCOOL_BASE}/Starcool/ultimo_estado_dispositivos/`;
 const SOURCE_TERMOKING =
   import.meta.env.VITE_TERMOKING_ULTIMO_ESTADO_URL ??
-  `${import.meta.env.VITE_TERMOKING_API_URL ?? 'http://161.132.53.51:9051'}/TermoKing/ultimo_estado_dispositivos/`;
+  `${import.meta.env.VITE_TERMOKING_API_URL ?? TELEMETRY_TUNEL_TERMOKING_BASE}/TermoKing/ultimo_estado_dispositivos/`;
 
 const SOURCES: { url: string; codigo: DispositivoOrigenCodigo }[] = [
   { url: SOURCE_TUNEL, codigo: 'TUNEL' },

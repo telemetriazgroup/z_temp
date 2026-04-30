@@ -1,9 +1,8 @@
 import type { BuscarDatosOficialesResponse, DispositivoOrigenCodigo } from '../types';
-
-const BASE_TUNEL_TERMOKING =
-  import.meta.env.VITE_TUNEL_API_BASE ?? 'http://161.132.53.51:9051';
-const BASE_STARCOOL =
-  import.meta.env.VITE_STARCOOL_API_BASE ?? 'http://161.132.206.104:9112';
+import {
+  TELEMETRY_STARCOOL_BASE,
+  TELEMETRY_TUNEL_TERMOKING_BASE,
+} from './telemetryBases';
 
 const ORIGENES_CON_HISTORIAL = new Set<DispositivoOrigenCodigo>([
   'TUNEL',
@@ -24,11 +23,11 @@ function construirUrlBuscarDatosOficiales(
   const safe = encodeURIComponent(imei);
   switch (codigo) {
     case 'TUNEL':
-      return `${BASE_TUNEL_TERMOKING}/Tunel/buscar_datos_oficiales/${safe}`;
+      return `${TELEMETRY_TUNEL_TERMOKING_BASE}/Tunel/buscar_datos_oficiales/${safe}`;
     case 'TERMOKING':
-      return `${BASE_TUNEL_TERMOKING}/TermoKing/buscar_datos_oficiales/${safe}`;
+      return `${TELEMETRY_TUNEL_TERMOKING_BASE}/TermoKing/buscar_datos_oficiales/${safe}`;
     case 'STARCOOL':
-      return `${BASE_STARCOOL}/Starcool/buscar_datos_oficiales/${safe}`;
+      return `${TELEMETRY_STARCOOL_BASE}/Starcool/buscar_datos_oficiales/${safe}`;
   }
 }
 
