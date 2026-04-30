@@ -1,15 +1,15 @@
 /**
  * Bases para APIs de telemetría (Túnel/TermoKing comparten host; Starcool otro).
- * Por defecto son rutas relativas al mismo origen → el navegador solo ve HTTPS en producción.
- * Proxies:
- * - `vite.config.ts` (dev / preview)
- * - `nginx.conf` (Docker / ztrack.app u otro front)
+ * Van bajo el mismo prefijo que la SPA (`import.meta.env.BASE_URL`, ej. `/reefer/`)
+ * para que un solo ProxyPass en Apache (`/reefer/` → backend) incluya también las APIs.
  *
- * Sustituir por URL absoluta en build (p. ej. otro API Gateway) con:
- * `VITE_TUNEL_API_BASE`, `VITE_STARCOOL_API_BASE`.
+ * Proxies: `vite.config.ts` (dev), `nginx.conf` (Docker).
+ * URLs absolutas opcionales: `VITE_TUNEL_API_BASE`, `VITE_STARCOOL_API_BASE`.
  */
 export const TELEMETRY_TUNEL_TERMOKING_BASE: string =
-  import.meta.env.VITE_TUNEL_API_BASE ?? '/telemetria/tunel-termoking';
+  import.meta.env.VITE_TUNEL_API_BASE ??
+  `${import.meta.env.BASE_URL}telemetria/tunel-termoking`;
 
 export const TELEMETRY_STARCOOL_BASE: string =
-  import.meta.env.VITE_STARCOOL_API_BASE ?? '/telemetria/starcool';
+  import.meta.env.VITE_STARCOOL_API_BASE ??
+  `${import.meta.env.BASE_URL}telemetria/starcool`;
