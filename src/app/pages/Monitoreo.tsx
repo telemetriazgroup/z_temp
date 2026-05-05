@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { mockDevices, generateHistoricalData } from '../mockData';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -33,8 +33,6 @@ export default function Monitoreo() {
   });
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const chartRef = useRef<SVGElement | null>(null);
-
   useEffect(() => {
     const deviceParam = searchParams.get('device');
     if (deviceParam) {
@@ -508,7 +506,7 @@ export default function Monitoreo() {
 
           <div className="h-96">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData} ref={chartRef}>
+              <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis 
                   dataKey="timestamp" 

@@ -1,7 +1,10 @@
 import type { SessionUser, User } from '../../types';
 
 /** Perfil con permisos de equipos (contraseña opcional). */
-type UserAccessProfile = Pick<User, 'superUser' | 'deviceAccess'> | SessionUser | null;
+type UserAccessProfile =
+  | Pick<User, 'superUser' | 'deviceAccess' | 'deviceNames'>
+  | SessionUser
+  | null;
 
 export function userHasFullDeviceAccess(user: UserAccessProfile): boolean {
   if (user == null) return false;
