@@ -22,29 +22,38 @@ const IFF_PERU_DEVICE_NAMES: Record<string, string> = {
 /** Superusuario: acceso total y módulo Usuarios. */
 export const BOOTSTRAP_SUPERADMIN: User = {
   id: 'user-superadmin',
+  nombre: 'Superusuario ZTRACK',
+  correo: 'admin@ztrack.local',
   username: 'superadmin',
   password: 'Super.Ztrack2024',
+  empresa: 'ZTRACK',
   role: 'Administrador',
   deviceAccess: ['all'],
   superUser: true,
 };
 
-/** IFF Perú: solo IMEI indicados con nombres definidos. */
+/** IFF Perú: cuenta operativa histórica. */
 export const BOOTSTRAP_IIFPERU: User = {
   id: 'user-iifperu',
+  nombre: 'IFF Perú (operativo)',
+  correo: 'operaciones@iff-pe.local',
   username: 'iifperu',
   password: 'Iif.Peru2024',
+  empresa: 'IFF Perú',
   role: 'Monitoreo',
   deviceAccess: [...IFF_PERU_DEVICE_ACCESS],
   superUser: false,
   deviceNames: { ...IFF_PERU_DEVICE_NAMES },
 };
 
-/** Usuarios IFF adicionales: mismos 6 equipos que `iifperu`. */
+/** Usuario IFF — mismos 6 equipos que `iifperu`. */
 export const BOOTSTRAP_ANGEL_SUSAYA: User = {
   id: 'user-angel-susaya',
+  nombre: 'Ángel Susaya',
+  correo: 'angel.susaya@iff-pe.local',
   username: 'angel.susaya',
   password: 'controlangelsus!',
+  empresa: 'IFF Perú',
   role: 'Monitoreo',
   deviceAccess: [...IFF_PERU_DEVICE_ACCESS],
   superUser: false,
@@ -53,8 +62,11 @@ export const BOOTSTRAP_ANGEL_SUSAYA: User = {
 
 export const BOOTSTRAP_LUIS_AGAPITO: User = {
   id: 'user-luis-agapito',
+  nombre: 'Luis Agapito',
+  correo: 'luis.agapito@iff-pe.local',
   username: 'luis.agapito',
   password: 'controlluisaga!',
+  empresa: 'IFF Perú',
   role: 'Monitoreo',
   deviceAccess: [...IFF_PERU_DEVICE_ACCESS],
   superUser: false,
@@ -63,8 +75,11 @@ export const BOOTSTRAP_LUIS_AGAPITO: User = {
 
 export const BOOTSTRAP_KEYLA_LIZARBE: User = {
   id: 'user-keyla-lizarbe',
+  nombre: 'Keyla Lizarbe',
+  correo: 'keyla.lizarbe@iff-pe.local',
   username: 'keyla.lizarbe',
   password: 'controlkeylaliz!',
+  empresa: 'IFF Perú',
   role: 'Monitoreo',
   deviceAccess: [...IFF_PERU_DEVICE_ACCESS],
   superUser: false,

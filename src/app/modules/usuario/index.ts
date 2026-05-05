@@ -9,6 +9,9 @@ export {
   updateUser,
   deleteUser,
   generateUserId,
+  normalizeUser,
+  toSessionUser,
+  changeOwnPassword,
 } from './userRepository';
 export {
   userHasFullDeviceAccess,
