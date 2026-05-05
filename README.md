@@ -14,11 +14,24 @@ Con Docker Compose (recomendado):
 
   La app queda en http://localhost:3000.
 
-  docker build -t ztemp .
+docker build -t ztemp .
 docker run -p 3000:80 ztemp
 
 Usuario	Contraseña
+
 superadmin
 Super.Ztrack2024
+
 iifperu
 Iif.Peru2024
+
+Usuarios adicionales — acceso a los 6 equipos IFF:
+
+angel.susaya
+controlangelsus!
+
+luis.agapito
+controlluisaga!
+
+keyla.lizarbe
+controlkeylaliz!

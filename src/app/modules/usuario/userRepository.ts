@@ -19,7 +19,7 @@ function writeRaw(users: User[]): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(users));
 }
 
-/** Asegura usuarios semilla (superadmin, iifperu) sin borrar el resto. */
+/** Asegura usuarios semilla (superadmin, iifperu, cuentas IFF operativas) sin borrar el resto. */
 export function ensureUserRegistry(): User[] {
   let users = readRaw();
   if (users.length === 0) {
