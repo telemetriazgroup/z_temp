@@ -12,6 +12,16 @@ import AyudaSoporte from './pages/AyudaSoporte';
 import Usuarios from './pages/Usuarios';
 import MiPerfil from './pages/MiPerfil';
 
+/** Si la SPA se sirve bajo `/reefer/`, React Router debe usar ese basename. */
+function detectBasename(): string | undefined {
+  if (typeof window === 'undefined') return undefined;
+  const path = window.location.pathname;
+  if (path === '/reefer' || path.startsWith('/reefer/')) return '/reefer';
+  return undefined;
+}
+
+const routerBasename = detectBasename();
+
 function RequireAuth() {
   const { user } = useAuth();
   const loc = useLocation();
@@ -29,27 +39,30 @@ function UsuariosGate() {
   return <Usuarios />;
 }
 
-export const router = createBrowserRouter([
-  { path: '/login', element: <Login /> },
-  {
-    path: '/',
-    element: <RequireAuth />,
-    children: [
-      {
-        element: <Layout />,
-        children: [
-          { index: true, element: <Navigate to="/inicio" replace /> },
-          { path: 'inicio', element: <Inicio /> },
-          { path: 'listado', element: <Listado /> },
-          { path: 'monitoreo', element: <Monitoreo /> },
-          { path: 'alarmas', element: <Alarmas /> },
-          { path: 'configuracion-alarmas', element: <ConfiguracionAlarmas /> },
-          { path: 'ubicanos', element: <Ubicanos /> },
-          { path: 'ayuda-soporte', element: <AyudaSoporte /> },
-          { path: 'mi-cuenta', element: <MiPerfil /> },
-          { path: 'usuarios', element: <UsuariosGate /> },
-        ],
-      },
-    ],
-  },
-]);
+export const router = createBrowserRouter(
+  [
+    { path: '/login', element: <Login /> },
+    {
+      path: '/',
+      element: <RequireAuth />,
+      children: [
+        {
+          element: <Layout />,
+          children: [
+            { index: true, element: <Navigate to="/inicio" replace /> },
+            { path: 'inicio', element: <Inicio /> },
+            { path: 'listado', element: <Listado /> },
+            { path: 'monitoreo', element: <Monitoreo /> },
+            { path: 'alarmas', element: <Alarmas /> },
+            { path: 'configuracion-alarmas', element: <ConfiguracionAlarmas /> },
+            { path: 'ubicanos', element: <Ubicanos /> },
+            { path: 'ayuda-soporte', element: <AyudaSoporte /> },
+            { path: 'mi-cuenta', element: <MiPerfil /> },
+            { path: 'usuarios', element: <UsuariosGate /> },
+          ],
+        },
+      ],
+    },
+  ],
+  routerBasename ? { basename: routerBasename } : {}
+);
