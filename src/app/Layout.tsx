@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Outlet, Link, useNavigate, useLocation } from 'react-router';
 import { useAuth } from './AuthContext';
+import { userIsIffRestrictedNavigation } from './modules/usuario';
 import { Button } from './components/ui/button';
 import { 
   Home, 
@@ -28,19 +29,19 @@ export default function Layout() {
     navigate('/login');
   };
 
-  const soloListadoIifPeru = user?.username?.toLowerCase() === 'iifperu';
+  const soloListadoIff = userIsIffRestrictedNavigation(user);
 
   useEffect(() => {
-    if (!user || !soloListadoIifPeru) return;
+    if (!user || !soloListadoIff) return;
     const permitido =
       location.pathname === '/listado' ||
       location.pathname.startsWith('/listado/');
     if (!permitido) {
       navigate('/listado', { replace: true });
     }
-  }, [user, soloListadoIifPeru, location.pathname, navigate]);
+  }, [user, soloListadoIff, location.pathname, navigate]);
 
-  const menuItems = soloListadoIifPeru
+  const menuItems = soloListadoIff
     ? [{ path: '/listado', label: 'Listado', icon: List }]
     : [
         { path: '/', label: 'Inicio', icon: Home },

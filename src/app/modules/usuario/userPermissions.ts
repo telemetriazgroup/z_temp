@@ -1,5 +1,13 @@
 import type { User } from '../../types';
 
+/** IFF Perú operativo: `iifperu` o correo `@iff.com` (no superusuario). Solo ven Listado en el menú. */
+export function userIsIffRestrictedNavigation(user: User | null): boolean {
+  if (user == null || user.superUser === true) return false;
+  const u = user.username.trim().toLowerCase();
+  if (u === 'iifperu') return true;
+  return u.endsWith('@iff.com');
+}
+
 export function userHasFullDeviceAccess(user: User | null): boolean {
   if (user == null) return false;
   if (user.superUser === true) return true;

@@ -11,6 +11,7 @@ export {
   generateUserId,
 } from './userRepository';
 export {
+  userIsIffRestrictedNavigation,
   userHasFullDeviceAccess,
   userMayAccessImei,
   displayNameForDevice,

@@ -21,7 +21,7 @@ Usuario	Contraseña
 superadmin	superadmin2026
 iifperu	iifperu2026
 
-(Regla semilla: **usuario en minúsculas + `2026`**, mismo criterio para correos IFF.)
+(Regla semilla: cuentas **@iff.com** → contraseña = **parte local en minúsculas + `2026`** sin dominio, ej. `keyla.lizarbe2026`. `superadmin` / `iifperu` → usuario en minúsculas + `2026`. Los usuarios IFF **solo ven el menú Listado**.)
 
 
 Código	Status	Power	Container ID / IMEI	Nombre	Última Conexión	Set point	Return air	Temp. suministro	En rango	Alarmas	Ubicación
@@ -81,8 +81,8 @@ Los usuarios de la tabla (más `superadmin` e `iifperu`) están definidos en có
 **Qué hacer para usar el login**
 
 1. Arrancar la app (`npm run dev`, Docker Compose o imagen nginx como en la sección anterior).
-2. Abrir la pantalla de login e ingresar **usuario** (correo o `superadmin` / `iifperu`) y **contraseña**.
-3. Regla de contraseña semilla: **mismo usuario en minúsculas + `2026`** (ej.: `keyla.lizarbe@iff.com` → `keyla.lizarbe@iff.com2026`). Conviene cambiarla después en **Administración → Usuarios** (como `superadmin`).
+2. Abrir la pantalla de login e ingresar **usuario** (correo `@iff.com` en minúsculas, o `superadmin` / `iifperu`) y **contraseña**.
+3. Contraseña semilla para correos IFF: **solo la parte antes de `@iff.com`, en minúsculas, más `2026`** (ej.: usuario `keyla.lizarbe@iff.com` → contraseña `keyla.lizarbe2026`). Para `superadmin` e `iifperu`: **nombre de usuario + `2026`**. Quienes entran con cuenta IFF (`iifperu` o `@iff.com`) entran directo al **Listado** y en el menú lateral **solo aparece Listado** (sin Inicio, Administración, etc.).
 4. Si cambiaste usuarios en código y no ves las nuevas cuentas o contraseñas, borra en el navegador la clave `localStorage` `ztrack_users_registry_v1` o usa una ventana privada para volver a aplicar los semillas.
 
 #### Logo en la pantalla de login (`Logo ZTRACK.png`)
@@ -99,14 +99,50 @@ Los usuarios de la tabla (más `superadmin` e `iifperu`) están definidos en có
 3. La pantalla de login ya muestra ese archivo desde [`src/app/pages/Login.tsx`](src/app/pages/Login.tsx) con la ruta `import.meta.env.BASE_URL + 'logo-ztrack.png'` (con `base: '/reefer/'` queda servido como `/reefer/logo-ztrack.png`).
 4. Tras cambiar el PNG, vuelve a ejecutar `npm run build` o `docker compose build` para que la imagen nueva entre en `dist`/contenedor.
 
-| Nombre | Usuario (correo) | Contraseña inicial | Contenedores visibles |
-|--------|------------------|-------------------|----------------------|
-| Keyla Lizarbe | keyla.lizarbe@iff.com | keyla.lizarbe@iff.com2026 | ZGRU7807130, ZGRU7802800 |
-| Miriam Espinoza | Miriam.EspinozaHuaman@IFF.com | miriam.espinozahuaman@iff.com2026 | Igual que Keyla (ajustar en Administración si hace falta otro alcance). |
-| Luis Agapito | luis.agapito@iff.com | luis.agapito@iff.com2026 | ZGRU7807130, ZGRU7802800, ZGRU5014454, ZGRU6645466, ZGRU5115406 |
-| Luiggi Silvestre | luiggi.silvestre@iff.com | luiggi.silvestre@iff.com2026 | ZGRU5295105 |
-| Miguel Parra | miguel.parra@iff.com | miguel.parra@iff.com2026 | ZGRU5295105 |
-| Araceli Quispe | Araceli.Quispe@IFF.com | araceli.quispe@iff.com2026 | ZGRU5295105 |
+| Nombre | Usuario (login, minúsculas) | Contraseña inicial | Contenedores visibles |
+|--------|-------------------------------|-------------------|----------------------|
+| Keyla Lizarbe | keyla.lizarbe@iff.com | keyla.lizarbe2026 | ZGRU7807130, ZGRU7802800 |
+| Miriam Espinoza | miriam.espinozahuaman@iff.com | miriam.espinozahuaman2026 | Igual que Keyla (ajustar en Administración si hace falta otro alcance). |
+| Luis Agapito | luis.agapito@iff.com | luis.agapito2026 | ZGRU7807130, ZGRU7802800, ZGRU5014454, ZGRU6645466, ZGRU5115406 |
+| Luiggi Silvestre | luiggi.silvestre@iff.com | luiggi.silvestre2026 | ZGRU5295105 |
+| Miguel Parra | miguel.parra@iff.com | miguel.parra2026 | ZGRU5295105 |
+| Araceli Quispe | araceli.quispe@iff.com | araceli.quispe2026 | ZGRU5295105 |
+
+#### Lista para enviar al cliente (credenciales IFF)
+
+Texto listo para copiar y pegar (la aplicación solo muestra **Listado** a estos usuarios):
+
+```
+ZTRACK — Acceso IFF Perú
+
+Al iniciar sesión verán únicamente el menú «Listado» (equipos asignados).
+
+Keyla Lizarbe
+  Usuario: keyla.lizarbe@iff.com
+  Contraseña: keyla.lizarbe2026
+
+Miriam Espinoza
+  Usuario: miriam.espinozahuaman@iff.com
+  Contraseña: miriam.espinozahuaman2026
+
+Luis Agapito
+  Usuario: luis.agapito@iff.com
+  Contraseña: luis.agapito2026
+
+Luiggi Silvestre
+  Usuario: luiggi.silvestre@iff.com
+  Contraseña: luiggi.silvestre2026
+
+Miguel Parra
+  Usuario: miguel.parra@iff.com
+  Contraseña: miguel.parra2026
+
+Araceli Quispe
+  Usuario: araceli.quispe@iff.com
+  Contraseña: araceli.quispe2026
+
+(Regla: contraseña = parte del correo antes de @iff.com, todo en minúsculas, más el año 2026.)
+```
 
 Referencia IMEI ↔ ZGRU: ZGRU6645466 `866262034780196`, ZGRU7807130 `868428044595035`, ZGRU5014454 `863576046886862`, ZGRU7802800 `863576043599872`, ZGRU5115406 `863576049740900`, ZGRU5295105 `866262034327402`.
 

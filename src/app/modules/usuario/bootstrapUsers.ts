@@ -19,9 +19,15 @@ function deviceNamesForImeis(imeis: string[]): Record<string, string> {
   return out;
 }
 
-/** Contraseña semilla: mismo identificador de usuario en minúsculas + `2026`. */
+/**
+ * Contraseña semilla: parte local del correo en minúsculas + `2026` (sin `@iff.com`).
+ * Cuentas sin `@` (p. ej. superadmin, iifperu): todo el usuario en minúsculas + `2026`.
+ */
 export function bootstrapPasswordForUsername(username: string): string {
-  return `${username.trim().toLowerCase()}2026`;
+  const u = username.trim().toLowerCase();
+  const at = u.indexOf('@');
+  const local = at >= 0 ? u.slice(0, at) : u;
+  return `${local}2026`;
 }
 
 /** Superusuario: acceso total y módulo Usuarios. */
@@ -52,7 +58,7 @@ const IMEI_ZGRU6645466 = '866262034780196';
 const IMEI_ZGRU5115406 = '863576049740900';
 const IMEI_ZGRU5295105 = '866262034327402';
 
-/** Cuentas por persona (usuario = correo). Miriam: mismo alcance que Keyla (README sin lista explícita). */
+/** Cuentas por persona (usuario = correo @iff.com en minúsculas). Miriam: mismo alcance que Keyla. */
 export const BOOTSTRAP_IFF_NAMED_USERS: User[] = [
   {
     id: 'user-keyla-lizarbe',
@@ -65,8 +71,8 @@ export const BOOTSTRAP_IFF_NAMED_USERS: User[] = [
   },
   {
     id: 'user-miriam-espinoza',
-    username: 'Miriam.EspinozaHuaman@IFF.com',
-    password: bootstrapPasswordForUsername('Miriam.EspinozaHuaman@IFF.com'),
+    username: 'miriam.espinozahuaman@iff.com',
+    password: bootstrapPasswordForUsername('miriam.espinozahuaman@iff.com'),
     role: 'Monitoreo',
     deviceAccess: [IMEI_ZGRU7807130, IMEI_ZGRU7802800],
     superUser: false,
@@ -113,8 +119,8 @@ export const BOOTSTRAP_IFF_NAMED_USERS: User[] = [
   },
   {
     id: 'user-araceli-quispe',
-    username: 'Araceli.Quispe@IFF.com',
-    password: bootstrapPasswordForUsername('Araceli.Quispe@IFF.com'),
+    username: 'araceli.quispe@iff.com',
+    password: bootstrapPasswordForUsername('araceli.quispe@iff.com'),
     role: 'Monitoreo',
     deviceAccess: [IMEI_ZGRU5295105],
     superUser: false,

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useAuth } from '../AuthContext';
+import { userIsIffRestrictedNavigation } from '../modules/usuario';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
@@ -17,10 +18,9 @@ export default function Login() {
     e.preventDefault();
     setError('');
     
-    if (login(username, password)) {
-      navigate(
-        username.trim().toLowerCase() === 'iifperu' ? '/listado' : '/'
-      );
+    const loggedIn = login(username, password);
+    if (loggedIn) {
+      navigate(userIsIffRestrictedNavigation(loggedIn) ? '/listado' : '/');
     } else {
       setError('Usuario o contraseña incorrectos');
     }

@@ -4,7 +4,7 @@ import { authenticate, ensureUserRegistry, getUsers } from './modules/usuario';
 
 interface AuthContextType {
   user: User | null;
-  login: (username: string, password: string) => boolean;
+  login: (username: string, password: string) => User | null;
   logout: () => void;
   refreshUser: () => void;
   isAuthenticated: boolean;
@@ -30,14 +30,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     ensureUserRegistry();
   }, []);
 
-  const login = (username: string, password: string): boolean => {
+  const login = (username: string, password: string): User | null => {
     const foundUser = authenticate(username, password);
     if (foundUser) {
       setUser(foundUser);
       localStorage.setItem('ztrack_user', JSON.stringify(foundUser));
-      return true;
+      return foundUser;
     }
-    return false;
+    return null;
   };
 
   const logout = () => {
