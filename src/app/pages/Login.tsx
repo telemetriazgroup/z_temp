@@ -31,9 +31,11 @@ export default function Login() {
       <Card className="w-full max-w-md mx-4">
         <CardHeader className="space-y-1 text-center">
           <div className="flex justify-center mb-4">
-            <div className="bg-blue-600 text-white px-6 py-3 rounded-lg font-bold text-2xl">
-              ZTRACK
-            </div>
+            <img
+              src={`${import.meta.env.BASE_URL}logo-ztrack.png`}
+              alt="ZTRACK"
+              className="h-16 w-auto max-w-full object-contain"
+            />
           </div>
           <CardTitle className="text-2xl">Iniciar Sesión</CardTitle>
           <CardDescription>
