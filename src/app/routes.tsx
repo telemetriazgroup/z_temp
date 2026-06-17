@@ -11,6 +11,7 @@ import Alarmas from "./pages/Alarmas";
 import CatalogoAlarmas from "./pages/CatalogoAlarmas";
 import ControlAuditoria from "./pages/ControlAuditoria";
 import ConfiguracionAlarmas from "./pages/ConfiguracionAlarmas";
+import ConfiguracionCorreo from "./pages/ConfiguracionCorreo";
 import Ubicanos from "./pages/Ubicanos";
 import AyudaSoporte from "./pages/AyudaSoporte";
 
@@ -77,6 +78,10 @@ const routeTree = [
       {
         path: "configuracion-alarmas",
         element: <ConfiguracionAlarmas />,
+      },
+      {
+        path: "configuracion-correo",
+        element: <ConfiguracionCorreo />,
       },
       {
         path: "ubicanos",

@@ -23,6 +23,7 @@ import {
 } from './ui/table';
 import { cn } from './ui/utils';
 import { ReporteInternoModal } from './ReporteInternoModal';
+import { ReporteCaModal } from './ReporteCaModal';
 import {
   datosAGrafica,
   ordenarTablaDesc,
@@ -59,6 +60,7 @@ import {
   ChevronRight,
   FileBarChart2,
   Braces,
+  FlaskConical,
 } from 'lucide-react';
 
 const HORAS_DEFECTO = 12;
@@ -90,6 +92,7 @@ export function HistorialOficialDetalle({
   const { user } = useAuth();
   const esSuperUser = user?.superUser === true;
   const [reporteInternoOpen, setReporteInternoOpen] = useState(false);
+  const [reporteCaOpen, setReporteCaOpen] = useState(false);
   const initRango = rangoUltimasHorasDatetimeLocal(HORAS_DEFECTO);
   const [desdeStr, setDesdeStr] = useState(initRango.desde);
   const [hastaStr, setHastaStr] = useState(initRango.hasta);
@@ -284,6 +287,14 @@ export function HistorialOficialDetalle({
           >
             <FileBarChart2 className="h-4 w-4 mr-2" />
             Reporte interno
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setReporteCaOpen(true)}
+          >
+            <FlaskConical className="h-4 w-4 mr-2" />
+            Reporte CA
           </Button>
           <div className="flex flex-col gap-1 items-stretch sm:items-end">
             <div className="flex flex-wrap gap-2 justify-end">
@@ -629,6 +640,13 @@ export function HistorialOficialDetalle({
       <ReporteInternoModal
         open={reporteInternoOpen}
         onOpenChange={setReporteInternoOpen}
+        imei={imei}
+        codigo={codigo}
+        nombreContenedor={nombreContenedor}
+      />
+      <ReporteCaModal
+        open={reporteCaOpen}
+        onOpenChange={setReporteCaOpen}
         imei={imei}
         codigo={codigo}
         nombreContenedor={nombreContenedor}

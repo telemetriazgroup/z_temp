@@ -168,6 +168,11 @@ export interface DatoOficialHistorial {
   consumption_ph_1?: number | null;
   consumption_ph_2?: number | null;
   consumption_ph_3?: number | null;
+  /** Gases CA / madurador (si vienen en historial oficial). */
+  o2_reading?: number | null;
+  co2_reading?: number | null;
+  set_point_o2?: number | null;
+  set_point_co2?: number | null;
   /** Fecha de registro (preferida si existe). */
   created_at?: string | null;
   /** Alternativa cuando la API no envía `created_at`. */

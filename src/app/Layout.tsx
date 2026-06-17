@@ -17,7 +17,8 @@ import {
   X,
   BookOpen,
   History,
-  Shield
+  Shield,
+  Mail,
 } from 'lucide-react';
 
 export default function Layout() {
@@ -68,6 +69,11 @@ export default function Layout() {
           path: '/configuracion-alarmas',
           label: 'Configuración Alarmas',
           icon: BellPlus,
+        },
+        {
+          path: '/configuracion-correo',
+          label: 'Correo',
+          icon: Mail,
         },
         { path: '/ubicanos', label: 'Ubícanos', icon: MapPin },
         { path: '/ayuda', label: 'Ayuda/Soporte', icon: HelpCircle },

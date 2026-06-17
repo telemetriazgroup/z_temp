@@ -6,6 +6,7 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
+    "dev:correo": "node server/emailServer.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

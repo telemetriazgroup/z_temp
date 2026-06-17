@@ -16,6 +16,10 @@ const telemetriaProxy = {
     changeOrigin: true,
     rewrite: (p: string) => p.replace(/^\/reefer\/telemetria\/starcool/, ''),
   },
+  '/reefer/api/correo': {
+    target: 'http://127.0.0.1:3003',
+    changeOrigin: true,
+  },
 } as const
 
 export default defineConfig({
