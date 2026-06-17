@@ -20,8 +20,9 @@ docker run -p 3000:80 ztemp
 Usuario	Contraseña
 superadmin	superadmin2026
 iifperu	iifperu2026
+ovosurchincha	ovosurchincha2026
 
-(Regla semilla: cuentas **@iff.com** → contraseña = **parte local en minúsculas + `2026`** sin dominio, ej. `keyla.lizarbe2026`. `superadmin` / `iifperu` → usuario en minúsculas + `2026`. Los usuarios IFF ven en el menú **Listado**, **Alarmas** y **Catálogo Alarmas** (solo equipos asignados por IMEI).)
+(Regla semilla: cuentas **@iff.com** → contraseña = **parte local en minúsculas + `2026`** sin dominio, ej. `keyla.lizarbe2026`. Cuentas como `superadmin`, `iifperu` u `ovosurchincha` → **usuario en minúsculas + `2026`**. Estas cuentas ven en el menú **Listado**, **Control / Auditoría**, **Alarmas** y **Catálogo Alarmas** (solo equipos asignados por IMEI).)
 
 
 Código	Status	Power	Container ID / IMEI	Nombre	Última Conexión	Set point	Return air	Temp. suministro	En rango	Alarmas	Ubicación
@@ -107,6 +108,7 @@ Los usuarios de la tabla (más `superadmin` e `iifperu`) están definidos en có
 | Luiggi Silvestre | luiggi.silvestre@iff.com | luiggi.silvestre2026 | ZGRU5295105 |
 | Miguel Parra | miguel.parra@iff.com | miguel.parra2026 | ZGRU5295105 |
 | Araceli Quispe | araceli.quispe@iff.com | araceli.quispe2026 | ZGRU5295105 |
+| OVO Sur Chincha | ovosurchincha | ovosurchincha2026 | IMEI `868428043798341` (OVO SUR CHINCHA) |
 
 #### Lista para enviar al cliente (credenciales IFF)
 
@@ -141,10 +143,15 @@ Araceli Quispe
   Usuario: araceli.quispe@iff.com
   Contraseña: araceli.quispe2026
 
-(Regla: contraseña = parte del correo antes de @iff.com, todo en minúsculas, más el año 2026.)
+OVO Sur Chincha
+  Usuario: ovosurchincha
+  Contraseña: ovosurchincha2026
+  Equipo: IMEI 868428043798341 (OVO SUR CHINCHA) — control remoto temperatura / defrost / stop plan
+
+(Regla IFF: contraseña = parte del correo antes de @iff.com, todo en minúsculas, más el año 2026. OVO: usuario + 2026.)
 ```
 
-Referencia IMEI ↔ ZGRU: ZGRU6645466 `866262034780196`, ZGRU7807130 `868428044595035`, ZGRU5014454 `863576046886862`, ZGRU7802800 `863576043599872`, ZGRU5115406 `863576049740900`, ZGRU5295105 `866262034327402`.
+Referencia IMEI ↔ ZGRU (IFF): ZGRU6645466 `866262034780196`, ZGRU7807130 `868428044595035`, ZGRU5014454 `863576046886862`, ZGRU7802800 `863576043599872`, ZGRU5115406 `863576049740900`, ZGRU5295105 `866262034327402`. OVO Sur Chincha: `868428043798341`.
 
 ### Origen de datos: Listado, tabla y gráfica
 
@@ -219,7 +226,7 @@ http://161.132.53.51:9051/Tunel/comando_control_tunel/866262034327402?tipo=10&da
 
 #### 4. Control remoto IFF (UI + auditoría)
 
-En la app, los equipos IFF con código `TUNEL` (6 IMEI configurados) muestran un panel de control en el detalle del equipo ([`IffControlPanel.tsx`](src/app/components/IffControlPanel.tsx)). Los comandos **no** se envían directamente desde el navegador al host anterior: pasan por el proxy `/reefer/telemetria/tunel-termoking/` y el módulo [`src/app/modules/control/`](src/app/modules/control/).
+En la app, los equipos con código `TUNEL` y IMEI en la lista de control (6 IFF + OVO Sur Chincha `868428043798341`) muestran un panel de control en el detalle del equipo ([`IffControlPanel.tsx`](src/app/components/IffControlPanel.tsx)). Los comandos **no** se envían directamente desde el navegador al host anterior: pasan por el proxy `/reefer/telemetria/tunel-termoking/` y el módulo [`src/app/modules/control/`](src/app/modules/control/).
 
 | Qué | Dónde |
 |-----|--------|

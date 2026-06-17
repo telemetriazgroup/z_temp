@@ -26,6 +26,15 @@ function sameStringArray(a: string[], b: string[]): boolean {
   return sa.every((v, i) => v === sb[i]);
 }
 
+function sameAllowedCodigos(
+  a: User['allowedCodigos'],
+  b: User['allowedCodigos']
+): boolean {
+  const left = a ?? [];
+  const right = b ?? [];
+  return sameStringArray(left, right);
+}
+
 function sameDeviceNames(
   a: Record<string, string> | undefined,
   b: Record<string, string> | undefined
@@ -55,6 +64,13 @@ function syncBootstrapProfiles(users: User[]): { users: User[]; changed: boolean
       patched = {
         ...patched,
         deviceNames: seed.deviceNames ? { ...seed.deviceNames } : undefined,
+      };
+      changed = true;
+    }
+    if (!sameAllowedCodigos(u.allowedCodigos, seed.allowedCodigos)) {
+      patched = {
+        ...patched,
+        allowedCodigos: seed.allowedCodigos ? [...seed.allowedCodigos] : undefined,
       };
       changed = true;
     }

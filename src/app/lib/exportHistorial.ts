@@ -3,6 +3,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { DatoOficialHistorial } from '../types';
 import { TABLA_HISTORIAL_COLUMNAS, celdaHistorial, ordenarTablaDesc } from './historialOficial';
+import { downloadJsonFile } from './downloadJson';
 
 export interface HistorialExportRango {
   desde: Date;
@@ -66,7 +67,7 @@ export function exportHistorialCsv(
     `${escape('IMEI')}${sep}${escape(imei)}\r\n` +
     `${escape('Rango desde')}${sep}${escape(rango.desde.toLocaleString('es-ES'))}\r\n` +
     `${escape('Rango hasta')}${sep}${escape(rango.hasta.toLocaleString('es-ES'))}\r\n` +
-    `${escape('Nota')}${sep}${escape('Primera columna de datos: fecha de registro (created_at)')}\r\n` +
+    `${escape('Nota')}${sep}${escape('Primera columna: fecha (created_at o fecha si falta created_at)')}\r\n` +
     `\r\n`;
   const bom = '\uFEFF';
   descargarBlob(
@@ -83,7 +84,7 @@ export function exportHistorialXlsx(
   const { headers, rows } = filasExport(datos);
   const meta: string[][] = [
     [`IMEI: ${imei}`],
-    ['Fecha guía: la primera columna de la tabla es created_at (fecha de registro).'],
+    ['Fecha guía: created_at o, si no viene, el campo fecha.'],
     [`Desde: ${rango.desde.toLocaleString('es-ES')}`],
     [`Hasta: ${rango.hasta.toLocaleString('es-ES')}`],
     [],
@@ -111,7 +112,7 @@ export function exportHistorialPdf(
     15
   );
   doc.text(`Generado: ${new Date().toLocaleString('es-ES')}`, 14, 19);
-  doc.text('Primera columna de la tabla: fecha de registro (created_at).', 14, 23);
+  doc.text('Primera columna: fecha (created_at o fecha).', 14, 23);
   autoTable(doc, {
     startY: 26,
     head: [headers],
@@ -121,4 +122,23 @@ export function exportHistorialPdf(
     margin: { left: 10, right: 10 },
   });
   doc.save(`${nombreBaseArchivo(imei, rango)}.pdf`);
+}
+
+export function exportHistorialJson(
+  datos: DatoOficialHistorial[],
+  imei: string,
+  codigo: string,
+  rango: HistorialExportRango
+): void {
+  downloadJsonFile(`${nombreBaseArchivo(imei, rango)}.json`, {
+    exportedAt: new Date().toISOString(),
+    imei,
+    codigo,
+    rango: {
+      desde: rango.desde.toISOString(),
+      hasta: rango.hasta.toISOString(),
+    },
+    totalRegistros: datos.length,
+    datos: ordenarTablaDesc(datos),
+  });
 }

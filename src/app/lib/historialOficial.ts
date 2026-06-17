@@ -2,8 +2,35 @@ import type { DatoOficialHistorial } from '../types';
 
 const MS_HORA = 60 * 60 * 1000;
 
+/** Fecha guía del registro: `created_at` o, si falta, `fecha`. */
+export function fechaRegistroHistorial(row: DatoOficialHistorial): string | null {
+  const v = row.created_at ?? row.fecha ?? null;
+  if (v == null || v === '') return null;
+  return v;
+}
+
+export function timestampRegistroHistorial(row: DatoOficialHistorial): number {
+  const v = fechaRegistroHistorial(row);
+  if (v == null) return NaN;
+  const t = new Date(v).getTime();
+  return Number.isNaN(t) ? NaN : t;
+}
+
+function compararPorFechaAsc(a: DatoOficialHistorial, b: DatoOficialHistorial): number {
+  const ta = timestampRegistroHistorial(a);
+  const tb = timestampRegistroHistorial(b);
+  if (Number.isNaN(ta) && Number.isNaN(tb)) return 0;
+  if (Number.isNaN(ta)) return 1;
+  if (Number.isNaN(tb)) return -1;
+  return ta - tb;
+}
+
+function compararPorFechaDesc(a: DatoOficialHistorial, b: DatoOficialHistorial): number {
+  return -compararPorFechaAsc(a, b);
+}
+
 /**
- * Filtra registros con `created_at` dentro de las últimas `horas` respecto a `referencia`,
+ * Filtra registros con fecha guía dentro de las últimas `horas` respecto a `referencia`,
  * ordenados cronológicamente (más antiguo primero) para series temporales.
  */
 export function filtrarDatosUltimasHoras(
@@ -15,23 +42,15 @@ export function filtrarDatosUltimasHoras(
   const hasta = referencia.getTime();
   return datos
     .filter((row) => {
-      const t = new Date(row.created_at).getTime();
+      const t = timestampRegistroHistorial(row);
       return !Number.isNaN(t) && t >= desde && t <= hasta;
     })
-    .sort(
-      (a, b) =>
-        new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-    );
+    .sort(compararPorFechaAsc);
 }
 
 /** Orden más reciente primero (tabla). */
-export function ordenarTablaDesc(
-  datos: DatoOficialHistorial[]
-): DatoOficialHistorial[] {
-  return [...datos].sort(
-    (a, b) =>
-      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-  );
+export function ordenarTablaDesc(datos: DatoOficialHistorial[]): DatoOficialHistorial[] {
+  return [...datos].sort(compararPorFechaDesc);
 }
 
 export interface HistorialChartRow {
@@ -46,26 +65,29 @@ export interface HistorialChartRow {
 }
 
 export function datosAGrafica(datos: DatoOficialHistorial[]): HistorialChartRow[] {
-  const sorted = [...datos].sort(
-    (a, b) =>
-      new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-  );
-  return sorted.map((row) => {
-    const d = new Date(row.created_at);
-    return {
-      label: d.toLocaleString('es-ES', {
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-      }),
-      ts: d.getTime(),
-      setTemperatura: num(row.set_point),
-      suministro: num(row.temp_supply_1),
-      retorno: num(row.return_air),
-      evaporador: num(row.evaporation_coil),
-    };
-  });
+  const sorted = [...datos].sort(compararPorFechaAsc);
+  return sorted
+    .map((row) => {
+      const raw = fechaRegistroHistorial(row);
+      if (raw == null) return null;
+      const d = new Date(raw);
+      const ts = d.getTime();
+      if (Number.isNaN(ts)) return null;
+      return {
+        label: d.toLocaleString('es-ES', {
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+        }),
+        ts,
+        setTemperatura: num(row.set_point),
+        suministro: num(row.temp_supply_1),
+        retorno: num(row.return_air),
+        evaporador: num(row.evaporation_coil),
+      };
+    })
+    .filter((r): r is HistorialChartRow => r != null);
 }
 
 function num(v: number | null | undefined): number | null {
@@ -74,10 +96,10 @@ function num(v: number | null | undefined): number | null {
 }
 
 export const TABLA_HISTORIAL_COLUMNAS: {
-  key: keyof DatoOficialHistorial;
+  key: keyof DatoOficialHistorial | 'fecha_registro';
   header: string;
 }[] = [
-  { key: 'created_at', header: 'Fecha (registro)' },
+  { key: 'fecha_registro', header: 'Fecha' },
   { key: 'set_point', header: 'Set temperatura' },
   { key: 'temp_supply_1', header: 'Suministro' },
   { key: 'return_air', header: 'Retorno' },
@@ -97,13 +119,16 @@ export const TABLA_HISTORIAL_COLUMNAS: {
 
 export function celdaHistorial(
   row: DatoOficialHistorial,
-  key: keyof DatoOficialHistorial
+  key: keyof DatoOficialHistorial | 'fecha_registro'
 ): string {
-  const v = row[key];
-  if (key === 'created_at' && typeof v === 'string') {
-    const d = new Date(v);
-    return Number.isNaN(d.getTime()) ? v : d.toLocaleString('es-ES');
+  if (key === 'fecha_registro') {
+    const raw = fechaRegistroHistorial(row);
+    if (raw == null) return '—';
+    const d = new Date(raw);
+    return Number.isNaN(d.getTime()) ? raw : d.toLocaleString('es-ES');
   }
+
+  const v = row[key as keyof DatoOficialHistorial];
   if (
     key === 'cargo_1_temp' ||
     key === 'cargo_2_temp' ||
@@ -141,4 +166,9 @@ export function rangoUltimasHorasDatetimeLocal(horas: number): {
     desde: dateToDatetimeLocalValue(ini),
     hasta: dateToDatetimeLocalValue(fin),
   };
+}
+
+export function claveFilaHistorial(row: DatoOficialHistorial, index: number): string {
+  const f = fechaRegistroHistorial(row);
+  return f != null ? `${f}-${row.id ?? index}` : `sin-fecha-${row.id ?? index}`;
 }

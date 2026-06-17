@@ -11,7 +11,7 @@ import type {
 import { useAuth } from '../AuthContext';
 import { readDeviceLocalNames } from '../lib/deviceLocalNames';
 import {
-  userMayAccessImei,
+  userMayAccessDispositivo,
   displayNameForDevice,
 } from '../modules/usuario';
 import {
@@ -397,7 +397,9 @@ export default function EquipoDetalle() {
   );
 
   const sinAcceso =
-    dispositivo != null && user != null && !userMayAccessImei(user, dispositivo.imei);
+    dispositivo != null &&
+    user != null &&
+    !userMayAccessDispositivo(user, dispositivo);
 
   const nombreMostrado = useMemo(() => {
     if (dispositivo == null) return '';

@@ -32,7 +32,7 @@ import {
 } from '../components/ui/dialog';
 import { useAuth } from '../AuthContext';
 import {
-  userMayAccessImei,
+  userMayAccessDispositivo,
   userHasFullDeviceAccess,
   displayNameForDevice,
   resumenFromDispositivos,
@@ -44,7 +44,8 @@ import {
   extractActiveAlarmCodes,
 } from '../modules/alarma';
 import { cn } from '../components/ui/utils';
-import { MapPin, RefreshCw, AlertCircle, Pencil } from 'lucide-react';
+import { exportEquipoUltimoEstadoJson } from '../lib/exportEquipoJson';
+import { MapPin, RefreshCw, AlertCircle, Pencil, Download } from 'lucide-react';
 
 const API_STATUS_MAP = {
   online: 'ONLINE',
@@ -177,6 +178,7 @@ export default function Listado() {
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
   const { user } = useAuth();
+  const esSuperUser = user?.superUser === true;
 
   const load = useCallback(async () => {
     setError(null);
@@ -201,7 +203,7 @@ export default function Listado() {
   const resumenApi: ResumenDispositivos | null = data?.data?.resumen ?? null;
 
   const visibleDispositivos = useMemo(
-    () => dispositivos.filter((d) => userMayAccessImei(user, d.imei)),
+    () => dispositivos.filter((d) => userMayAccessDispositivo(user, d)),
     [dispositivos, user]
   );
 
@@ -405,6 +407,7 @@ export default function Listado() {
                 <TableHead>En rango</TableHead>
                 <TableHead>Alarmas</TableHead>
                 <TableHead>Ubicación</TableHead>
+                {esSuperUser && <TableHead className="w-[90px]">JSON</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -544,6 +547,21 @@ export default function Listado() {
                       <span className="text-muted-foreground">—</span>
                     )}
                   </TableCell>
+                  {esSuperUser && (
+                    <TableCell>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        title="Descargar JSON del equipo"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          exportEquipoUltimoEstadoJson(device.raw, device.nombreAsignado);
+                        }}
+                      >
+                        <Download className="h-4 w-4" />
+                      </Button>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>

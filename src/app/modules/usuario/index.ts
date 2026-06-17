@@ -14,6 +14,7 @@ export {
   userIsIffRestrictedNavigation,
   userHasFullDeviceAccess,
   userMayAccessImei,
+  userMayAccessDispositivo,
   displayNameForDevice,
   countSuperUsers,
 } from './userPermissions';

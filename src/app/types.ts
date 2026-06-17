@@ -3,6 +3,9 @@ export type PowerStatus = 'ON' | 'OFF';
 export type DeviceType = 'Reefer' | 'Genset' | 'Ripener' | 'Blast-F' | 'Blast-C';
 export type UserRole = 'Administrador' | 'Monitoreo' | 'Solo Vista';
 
+/** Origen del dispositivo en el listado agregado (Túnel / Starcool / Termo King). */
+export type DispositivoOrigenCodigo = 'TUNEL' | 'STARCOOL' | 'TERMOKING';
+
 export interface Device {
   id: string;
   containerId: string;
@@ -55,6 +58,8 @@ export interface User {
   superUser?: boolean;
   /** Etiquetas fijas por IMEI (p. ej. cuenta IFF Perú). */
   deviceNames?: Record<string, string>;
+  /** Orígenes visibles (TUNEL, STARCOOL, TERMOKING). Si se omite, todos los orígenes del IMEI. */
+  allowedCodigos?: DispositivoOrigenCodigo[];
 }
 
 export interface AlarmConfig {
@@ -114,9 +119,6 @@ export interface UltimoDatoDispositivo {
   set_point: number | null;
 }
 
-/** Origen del dispositivo en el listado agregado (Túnel / Starcool / Termo King). */
-export type DispositivoOrigenCodigo = 'TUNEL' | 'STARCOOL' | 'TERMOKING';
-
 export interface DispositivoUltimoEstado {
   imei: string;
   estado_conexion: 'online' | 'offline' | 'wait';
@@ -166,7 +168,10 @@ export interface DatoOficialHistorial {
   consumption_ph_1?: number | null;
   consumption_ph_2?: number | null;
   consumption_ph_3?: number | null;
-  created_at: string;
+  /** Fecha de registro (preferida si existe). */
+  created_at?: string | null;
+  /** Alternativa cuando la API no envía `created_at`. */
+  fecha?: string | null;
 }
 
 export interface BuscarDatosOficialesResponse {

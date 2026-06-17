@@ -29,13 +29,16 @@ import {
   rangoUltimasHorasDatetimeLocal,
   TABLA_HISTORIAL_COLUMNAS,
   celdaHistorial,
+  claveFilaHistorial,
 } from '../lib/historialOficial';
 import type { HistorialExportRango } from '../lib/exportHistorial';
 import {
   exportHistorialCsv,
   exportHistorialPdf,
   exportHistorialXlsx,
+  exportHistorialJson,
 } from '../lib/exportHistorial';
+import { useAuth } from '../AuthContext';
 import {
   LineChart,
   Line,
@@ -55,6 +58,7 @@ import {
   ChevronLeft,
   ChevronRight,
   FileBarChart2,
+  Braces,
 } from 'lucide-react';
 
 const HORAS_DEFECTO = 12;
@@ -83,6 +87,8 @@ export function HistorialOficialDetalle({
   embedded = false,
   defaultTab = 'datos',
 }: Props) {
+  const { user } = useAuth();
+  const esSuperUser = user?.superUser === true;
   const [reporteInternoOpen, setReporteInternoOpen] = useState(false);
   const initRango = rangoUltimasHorasDatetimeLocal(HORAS_DEFECTO);
   const [desdeStr, setDesdeStr] = useState(initRango.desde);
@@ -329,6 +335,23 @@ export function HistorialOficialDetalle({
                 <FileText className="h-4 w-4 mr-1.5 shrink-0" />
                 PDF
               </Button>
+              {esSuperUser && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={exportacionDeshabilitada}
+                  title="Descargar JSON (superusuario)"
+                  onClick={() => {
+                    if (rangoExport == null) return;
+                    ejecutarExportacion(() =>
+                      exportHistorialJson(datosCompletos, imei, codigo, rangoExport)
+                    );
+                  }}
+                >
+                  <Braces className="h-4 w-4 mr-1.5 shrink-0" />
+                  JSON
+                </Button>
+              )}
             </div>
             {exportError != null && (
               <p className="text-xs text-destructive text-right max-w-md">{exportError}</p>
@@ -430,9 +453,10 @@ export function HistorialOficialDetalle({
 
                 <TabsContent value="datos" className="mt-4 space-y-4">
                   <p className="text-xs text-muted-foreground">
-                    La primera columna es la <strong>fecha de registro</strong> (
-                    <code className="text-[10px]">created_at</code>): guía temporal de
-                    cada fila. Orden: más reciente arriba.
+                    La primera columna es la <strong>fecha</strong> del registro (
+                    <code className="text-[10px]">created_at</code> o{' '}
+                    <code className="text-[10px]">fecha</code> si no hay created_at). Orden:
+                    más reciente arriba.
                   </p>
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <p className="text-sm text-muted-foreground">
@@ -503,7 +527,7 @@ export function HistorialOficialDetalle({
                       </TableHeader>
                       <TableBody>
                         {filasPagina.map((row, i) => (
-                          <TableRow key={`${row.created_at}-${inicioSlice + i}`}>
+                          <TableRow key={claveFilaHistorial(row, inicioSlice + i)}>
                             {TABLA_HISTORIAL_COLUMNAS.map((c) => (
                               <TableCell
                                 key={c.key}

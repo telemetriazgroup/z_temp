@@ -106,7 +106,7 @@ export function EquipoDetalleIffLayout({
 
       <EquipoEstatusCards dispositivo={dispositivo} />
 
-      <EquipoReeferDetallePanel dispositivo={dispositivo} />
+      <EquipoReeferDetallePanel key={dispositivo.imei} dispositivo={dispositivo} />
 
       <DeviceAlarmasPanel ultimoDato={ud} compact />
 

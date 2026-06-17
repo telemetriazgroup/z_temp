@@ -1,4 +1,5 @@
 import type { DatoOficialHistorial } from '../types';
+import { fechaRegistroHistorial, timestampRegistroHistorial } from './historialOficial';
 
 /** Ventanas de promedio cuando SUP/RET no están en banda ±10% del setpoint. */
 export const REPORTE_SLOTS = [0, 4, 8, 12, 16, 20] as const;
@@ -33,7 +34,11 @@ export function lecturasDelDia(
   datos: DatoOficialHistorial[],
   dia: Date
 ): DatoOficialHistorial[] {
-  return datos.filter((r) => mismoDiaLocal(new Date(r.created_at), dia));
+  return datos.filter((r) => {
+    const raw = fechaRegistroHistorial(r);
+    if (raw == null) return false;
+    return mismoDiaLocal(new Date(raw), dia);
+  });
 }
 
 /** Días inclusivos entre inicio y fin (solo fecha local). */
@@ -88,7 +93,8 @@ export function puntoMasCercano(
   let mejor: DatoOficialHistorial | null = null;
   let mejorDelta = Infinity;
   for (const r of lecturasDia) {
-    const t = new Date(r.created_at).getTime();
+    const t = timestampRegistroHistorial(r);
+    if (Number.isNaN(t)) continue;
     const delta = Math.abs(t - objetivo);
     if (delta < mejorDelta) {
       mejorDelta = delta;
@@ -105,8 +111,10 @@ export function promediarSupRetEnVentanaHoraria(
   hastaH: number
 ): { sup: number | null; ret: number | null } {
   const muestras = lecturasDia.filter((r) => {
-    const d = new Date(r.created_at);
-    if (!mismoDiaLocal(d, dia)) return false;
+    const raw = fechaRegistroHistorial(r);
+    if (raw == null) return false;
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime()) || !mismoDiaLocal(d, dia)) return false;
     const h = d.getHours();
     return h >= desdeH && h <= hastaH;
   });

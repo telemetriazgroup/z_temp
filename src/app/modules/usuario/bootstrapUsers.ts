@@ -13,6 +13,26 @@ export const IFF_DEVICE_NAMES: Record<string, string> = {
 /** Los 6 contenedores IFF (IMEI en el mismo orden que el README). */
 export const IFF_ALL_IMEIS = Object.keys(IFF_DEVICE_NAMES);
 
+export const OVO_SURCHINCHA_IMEI = '868428043798341';
+
+export const OVO_SURCHINCHA_DEVICE_NAMES: Record<string, string> = {
+  [OVO_SURCHINCHA_IMEI]: 'OVO SUR CHINCHA',
+};
+
+/** IMEI con panel de control remoto vía túnel (IFF Perú + OVO Sur Chincha). */
+export const TUNEL_CONTROL_DEVICE_NAMES: Record<string, string> = {
+  ...IFF_DEVICE_NAMES,
+  ...OVO_SURCHINCHA_DEVICE_NAMES,
+};
+
+export const TUNEL_CONTROL_ALL_IMEIS = Object.keys(TUNEL_CONTROL_DEVICE_NAMES);
+
+/** Cuentas con menú restringido tipo IFF (Listado, Control, Alarmas…). */
+export const IFF_STYLE_ACCOUNT_USERNAMES = [
+  'iifperu',
+  'ovosurchincha',
+] as const;
+
 function deviceNamesForImeis(imeis: string[]): Record<string, string> {
   const out: Record<string, string> = {};
   for (const imei of imeis) {
@@ -131,8 +151,21 @@ export const BOOTSTRAP_IFF_NAMED_USERS: User[] = [
   },
 ];
 
+/** OVO Sur Chincha: un contenedor con interfaz y control remoto tipo IFF. */
+export const BOOTSTRAP_OVO_SURCHINCHA: User = {
+  id: 'user-ovosurchincha',
+  username: 'ovosurchincha',
+  password: bootstrapPasswordForUsername('ovosurchincha'),
+  role: 'Monitoreo',
+  deviceAccess: [OVO_SURCHINCHA_IMEI],
+  allowedCodigos: ['TUNEL'],
+  superUser: false,
+  deviceNames: { ...OVO_SURCHINCHA_DEVICE_NAMES },
+};
+
 export const BOOTSTRAP_USERS: User[] = [
   BOOTSTRAP_SUPERADMIN,
   BOOTSTRAP_IIFPERU,
+  BOOTSTRAP_OVO_SURCHINCHA,
   ...BOOTSTRAP_IFF_NAMED_USERS,
 ];

@@ -1,4 +1,4 @@
-import { IFF_ALL_IMEIS } from '../usuario/bootstrapUsers';
+import { TUNEL_CONTROL_ALL_IMEIS } from '../usuario/bootstrapUsers';
 
 /** Cambio de setpoint: tipo 1, dato −30 … 15 °C */
 export const COMANDO_TEMP_MIN = -30;
@@ -17,7 +17,7 @@ export function esEquipoIffControlable(
   imei: string,
   codigo: string | undefined | null
 ): boolean {
-  return codigo === 'TUNEL' && IFF_ALL_IMEIS.includes(imei);
+  return codigo === 'TUNEL' && TUNEL_CONTROL_ALL_IMEIS.includes(imei);
 }
 
 export function clampTemperaturaComando(valor: number): number {

@@ -4,7 +4,7 @@ import { fetchUltimoEstadoDispositivos } from '../api/termoking';
 import type { DispositivoUltimoEstado } from '../types';
 import { useAuth } from '../AuthContext';
 import {
-  userMayAccessImei,
+  userMayAccessDispositivo,
   displayNameForDevice,
 } from '../modules/usuario';
 import {
@@ -68,7 +68,7 @@ export default function Alarmas() {
       ensureAlarmCatalog();
       const response = await fetchUltimoEstadoDispositivos();
       const visible = response.data.dispositivos.filter((d) =>
-        userMayAccessImei(user, d.imei)
+        userMayAccessDispositivo(user, d)
       );
       setLiveDevices(visible);
       const synced = syncDeviceAlarmsFromTelemetry(visible);
