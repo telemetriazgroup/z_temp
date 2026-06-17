@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, ReactNode, useEffect, useCallback } from 'react';
 import type { User } from './types';
 import { authenticate, ensureUserRegistry, getUsers } from './modules/usuario';
+import { ensureAlarmCatalog } from './modules/alarma';
 
 interface AuthContextType {
   user: User | null;
@@ -28,6 +29,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     ensureUserRegistry();
+    ensureAlarmCatalog();
   }, []);
 
   const login = (username: string, password: string): User | null => {

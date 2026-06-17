@@ -8,6 +8,8 @@ import Administracion from "./pages/Administracion";
 import Usuarios from "./pages/Usuarios";
 import Monitoreo from "./pages/Monitoreo";
 import Alarmas from "./pages/Alarmas";
+import CatalogoAlarmas from "./pages/CatalogoAlarmas";
+import ControlAuditoria from "./pages/ControlAuditoria";
 import ConfiguracionAlarmas from "./pages/ConfiguracionAlarmas";
 import Ubicanos from "./pages/Ubicanos";
 import AyudaSoporte from "./pages/AyudaSoporte";
@@ -63,6 +65,14 @@ const routeTree = [
       {
         path: "alarmas",
         element: <Alarmas />,
+      },
+      {
+        path: "catalogo-alarmas",
+        element: <CatalogoAlarmas />,
+      },
+      {
+        path: "control-auditoria",
+        element: <ControlAuditoria />,
       },
       {
         path: "configuracion-alarmas",

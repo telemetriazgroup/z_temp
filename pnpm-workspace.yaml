@@ -1,0 +1,6 @@
+# Scripts de build permitidos (requerido por pnpm 10+ en CI/Docker).
+# Generado para @tailwindcss/oxide, esbuild y core-js usados por Vite/Tailwind.
+allowBuilds:
+  '@tailwindcss/oxide': true
+  esbuild: true
+  core-js: true

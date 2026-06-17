@@ -65,6 +65,9 @@ interface Props {
   codigo: DispositivoOrigenCodigo;
   /** Nombre local o etiqueta; si no hay, suele ser el IMEI. */
   nombreContenedor: string;
+  /** Layout compacto junto al panel de control IFF. */
+  embedded?: boolean;
+  defaultTab?: 'datos' | 'grafica';
 }
 
 function parseDatetimeLocal(s: string): Date | null {
@@ -73,7 +76,13 @@ function parseDatetimeLocal(s: string): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-export function HistorialOficialDetalle({ imei, codigo, nombreContenedor }: Props) {
+export function HistorialOficialDetalle({
+  imei,
+  codigo,
+  nombreContenedor,
+  embedded = false,
+  defaultTab = 'datos',
+}: Props) {
   const [reporteInternoOpen, setReporteInternoOpen] = useState(false);
   const initRango = rangoUltimasHorasDatetimeLocal(HORAS_DEFECTO);
   const [desdeStr, setDesdeStr] = useState(initRango.desde);
@@ -234,12 +243,20 @@ export function HistorialOficialDetalle({ imei, codigo, nombreContenedor }: Prop
 
   return (
     <>
-      <Card className="mt-8">
+      <Card className={embedded ? 'shadow-sm h-full' : 'mt-8'}>
       <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between space-y-0">
         <div>
-          <CardTitle className="text-lg">Historial oficial</CardTitle>
+          <CardTitle className="text-lg">
+            {embedded ? 'Monitoreo y análisis' : 'Historial oficial'}
+          </CardTitle>
           <p className="text-sm text-muted-foreground font-normal mt-1">
-            Telemetría certificada · <span className="font-mono">{codigo}</span>
+            {embedded
+              ? `Últimas ${HORAS_DEFECTO} h · ${nombreContenedor}`
+              : (
+                <>
+                  Telemetría certificada · <span className="font-mono">{codigo}</span>
+                </>
+              )}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -320,14 +337,16 @@ export function HistorialOficialDetalle({ imei, codigo, nombreContenedor }: Prop
         </div>
       </CardHeader>
       <CardContent className="space-y-6">
-        <div className="rounded-lg border bg-muted/30 p-4 space-y-4">
+        <div className={cn('rounded-lg border bg-muted/30 p-4 space-y-4', embedded && 'p-3')}>
           <p className="text-sm font-medium">Búsqueda por fecha</p>
-          <p className="text-xs text-muted-foreground">
-            La petición añade{' '}
-            <code className="rounded bg-muted px-1">fecha_inicial</code> y{' '}
-            <code className="rounded bg-muted px-1">fecha_final</code> con formato{' '}
-            <span className="font-mono">YYYY-MM-DD_HH-MM-SS</span>.
-          </p>
+          {!embedded && (
+            <p className="text-xs text-muted-foreground">
+              La petición añade{' '}
+              <code className="rounded bg-muted px-1">fecha_inicial</code> y{' '}
+              <code className="rounded bg-muted px-1">fecha_final</code> con formato{' '}
+              <span className="font-mono">YYYY-MM-DD_HH-MM-SS</span>.
+            </p>
+          )}
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <div className="space-y-2">
               <Label htmlFor="hist-desde">Fecha inicial</Label>
@@ -399,13 +418,13 @@ export function HistorialOficialDetalle({ imei, codigo, nombreContenedor }: Prop
                 No hay datos oficiales para el rango seleccionado.
               </p>
             ) : (
-              <Tabs defaultValue="datos" className="w-full">
+              <Tabs defaultValue={defaultTab} className="w-full">
                 <TabsList className="w-full sm:w-auto">
-                  <TabsTrigger value="datos" className="flex-1 sm:flex-initial">
-                    Datos históricos
-                  </TabsTrigger>
                   <TabsTrigger value="grafica" className="flex-1 sm:flex-initial">
                     Gráfica histórica
+                  </TabsTrigger>
+                  <TabsTrigger value="datos" className="flex-1 sm:flex-initial">
+                    Datos en tabla
                   </TabsTrigger>
                 </TabsList>
 

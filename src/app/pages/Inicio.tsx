@@ -1,11 +1,17 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useNavigate } from 'react-router';
-import { mockDevices, mockAlarms } from '../mockData';
+import { mockDevices } from '../mockData';
+import { getDeviceAlarmEvents, ensureAlarmCatalog } from '../modules/alarma';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Activity, Power, Bell, Mail, Snowflake, TrendingUp, TrendingDown } from 'lucide-react';
 
 export default function Inicio() {
   const navigate = useNavigate();
+
+  const alarmEvents = useMemo(() => {
+    ensureAlarmCatalog();
+    return getDeviceAlarmEvents();
+  }, []);
   
   const onlineDevices = mockDevices.filter(d => d.status === 'ONLINE').length;
   const waitDevices = mockDevices.filter(d => d.status === 'WAIT').length;
@@ -14,10 +20,10 @@ export default function Inicio() {
   const onPowerDevices = mockDevices.filter(d => d.power === 'ON').length;
   const offPowerDevices = mockDevices.filter(d => d.power === 'OFF').length;
   
-  const alarmsVistas = mockAlarms.filter(a => a.atendida).length;
-  const alarmsNoVistas = mockAlarms.filter(a => !a.atendida).length;
+  const alarmsVistas = alarmEvents.filter(a => a.atendida).length;
+  const alarmsNoVistas = alarmEvents.filter(a => !a.atendida && a.clearedAt == null).length;
   
-  const alarmsEmail = mockAlarms.filter(a => a.reportadaEmail).length;
+  const alarmsEmail = alarmEvents.filter(a => a.reportadaEmail).length;
   
   const defrostDevices = mockDevices.filter(d => d.defrost).length;
   const enRangoDevices = mockDevices.filter(d => d.enRango).length;

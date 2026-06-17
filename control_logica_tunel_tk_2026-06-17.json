@@ -1,0 +1,270 @@
+{
+  "meta": {
+    "schemaVersion": "1.0.0",
+    "exportedAt": "2026-06-17T13:57:15.246Z",
+    "product": "riper",
+    "description": "Especificación de control automático y manual vía links TUNEL y TermoKing. Use esta estructura para replicar la lógica en otro sistema."
+  },
+  "upstream": {
+    "baseUrl": "http://161.132.53.51:9051",
+    "tunnel": {
+      "method": "GET",
+      "pathTemplate": "/Tunel/comando_control_tunel/{imei}",
+      "queryParams": {
+        "tipo": "number",
+        "dato": "number|string"
+      },
+      "exampleUrl": "http://161.132.53.51:9051/Tunel/comando_control_tunel/{imei}?tipo=1&dato=14.0"
+    },
+    "termoKing": {
+      "method": "GET",
+      "pathTemplate": "/TermoKing/comando_control/{deviceId}",
+      "queryParams": {
+        "tipo": "number",
+        "dato": "number|string"
+      },
+      "exampleUrl": "http://161.132.53.51:9051/TermoKing/comando_control/{deviceId}?tipo=0&dato=1"
+    },
+    "datoFormatting": {
+      "tipo1_temperature": "°C con un decimal (ej. 14.1)",
+      "tipo3_co2": "un decimal",
+      "tipo2_5_0_6_10": "entero redondeado"
+    }
+  },
+  "commandTypes": [
+    {
+      "tipo": 0,
+      "name": "ethylene_poll_or_legacy",
+      "datoFormat": "integer",
+      "description": "Consulta etileno: dato=1 (dispara lectura campo_1). Legacy: dato=ppm en algunos flujos antiguos."
+    },
+    {
+      "tipo": 1,
+      "name": "temperature_setpoint",
+      "datoFormat": "celsius_one_decimal",
+      "description": "Consigna temperatura (°C, un decimal)."
+    },
+    {
+      "tipo": 2,
+      "name": "humidity_setpoint",
+      "datoFormat": "integer",
+      "description": "Consigna humedad relativa (%)."
+    },
+    {
+      "tipo": 3,
+      "name": "co2_limit",
+      "datoFormat": "one_decimal",
+      "description": "Límite / objetivo CO₂ (%)."
+    },
+    {
+      "tipo": 5,
+      "name": "ethylene_dose",
+      "datoFormat": "integer_ppm",
+      "description": "Inyección incremental etileno (ppm, máx. 120 por comando)."
+    },
+    {
+      "tipo": 6,
+      "name": "ventilation",
+      "datoFormat": "integer",
+      "description": "Ventilación: objetivo AVL ~220 CFM; si CO₂ alto en maduración, AVL < 30."
+    },
+    {
+      "tipo": 10,
+      "name": "stop_plan",
+      "datoFormat": "integer",
+      "description": "STOP PLAN: dato 7200 mantiene suspendido (reenviar cada hora); dato 300 a 5 min del fin."
+    }
+  ],
+  "manualControl": {
+    "note": "Comandos manuales desde panel (Gourmet): jobs en app_tunnel_command_jobs con verificación telemétrica.",
+    "kinds": {
+      "temperature": {
+        "tunnelTipo": 1,
+        "verifyField": "set_point",
+        "tolerance": 0.3
+      },
+      "humidity": {
+        "tunnelTipo": 2,
+        "verifyField": "humidity_set_point",
+        "tolerance": 1
+      },
+      "ventilation": {
+        "tunnelTipo": 6,
+        "verifyField": "avl",
+        "tolerance": 2
+      },
+      "ethylene": {
+        "tunnelTipo": 5,
+        "verifyField": "campo_1",
+        "tolerance": 0.5
+      }
+    },
+    "verifyDelaysMs": {
+      "simple": 30000,
+      "ethylene": 240000,
+      "ethylenePollInterval": 120000,
+      "ethyleneReadingsNeeded": 3
+    },
+    "compliancePollIntervalMs": 15000,
+    "gourmetFanOut": {
+      "temperatureAndVentilation": "5 IMEIs del túnel",
+      "humidity": "solo IMEI sensor (UNIT333 / ethylene IMEI)",
+      "ethylene": "solo IMEI con sensor etileno"
+    }
+  },
+  "automatedProcesses": {
+    "processTypes": [
+      "Homogenization",
+      "Ripening",
+      "Ventilation",
+      "Cooling"
+    ],
+    "controlAutomationTypes": [
+      "Homogenization",
+      "Ripening",
+      "Ventilation",
+      "Cooling",
+      "StopPlan"
+    ],
+    "sequenceNote": "Homogenización / Maduración / Ventilación / Enfriamiento: temperatura → humedad → CO₂ → etileno (según proceso). Máx. 3 intentos por fase antes de avanzar.",
+    "maxAdjustAttempts": {
+      "temperature": 3,
+      "humidity": 3,
+      "co2": 3
+    },
+    "verifyIntervalsMs": {
+      "temperature": 120000,
+      "humidity": 120000,
+      "co2": 240000,
+      "ventilation": 240000
+    },
+    "maintenanceIntervalsMs": {
+      "co2": 1800000,
+      "tempHumidity": 600000,
+      "hourlyReview": 3600000
+    },
+    "pollIntervalMs": 30000,
+    "tolerances": {
+      "temperatureC": 0.35,
+      "humidityPct": 1,
+      "co2Pct": 0.25,
+      "avlVentTarget": 220,
+      "avlVentCo2TriggerMax": 30
+    },
+    "cooling": {
+      "normalOffsetC": 2,
+      "aggressiveOffsetC": 3,
+      "returnExcessThresholdC": 3,
+      "rule": "Consigna = objetivo − 2 °C; si return_air > objetivo + 3 °C → objetivo − 3 °C."
+    },
+    "ventilation": {
+      "endLeadMs": 300000,
+      "rule": "5 min antes del fin de ventilación enviar tipo 3 con CO₂ objetivo (ej. 0.5). AVL ≠ 220 durante fase ventilación."
+    },
+    "ripeningEthylene": {
+      "cycleMs": 600000,
+      "steadyMonitorMs": 180000,
+      "initialTestDosePpm": 2,
+      "maxDosePerCommandPpm": 120,
+      "co2FailureFallback": "Si CO₂ no se ajusta en 3 intentos durante maduración, continuar con control de etileno (núcleo del proceso)."
+    }
+  },
+  "ethyleneReading": {
+    "maxReadingPpm": 300,
+    "maxDosePpm": 120,
+    "nonZeroHistoryMax": 5,
+    "recentDoseIgnoreZeroMs": 600000,
+    "rules": [
+      "Ignorar lecturas 0 ppm tras inyección reciente o con historial ascendente (evita sobredosis por fallo momentáneo del sensor).",
+      "Mantener últimos 5 valores distintos > 0; si llega 0 espurio, conservar última lectura válida y seguir sondeando.",
+      "Dosis proporcional según incremento observado; tope 120 ppm por comando tipo 5."
+    ]
+  },
+  "stopPlan": {
+    "tipo": 10,
+    "maintainDato": 7200,
+    "endDato": 300,
+    "hourlyResendMs": 3600000,
+    "endLeadMs": 300000,
+    "pollMs": 30000,
+    "phaseFields": [
+      "consumption_ph_1",
+      "consumption_ph_2",
+      "consumption_ph_3"
+    ],
+    "phaseMaxAmps": 0.5,
+    "phaseViolationResendMs": 600000,
+    "rules": [
+      "Al programar APAGAR / STOP PLAN: enviar tipo 10 dato 7200 cada hora mientras fases > 0.5 A.",
+      "Si > 10 min sobre 0.5 A, reenviar 7200.",
+      "A 5 min del fin: tipo 10 dato 300."
+    ]
+  },
+  "idleEthylenePoll": {
+    "command": {
+      "tipo": 0,
+      "dato": 1
+    },
+    "quietPeriodMs": 600000,
+    "rule": "En equipos en línea, si no hubo comandos al IMEI en ≥ 10 min, consultar etileno (tipo 0, dato 1)."
+  },
+  "fleetRouting": {
+    "gourmet": {
+      "email": "gourmettrading@ztrack.app",
+      "empresaIdentificador": "5001",
+      "upstream": "tunnel",
+      "aggregateDeviceId": "tunel:TUNEL_GREAT",
+      "tunnelUnitImeis": [
+        "868428040551750",
+        "860389052988223",
+        "868428047365683",
+        "867856038562796",
+        "866782049840560"
+      ],
+      "ethyleneSensorImei": "867856038562796",
+      "standaloneImei": "866262036100104",
+      "deviceImeis": [
+        "867856038562796",
+        "866262036100104"
+      ]
+    },
+    "greenyard": {
+      "email": "greenyard@riper.local",
+      "empresaIdentificador": "4001",
+      "upstream": "termoKing",
+      "deviceImeis": [
+        "NEWY2001",
+        "NEWY1001"
+      ],
+      "note": "Misma lógica de procesos; un IMEI por equipo (sin túnel agregado)."
+    },
+    "ultraorganics": {
+      "upstream": "termoKing",
+      "panelImeis": [
+        "MEX1001",
+        "MEX2001",
+        "MEX3001"
+      ],
+      "deviceGroups": {
+        "MEX1001": [
+          "MEX1001",
+          "MEX1002"
+        ],
+        "MEX2001": [
+          "MEX2001",
+          "MEX2002"
+        ],
+        "MEX3001": [
+          "MEX3001"
+        ]
+      },
+      "note": "Etileno desde MEX1001/MEX2001/MEX3001; humedad desde MEX1002/MEX2002/MEX3001."
+    }
+  },
+  "implementationNotes": [
+    "Manual control bloqueado mientras exista un proceso activo en el mismo dispositivo.",
+    "Telemetría de verificación vía API Madurador (lista dispositivos / ultimo_dato).",
+    "Bitácora: tunnelEventLog en params de sesión + app_tunnel_command_jobs.steps.",
+    "Seguimiento de maduración (ripening) reutiliza la misma lógica vía ripeningTrackingControl."
+  ]
+}

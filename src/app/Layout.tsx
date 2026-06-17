@@ -15,6 +15,8 @@ import {
   LogOut,
   Menu,
   X,
+  BookOpen,
+  History,
   Shield
 } from 'lucide-react';
 
@@ -35,14 +37,22 @@ export default function Layout() {
     if (!user || !soloListadoIff) return;
     const permitido =
       location.pathname === '/listado' ||
-      location.pathname.startsWith('/listado/');
+      location.pathname.startsWith('/listado/') ||
+      location.pathname === '/alarmas' ||
+      location.pathname === '/catalogo-alarmas' ||
+      location.pathname === '/control-auditoria';
     if (!permitido) {
       navigate('/listado', { replace: true });
     }
   }, [user, soloListadoIff, location.pathname, navigate]);
 
   const menuItems = soloListadoIff
-    ? [{ path: '/listado', label: 'Listado', icon: List }]
+    ? [
+        { path: '/listado', label: 'Listado', icon: List },
+        { path: '/control-auditoria', label: 'Control / Auditoría', icon: History },
+        { path: '/alarmas', label: 'Alarmas', icon: Bell },
+        { path: '/catalogo-alarmas', label: 'Catálogo Alarmas', icon: BookOpen },
+      ]
     : [
         { path: '/', label: 'Inicio', icon: Home },
         { path: '/listado', label: 'Listado', icon: List },
@@ -51,7 +61,9 @@ export default function Layout() {
           ? [{ path: '/usuarios' as const, label: 'Usuarios', icon: Shield }]
           : []),
         { path: '/monitoreo', label: 'Monitoreo', icon: Monitor },
+        { path: '/control-auditoria', label: 'Control / Auditoría', icon: History },
         { path: '/alarmas', label: 'Alarmas', icon: Bell },
+        { path: '/catalogo-alarmas', label: 'Catálogo Alarmas', icon: BookOpen },
         {
           path: '/configuracion-alarmas',
           label: 'Configuración Alarmas',

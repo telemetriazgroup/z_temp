@@ -20,6 +20,15 @@ import {
   formatearNumero,
   telemetriaComparablePayload,
 } from '../lib/telemetriaDetalle';
+import {
+  ensureAlarmCatalog,
+  resolveAlarmTitle,
+  extractActiveAlarmCodes,
+  syncDeviceAlarmsFromTelemetry,
+} from '../modules/alarma';
+import { DeviceAlarmasPanel } from '../components/DeviceAlarmasPanel';
+import { EquipoDetalleIffLayout } from '../components/EquipoDetalleIffLayout';
+import { esEquipoIffControlable } from '../modules/control';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Card, CardContent } from '../components/ui/card';
@@ -166,10 +175,18 @@ function buildDetalleItems(d: UltimoDatoDispositivo): DetalleItem[] {
       label: 'Alarmas',
       Icon: Bell,
       iconClass: 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300',
-      value:
-        d.numero_alarma == null || Number.isNaN(d.numero_alarma)
-          ? '—'
-          : String(d.numero_alarma),
+      value: (() => {
+        const slots = extractActiveAlarmCodes(d);
+        if (slots.length === 0) {
+          return d.numero_alarma == null || Number.isNaN(d.numero_alarma) || d.numero_alarma === 0
+            ? '—'
+            : '0';
+        }
+        if (slots.length === 1) {
+          return `${slots[0].code} — ${resolveAlarmTitle(null, slots[0].code)}`;
+        }
+        return `${slots.length} activas (${slots.map((s) => s.code).join(', ')})`;
+      })(),
     },
     {
       id: 'sp_ethyleno',
@@ -352,6 +369,7 @@ export default function EquipoDetalle() {
           setError('No se encontró el equipo con ese IMEI y origen.');
           return;
         }
+        syncDeviceAlarmsFromTelemetry([found]);
         let sinCambios = false;
         setDispositivo((prev) => {
           if (
@@ -391,6 +409,9 @@ export default function EquipoDetalle() {
     if (dispositivo == null) return { principal: [], extra: [] };
     return partitionDetalleItems(dispositivo.ultimo_dato);
   }, [dispositivo]);
+
+  const esIffControl =
+    dispositivo != null && esEquipoIffControlable(dispositivo.imei, dispositivo.codigo);
 
   if (!imei) {
     return (
@@ -488,6 +509,7 @@ export default function EquipoDetalle() {
         </Button>
       </div>
 
+      {!esIffControl && (
       <div className="rounded-xl border bg-card p-6 shadow-sm">
         <div className="flex flex-col lg:flex-row lg:items-start gap-6">
           <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
@@ -550,6 +572,22 @@ export default function EquipoDetalle() {
           </div>
         </div>
       </div>
+      )}
+
+      {esIffControl ? (
+        <EquipoDetalleIffLayout
+          dispositivo={dispositivo}
+          tituloPrincipal={tituloPrincipal}
+          refreshMensaje={refreshMensaje}
+          tieneUbicacion={tieneUbicacion}
+          onMapa={() => navigate(`/ubicanos?lat=${ud.latitud}&lng=${ud.longitud}`)}
+          onRefresh={() => void consultarActualizacion(false)}
+        />
+      ) : (
+        <>
+      {extractActiveAlarmCodes(ud).length > 0 && (
+        <DeviceAlarmasPanel ultimoDato={ud} />
+      )}
 
       <div>
         <h2 className="text-lg font-semibold mb-2">Telemetría principal</h2>
@@ -642,6 +680,8 @@ export default function EquipoDetalle() {
           codigo={dispositivo.codigo}
           nombreContenedor={tituloPrincipal}
         />
+      )}
+        </>
       )}
     </div>
   );

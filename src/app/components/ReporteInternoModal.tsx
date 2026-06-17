@@ -27,7 +27,8 @@ import {
   type ReporteInternoFila,
 } from '../lib/reporteInterno';
 import { descargarPdfReporteInterno } from '../lib/reporteInternoPdf';
-import { FileText, Eye, Loader2 } from 'lucide-react';
+import { descargarXlsxReporteInterno } from '../lib/reporteInternoXlsx';
+import { FileText, FileSpreadsheet, Eye, Loader2 } from 'lucide-react';
 import { cn } from './ui/utils';
 
 function parseDateInputLocal(s: string): Date | null {
@@ -121,23 +122,39 @@ export function ReporteInternoModal({
     }
   };
 
+  const filasParaExport = (): ReporteInternoFila[] =>
+    filas.map((f) => {
+      const obsUser = (obsPorFila[f.n] ?? '').trim();
+      return {
+        ...f,
+        observaciones: obsUser.length > 0 ? obsUser : 'SIN OBSERVACIONES',
+      };
+    });
+
+  const tituloExport = () =>
+    `IMEI ${imei} · Origen ${codigo} · Contenedor ${nombreContenedor} · Producto ${producto.trim()} · UBC ${ubc.trim() || 'BASE'}`;
+
   const emitirPdf = () => {
     if (filas.length === 0) {
       setError('Genere primero la vista previa.');
       return;
     }
     try {
-      const titulo = `IMEI ${imei} · Origen ${codigo} · Contenedor ${nombreContenedor} · Producto ${producto.trim()} · UBC ${ubc.trim() || 'BASE'}`;
-      const paraPdf: ReporteInternoFila[] = filas.map((f) => {
-        const obsUser = (obsPorFila[f.n] ?? '').trim();
-        return {
-          ...f,
-          observaciones: obsUser.length > 0 ? obsUser : 'SIN OBSERVACIONES',
-        };
-      });
-      descargarPdfReporteInterno(paraPdf, titulo);
+      descargarPdfReporteInterno(filasParaExport(), tituloExport());
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error al generar el PDF');
+    }
+  };
+
+  const emitirExcel = () => {
+    if (filas.length === 0) {
+      setError('Genere primero la vista previa.');
+      return;
+    }
+    try {
+      descargarXlsxReporteInterno(filasParaExport(), tituloExport());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error al generar el Excel');
     }
   };
 
@@ -217,6 +234,15 @@ export function ReporteInternoModal({
           <Button type="button" onClick={emitirPdf} disabled={cargando || filas.length === 0}>
             <FileText className="h-4 w-4 mr-2" />
             Descargar PDF
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={emitirExcel}
+            disabled={cargando || filas.length === 0}
+          >
+            <FileSpreadsheet className="h-4 w-4 mr-2" />
+            Descargar Excel
           </Button>
         </div>
 

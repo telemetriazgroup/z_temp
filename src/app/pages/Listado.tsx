@@ -37,6 +37,12 @@ import {
   displayNameForDevice,
   resumenFromDispositivos,
 } from '../modules/usuario';
+import {
+  ensureAlarmCatalog,
+  syncDeviceAlarmsFromTelemetry,
+  resolveAlarmTitle,
+  extractActiveAlarmCodes,
+} from '../modules/alarma';
 import { cn } from '../components/ui/utils';
 import { MapPin, RefreshCw, AlertCircle, Pencil } from 'lucide-react';
 
@@ -115,7 +121,12 @@ function mapDeviceToDisplay(d: DispositivoUltimoEstado) {
     d.power_state_texto != null
       ? (API_POWER_MAP[d.power_state_texto] ?? 'OFF')
       : '—';
-  const alarmas = d.ultimo_dato?.numero_alarma ?? 0;
+  const rawAlarmSlots = extractActiveAlarmCodes(d.ultimo_dato);
+  const alarmActive = rawAlarmSlots.length > 0;
+  const alarmCode = alarmActive ? rawAlarmSlots[0].code : null;
+  const alarmTitle =
+    alarmCode != null ? resolveAlarmTitle(null, alarmCode) : null;
+  const alarmCount = rawAlarmSlots.length;
   const lat = d.ultimo_dato?.latitud ?? null;
   const lng = d.ultimo_dato?.longitud ?? null;
   const setPoint = d.ultimo_dato?.set_point ?? null;
@@ -131,7 +142,10 @@ function mapDeviceToDisplay(d: DispositivoUltimoEstado) {
     status,
     power,
     ultimaConexion: d.ultima_actualizacion,
-    alarmas,
+    alarmas: alarmCount,
+    alarmCode,
+    alarmTitle,
+    alarmCount,
     hasUbicacion: lat != null && lng != null && !(lat === 0 && lng === 0),
     lat: lat ?? 0,
     lng: lng ?? 0,
@@ -169,6 +183,8 @@ export default function Listado() {
     setLoading(true);
     try {
       const response = await fetchUltimoEstadoDispositivos();
+      ensureAlarmCatalog();
+      syncDeviceAlarmsFromTelemetry(response.data.dispositivos);
       setData(response);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error al cargar dispositivos');
@@ -492,13 +508,23 @@ export default function Listado() {
                     )}
                   </TableCell>
                   <TableCell>
-                    <Badge
-                      variant={
-                        device.alarmas > 0 ? 'destructive' : 'secondary'
-                      }
-                    >
-                      {device.alarmas}
-                    </Badge>
+                    {device.alarmCount > 0 ? (
+                      <div className="space-y-1">
+                        <Badge variant="destructive">
+                          {device.alarmCount === 1
+                            ? `Cód. ${device.alarmCode}`
+                            : `${device.alarmCount} alarmas`}
+                        </Badge>
+                        <p
+                          className="text-xs text-muted-foreground max-w-[200px] line-clamp-2"
+                          title={device.alarmTitle ?? undefined}
+                        >
+                          {device.alarmTitle}
+                        </p>
+                      </div>
+                    ) : (
+                      <Badge variant="secondary">0</Badge>
+                    )}
                   </TableCell>
                   <TableCell>
                     {device.hasUbicacion ? (

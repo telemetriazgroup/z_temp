@@ -89,6 +89,19 @@ export interface UltimoDatoDispositivo {
   cargo_4_temp: number | null;
   power_kwh: number | null;
   numero_alarma: number | null;
+  /** Códigos de alarma activos adicionales (túnel IFF / MP4000). */
+  alarma_01?: number | null;
+  alarma_02?: number | null;
+  alarma_03?: number | null;
+  alarma_04?: number | null;
+  alarma_05?: number | null;
+  alarma_06?: number | null;
+  alarma_07?: number | null;
+  alarma_08?: number | null;
+  alarma_09?: number | null;
+  alarma_10?: number | null;
+  alarma_11?: number | null;
+  alarma_12?: number | null;
   sp_ethyleno: number | null;
   set_point_o2: number | null;
   set_point_co2: number | null;

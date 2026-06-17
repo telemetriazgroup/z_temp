@@ -10,6 +10,9 @@ export const IFF_DEVICE_NAMES: Record<string, string> = {
   '866262034780196': 'IFF ZGRU6645466 MATERIA PRIMA #2',
 };
 
+/** Los 6 contenedores IFF (IMEI en el mismo orden que el README). */
+export const IFF_ALL_IMEIS = Object.keys(IFF_DEVICE_NAMES);
+
 function deviceNamesForImeis(imeis: string[]): Record<string, string> {
   const out: Record<string, string> = {};
   for (const imei of imeis) {
@@ -46,7 +49,7 @@ export const BOOTSTRAP_IIFPERU: User = {
   username: 'iifperu',
   password: bootstrapPasswordForUsername('iifperu'),
   role: 'Monitoreo',
-  deviceAccess: Object.keys(IFF_DEVICE_NAMES),
+  deviceAccess: IFF_ALL_IMEIS,
   superUser: false,
   deviceNames: { ...IFF_DEVICE_NAMES },
 };
@@ -74,9 +77,9 @@ export const BOOTSTRAP_IFF_NAMED_USERS: User[] = [
     username: 'miriam.espinozahuaman@iff.com',
     password: bootstrapPasswordForUsername('miriam.espinozahuaman@iff.com'),
     role: 'Monitoreo',
-    deviceAccess: [IMEI_ZGRU7807130, IMEI_ZGRU7802800],
+    deviceAccess: [...IFF_ALL_IMEIS],
     superUser: false,
-    deviceNames: deviceNamesForImeis([IMEI_ZGRU7807130, IMEI_ZGRU7802800]),
+    deviceNames: { ...IFF_DEVICE_NAMES },
   },
   {
     id: 'user-luis-agapito',

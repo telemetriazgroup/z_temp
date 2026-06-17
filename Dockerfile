@@ -8,8 +8,8 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 
 WORKDIR /app
 
-# Copiar manifestos de dependencias
-COPY package.json pnpm-lock.yaml* package-lock.json* ./
+# Copiar manifestos de dependencias (pnpm-workspace.yaml: allowBuilds para pnpm 10+)
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* package-lock.json* ./
 
 # Instalar dependencias: pnpm si hay pnpm-lock, si no npm
 RUN if [ -f pnpm-lock.yaml ]; then \

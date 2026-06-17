@@ -19,6 +19,54 @@ function writeRaw(users: User[]): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(users));
 }
 
+function sameStringArray(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const sa = [...a].sort();
+  const sb = [...b].sort();
+  return sa.every((v, i) => v === sb[i]);
+}
+
+function sameDeviceNames(
+  a: Record<string, string> | undefined,
+  b: Record<string, string> | undefined
+): boolean {
+  const left = a ?? {};
+  const right = b ?? {};
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  for (const k of keys) {
+    if ((left[k] ?? '') !== (right[k] ?? '')) return false;
+  }
+  return true;
+}
+
+/** Alinea alcance IFF de cuentas semilla ya guardadas (p. ej. nuevos IMEI en código). */
+function syncBootstrapProfiles(users: User[]): { users: User[]; changed: boolean } {
+  const seedById = new Map(BOOTSTRAP_USERS.map((s) => [s.id, s]));
+  let changed = false;
+  const next = users.map((u) => {
+    const seed = seedById.get(u.id);
+    if (seed == null) return u;
+    let patched = u;
+    if (!sameStringArray(u.deviceAccess, seed.deviceAccess)) {
+      patched = { ...patched, deviceAccess: [...seed.deviceAccess] };
+      changed = true;
+    }
+    if (!sameDeviceNames(u.deviceNames, seed.deviceNames)) {
+      patched = {
+        ...patched,
+        deviceNames: seed.deviceNames ? { ...seed.deviceNames } : undefined,
+      };
+      changed = true;
+    }
+    if (u.role !== seed.role) {
+      patched = { ...patched, role: seed.role };
+      changed = true;
+    }
+    return patched;
+  });
+  return { users: next, changed };
+}
+
 /** Asegura usuarios semilla (superadmin, iifperu) sin borrar el resto. */
 export function ensureUserRegistry(): User[] {
   let users = readRaw();
@@ -34,6 +82,9 @@ export function ensureUserRegistry(): User[] {
       changed = true;
     }
   }
+  const synced = syncBootstrapProfiles(users);
+  users = synced.users;
+  if (synced.changed) changed = true;
   if (changed) writeRaw(users);
   return users;
 }
