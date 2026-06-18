@@ -8,26 +8,31 @@ import {
   readSmtpConfig,
   persistSmtpConfig,
   getGruposCorreo,
-  upsertGrupoCorreo,
-  deleteGrupoCorreo,
-  generateGrupoCorreoId,
   parseEmailList,
   normalizeUmbrales,
-  getCorreoEnvioLogs,
-  getHourlyBuckets,
-  getEpisode,
-  episodeHoursElapsed,
   buildFueraDeRangoEmail,
-  sendEmailViaApi,
-  runAlertEngine,
   deviceRowKey,
   UMBRALES_HORAS_DISPONIBLES,
   DEFAULT_UMBRALES_HORAS,
   type SmtpConfig,
   type GrupoCorreo,
   type GrupoCorreoDevice,
+  type CorreoTipoEvento,
   ALERT_POLL_INTERVAL_MS,
 } from '../modules/correo';
+import {
+  fetchCorreoStatus,
+  fetchServerSmtp,
+  saveServerSmtp,
+  fetchServerGrupos,
+  saveServerGrupo,
+  deleteServerGrupo,
+  fetchServerEnvios,
+  runServerAlertCycle,
+  migrateLocalCorreoToServer,
+  sendTestEmailViaServer,
+} from '../modules/correo/correoServerApi';
+import type { CorreoEnvioLog, CorreoServerStatus } from '../modules/correo/types';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -52,6 +57,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../components/ui/select';
+import { generateGrupoCorreoId } from '../modules/correo/grupoCorreoRepository';
 import { DeviceSearchPicker } from '../components/DeviceSearchPicker';
 import {
   Mail,
@@ -87,8 +100,9 @@ export default function ConfiguracionCorreo() {
   const [smtpPass, setSmtpPass] = useState('');
   const [smtpFromName, setSmtpFromName] = useState('ZTRACK TELEMETRY');
   const [dispositivos, setDispositivos] = useState<DispositivoUltimoEstado[]>([]);
-  const [grupos, setGrupos] = useState<GrupoCorreo[]>(() => getGruposCorreo());
-  const [envioLogs, setEnvioLogs] = useState(() => getCorreoEnvioLogs(80));
+  const [grupos, setGrupos] = useState<GrupoCorreo[]>([]);
+  const [envioLogs, setEnvioLogs] = useState<CorreoEnvioLog[]>([]);
+  const [serverStatus, setServerStatus] = useState<CorreoServerStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sendingTest, setSendingTest] = useState(false);
@@ -103,14 +117,36 @@ export default function ConfiguracionCorreo() {
 
   const localNames = useMemo(() => readDeviceLocalNames(), []);
 
-  useEffect(() => {
-    const saved = readSmtpConfig();
-    if (saved != null) {
-      setSmtpUser(saved.user);
-      setSmtpPass(saved.appPassword);
-      setSmtpFromName(saved.fromName);
+  const loadServerConfig = useCallback(async () => {
+    try {
+      let g = await fetchServerGrupos();
+      const smtpSrv = await fetchServerSmtp();
+      if (g.length === 0) {
+        const localG = getGruposCorreo();
+        const localS = readSmtpConfig();
+        if (localG.length > 0 || localS) {
+          await migrateLocalCorreoToServer({ smtp: localS, grupos: localG });
+          g = await fetchServerGrupos();
+          toast.message('Configuración local migrada al servidor');
+        }
+      }
+      setGrupos(g);
+      if (smtpSrv) {
+        setSmtpUser(smtpSrv.user);
+        setSmtpFromName(smtpSrv.fromName);
+        if (!smtpSrv.hasPassword) setSmtpPass('');
+      }
+      const logs = await fetchServerEnvios(80);
+      setEnvioLogs(logs);
+      setServerStatus(await fetchCorreoStatus());
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Error al cargar config del servidor');
     }
   }, []);
+
+  useEffect(() => {
+    void loadServerConfig();
+  }, [loadServerConfig]);
 
   const loadDevices = useCallback(async () => {
     setError(null);
@@ -129,8 +165,11 @@ export default function ConfiguracionCorreo() {
     void loadDevices();
   }, [loadDevices]);
 
-  const refreshLogs = () => setEnvioLogs(getCorreoEnvioLogs(80));
-  const refreshGrupos = () => setGrupos(getGruposCorreo());
+  const refreshLogs = async () => {
+    setEnvioLogs(await fetchServerEnvios(80));
+    setServerStatus(await fetchCorreoStatus());
+  };
+  const refreshGrupos = async () => setGrupos(await fetchServerGrupos());
 
   const smtpConfig = (): SmtpConfig | null => {
     const userVal = smtpUser.trim();
@@ -143,14 +182,20 @@ export default function ConfiguracionCorreo() {
     };
   };
 
-  const handleSaveSmtp = () => {
+  const handleSaveSmtp = async () => {
     const cfg = smtpConfig();
     if (cfg == null) {
       toast.error('Indique correo Gmail y clave de aplicación');
       return;
     }
-    persistSmtpConfig(cfg);
-    toast.success('Remitente guardado');
+    try {
+      await saveServerSmtp(cfg);
+      persistSmtpConfig(cfg);
+      setServerStatus(await fetchCorreoStatus());
+      toast.success('Remitente guardado en el servidor');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Error al guardar SMTP');
+    }
   };
 
   const closeGrupoDialog = () => {
@@ -186,7 +231,7 @@ export default function ConfiguracionCorreo() {
     if (dispositivos.length === 0 && !loading) void loadDevices();
   };
 
-  const handleSaveGrupo = () => {
+  const handleSaveGrupo = async () => {
     if (editing == null) return;
     if (!editing.nombre.trim()) {
       toast.error('El nombre del grupo es obligatorio');
@@ -197,22 +242,31 @@ export default function ConfiguracionCorreo() {
       toast.error('Indique al menos un correo destinatario');
       return;
     }
-    upsertGrupoCorreo({
-      ...editing,
-      nombre: editing.nombre.trim(),
-      cliente: editing.cliente.trim() || 'Cliente',
-      emails,
-      createdAt: editingCreatedAt,
-    });
-    refreshGrupos();
-    closeGrupoDialog();
-    toast.success(isEditingExisting ? 'Grupo actualizado' : 'Grupo creado');
+    try {
+      await saveServerGrupo({
+        ...editing,
+        nombre: editing.nombre.trim(),
+        cliente: editing.cliente.trim() || 'Cliente',
+        emails,
+        createdAt: editingCreatedAt ?? new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      await refreshGrupos();
+      closeGrupoDialog();
+      toast.success(isEditingExisting ? 'Grupo actualizado en servidor' : 'Grupo creado en servidor');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Error al guardar grupo');
+    }
   };
 
-  const handleDeleteGrupo = (id: string) => {
-    deleteGrupoCorreo(id);
-    refreshGrupos();
-    toast.success('Grupo eliminado');
+  const handleDeleteGrupo = async (id: string) => {
+    try {
+      await deleteServerGrupo(id);
+      await refreshGrupos();
+      toast.success('Grupo eliminado');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Error al eliminar');
+    }
   };
 
   const deviceSearchOptions = useMemo(() => {
@@ -255,6 +309,7 @@ export default function ConfiguracionCorreo() {
           codigo: d.codigo ?? '—',
           descripcionEquipo: '',
           umbralesHoras: [...DEFAULT_UMBRALES_HORAS],
+          tipoEvento: 'operaciones',
           enabled: true,
         },
       ],
@@ -284,21 +339,17 @@ export default function ConfiguracionCorreo() {
   const handleRunNow = async () => {
     setRunningNow(true);
     try {
-      const res = await fetchUltimoEstadoDispositivos();
-      const filtered = res.data.dispositivos.filter((d) => userMayAccessDispositivo(user, d));
-      const result = await runAlertEngine(filtered, (d, rk) =>
-        displayNameForDevice(user, d.imei, rk, localNames, SIN_ASIGNAR)
-      );
-      refreshLogs();
+      const result = await runServerAlertCycle();
+      await refreshLogs();
       if (result.emailsSent > 0) {
-        toast.success(`${result.emailsSent} correo(s) enviado(s)`);
+        toast.success(`${result.emailsSent} correo(s) enviado(s) por el servidor`);
       } else if (result.errors.length > 0) {
         toast.error(result.errors[0]);
       } else {
-        toast.message('Ciclo completado sin envíos pendientes');
+        toast.message('Ciclo del servidor completado sin envíos pendientes');
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Error en ciclo de alertas');
+      toast.error(e instanceof Error ? e.message : 'Error en ciclo del servidor');
     } finally {
       setRunningNow(false);
     }
@@ -341,7 +392,7 @@ export default function ConfiguracionCorreo() {
         horasFueraRango: 3,
         esPrueba: true,
       });
-      await sendEmailViaApi({
+      await sendTestEmailViaServer({
         smtp: cfg,
         to: grupo.emails,
         subject: content.subject,
@@ -365,9 +416,17 @@ export default function ConfiguracionCorreo() {
             Correo y alertas
           </h1>
           <p className="text-muted-foreground mt-1">
-            Grupos de destinatarios, umbrales 2–24 h fuera de rango y registro de envíos. Validación
-            automática cada {ALERT_POLL_INTERVAL_MS / 60000} minutos.
+            Configuración en servidor. El envío de alertas corre automáticamente cada{' '}
+            {ALERT_POLL_INTERVAL_MS / 60000} minutos sin necesidad de sesión activa.
           </p>
+          {serverStatus?.lastRun != null && (
+            <p className="text-xs text-muted-foreground mt-1">
+              Último ciclo servidor:{' '}
+              {new Date(serverStatus.lastRun.checkedAt).toLocaleString('es-ES')} ·{' '}
+              {serverStatus.lastRun.emailsSent} enviados · {serverStatus.incidentesPendientes}{' '}
+              incidentes pendientes
+            </p>
+          )}
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => void loadDevices()} disabled={loading}>
@@ -493,23 +552,19 @@ export default function ConfiguracionCorreo() {
                         <TableHead>Equipo</TableHead>
                         <TableHead>Descripción (Reefer ID)</TableHead>
                         <TableHead>Umbrales</TableHead>
-                        <TableHead>Estado</TableHead>
-                        <TableHead>Historial 12 h</TableHead>
+                        <TableHead>Estado telemetría</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {g.devices.length === 0 && (
                         <TableRow>
-                          <TableCell colSpan={5} className="text-muted-foreground">
+                          <TableCell colSpan={4} className="text-muted-foreground">
                             Sin equipos asignados
                           </TableCell>
                         </TableRow>
                       )}
                       {g.devices.map((dev) => {
                         const live = dispositivos.find((d) => deviceRowKey(d) === dev.rowKey);
-                        const episode = getEpisode(dev.rowKey);
-                        const hours = episode ? episodeHoursElapsed(episode) : 0;
-                        const buckets = getHourlyBuckets(dev.rowKey);
                         return (
                           <TableRow key={dev.rowKey}>
                             <TableCell className="text-xs font-mono">
@@ -517,41 +572,19 @@ export default function ConfiguracionCorreo() {
                             </TableCell>
                             <TableCell>{dev.descripcionEquipo?.trim() || '(nombre plataforma)'}</TableCell>
                             <TableCell className="text-xs">
+                              {dev.tipoEvento === 'mantenimiento' ? 'Mantenimiento' : 'Operaciones'} ·{' '}
                               {normalizeUmbrales(dev.umbralesHoras).join(', ')} h
                             </TableCell>
                             <TableCell>
                               {!dev.enabled && <Badge variant="secondary">Off</Badge>}
                               {dev.enabled && live?.en_rango === false && (
-                                <Badge className="bg-red-600">
-                                  FUERA · ~{Math.max(hours, 1)} h
-                                </Badge>
+                                <Badge className="bg-red-600">FUERA DE RANGO</Badge>
                               )}
                               {dev.enabled && live?.en_rango === true && (
                                 <Badge className="bg-emerald-600">EN RANGO</Badge>
                               )}
                               {dev.enabled && live?.en_rango == null && (
                                 <span className="text-muted-foreground">—</span>
-                              )}
-                            </TableCell>
-                            <TableCell className="text-xs max-w-[200px]">
-                              {buckets.length === 0 ? (
-                                '—'
-                              ) : (
-                                <span className="flex flex-wrap gap-1">
-                                  {buckets.slice(0, 6).map((b) => (
-                                    <Badge
-                                      key={b.hourKey}
-                                      variant="outline"
-                                      className={
-                                        b.enRango === false
-                                          ? 'border-red-500 text-red-700'
-                                          : 'border-emerald-500 text-emerald-700'
-                                      }
-                                    >
-                                      {b.hourKey.slice(11)}h
-                                    </Badge>
-                                  ))}
-                                </span>
                               )}
                             </TableCell>
                           </TableRow>
@@ -585,7 +618,7 @@ export default function ConfiguracionCorreo() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <Button variant="outline" size="sm" className="mb-4" onClick={refreshLogs}>
+              <Button variant="outline" size="sm" className="mb-4" onClick={() => void refreshLogs()}>
                 <RefreshCw className="h-4 w-4 mr-2" />
                 Actualizar
               </Button>
@@ -759,6 +792,25 @@ export default function ConfiguracionCorreo() {
                           <Trash2 className="h-4 w-4 text-red-600" />
                         </Button>
                       </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs">Tipo de evento</Label>
+                      <Select
+                        value={dev.tipoEvento ?? 'operaciones'}
+                        onValueChange={(v) =>
+                          updateDeviceInGrupo(dev.rowKey, {
+                            tipoEvento: v as CorreoTipoEvento,
+                          })
+                        }
+                      >
+                        <SelectTrigger className="h-8">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="operaciones">Operaciones</SelectItem>
+                          <SelectItem value="mantenimiento">Mantenimiento</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
                     <div className="space-y-2">
                       <Label className="text-xs">

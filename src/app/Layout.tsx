@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Outlet, Link, useNavigate, useLocation } from 'react-router';
 import { useAuth } from './AuthContext';
 import { userIsIffRestrictedNavigation } from './modules/usuario';
+import { fetchServerGrupos } from './modules/correo/correoServerApi';
+import { userHasCorreoIncidentAccess } from './modules/correo/incidentAccess';
 import { Button } from './components/ui/button';
 import { 
   Home, 
@@ -19,10 +21,13 @@ import {
   History,
   Shield,
   Mail,
+  Inbox,
 } from 'lucide-react';
+import type { GrupoCorreo } from './modules/correo/types';
 
 export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [gruposCorreo, setGruposCorreo] = useState<GrupoCorreo[]>([]);
   const { logout, user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -33,6 +38,14 @@ export default function Layout() {
   };
 
   const soloListadoIff = userIsIffRestrictedNavigation(user);
+  const verIncidentesCorreo = userHasCorreoIncidentAccess(user, gruposCorreo);
+
+  useEffect(() => {
+    if (user == null) return;
+    fetchServerGrupos()
+      .then(setGruposCorreo)
+      .catch(() => setGruposCorreo([]));
+  }, [user]);
 
   useEffect(() => {
     if (!user || !soloListadoIff) return;
@@ -41,43 +54,54 @@ export default function Layout() {
       location.pathname.startsWith('/listado/') ||
       location.pathname === '/alarmas' ||
       location.pathname === '/catalogo-alarmas' ||
-      location.pathname === '/control-auditoria';
+      location.pathname === '/control-auditoria' ||
+      location.pathname === '/incidentes-correo';
     if (!permitido) {
       navigate('/listado', { replace: true });
     }
   }, [user, soloListadoIff, location.pathname, navigate]);
 
-  const menuItems = soloListadoIff
-    ? [
+  const menuItems = useMemo(() => {
+    const incidentesItem = verIncidentesCorreo
+      ? [{ path: '/incidentes-correo' as const, label: 'Incidentes correo', icon: Inbox }]
+      : [];
+
+    if (soloListadoIff) {
+      return [
         { path: '/listado', label: 'Listado', icon: List },
         { path: '/control-auditoria', label: 'Control / Auditoría', icon: History },
         { path: '/alarmas', label: 'Alarmas', icon: Bell },
         { path: '/catalogo-alarmas', label: 'Catálogo Alarmas', icon: BookOpen },
-      ]
-    : [
-        { path: '/', label: 'Inicio', icon: Home },
-        { path: '/listado', label: 'Listado', icon: List },
-        { path: '/administracion', label: 'Administración', icon: Settings },
-        ...(user?.superUser === true
-          ? [{ path: '/usuarios' as const, label: 'Usuarios', icon: Shield }]
-          : []),
-        { path: '/monitoreo', label: 'Monitoreo', icon: Monitor },
-        { path: '/control-auditoria', label: 'Control / Auditoría', icon: History },
-        { path: '/alarmas', label: 'Alarmas', icon: Bell },
-        { path: '/catalogo-alarmas', label: 'Catálogo Alarmas', icon: BookOpen },
-        {
-          path: '/configuracion-alarmas',
-          label: 'Configuración Alarmas',
-          icon: BellPlus,
-        },
-        {
-          path: '/configuracion-correo',
-          label: 'Correo',
-          icon: Mail,
-        },
-        { path: '/ubicanos', label: 'Ubícanos', icon: MapPin },
-        { path: '/ayuda', label: 'Ayuda/Soporte', icon: HelpCircle },
+        ...incidentesItem,
       ];
+    }
+
+    return [
+      { path: '/', label: 'Inicio', icon: Home },
+      { path: '/listado', label: 'Listado', icon: List },
+      { path: '/administracion', label: 'Administración', icon: Settings },
+      ...(user?.superUser === true
+        ? [{ path: '/usuarios' as const, label: 'Usuarios', icon: Shield }]
+        : []),
+      { path: '/monitoreo', label: 'Monitoreo', icon: Monitor },
+      { path: '/control-auditoria', label: 'Control / Auditoría', icon: History },
+      { path: '/alarmas', label: 'Alarmas', icon: Bell },
+      { path: '/catalogo-alarmas', label: 'Catálogo Alarmas', icon: BookOpen },
+      {
+        path: '/configuracion-alarmas',
+        label: 'Configuración Alarmas',
+        icon: BellPlus,
+      },
+      {
+        path: '/configuracion-correo',
+        label: 'Correo',
+        icon: Mail,
+      },
+      ...incidentesItem,
+      { path: '/ubicanos', label: 'Ubícanos', icon: MapPin },
+      { path: '/ayuda', label: 'Ayuda/Soporte', icon: HelpCircle },
+    ];
+  }, [soloListadoIff, user?.superUser, verIncidentesCorreo]);
 
   return (
     <div className="min-h-screen bg-gray-50 flex">

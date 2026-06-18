@@ -10,6 +10,10 @@ export const UMBRALES_HORAS_DISPONIBLES = Array.from({ length: 23 }, (_, i) => i
 
 export const DEFAULT_UMBRALES_HORAS: number[] = [...UMBRALES_HORAS_DISPONIBLES];
 
+export type CorreoTipoEvento = 'operaciones' | 'mantenimiento';
+
+export type CorreoIncidenteEstado = 'pendiente' | 'atendida';
+
 /** Equipo asignado a un grupo de correo. */
 export interface GrupoCorreoDevice {
   rowKey: string;
@@ -19,6 +23,8 @@ export interface GrupoCorreoDevice {
   descripcionEquipo?: string;
   /** Horas en las que avisar; vacío → DEFAULT_UMBRALES_HORAS */
   umbralesHoras?: number[];
+  /** Clasificación del evento en incidentes y correo. */
+  tipoEvento?: CorreoTipoEvento;
   enabled: boolean;
 }
 
@@ -106,4 +112,44 @@ export interface AlertEngineResult {
   devicesChecked: number;
   emailsSent: number;
   errors: string[];
+  skipped?: string;
+}
+
+export interface CorreoIncidenteComentario {
+  id: string;
+  autor: string;
+  texto: string;
+  createdAt: string;
+}
+
+/** Incidente generado por cada correo de alerta enviado (gestión operaciones/mantenimiento). */
+export interface CorreoIncidente {
+  id: string;
+  envioId: string;
+  grupoId: string;
+  grupoNombre: string;
+  rowKey: string;
+  imei: string;
+  codigo: string;
+  descripcionEquipo: string;
+  nombrePlataforma: string;
+  /** YYYY-MM-DD */
+  diaCalendario: string;
+  umbralHoras: number;
+  horasFueraRango: number;
+  tipoEvento: CorreoTipoEvento;
+  estado: CorreoIncidenteEstado;
+  subject: string;
+  destinatarios: string[];
+  enviadoAt: string;
+  comentarios: CorreoIncidenteComentario[];
+  atendidaAt?: string;
+  atendidaPor?: string;
+}
+
+export interface CorreoServerStatus {
+  smtpConfigured: boolean;
+  gruposActivos: number;
+  lastRun: AlertEngineResult | null;
+  incidentesPendientes: number;
 }

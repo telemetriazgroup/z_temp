@@ -4,3 +4,8 @@ services:
     ports:
       - "3002:80"
     restart: unless-stopped
+    volumes:
+      - correo-data:/app/server/data
+
+volumes:
+  correo-data:

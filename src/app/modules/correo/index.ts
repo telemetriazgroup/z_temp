@@ -8,6 +8,11 @@ export type {
   AlertEngineResult,
   SendEmailPayload,
   SendEmailResult,
+  CorreoTipoEvento,
+  CorreoIncidenteEstado,
+  CorreoIncidente,
+  CorreoIncidenteComentario,
+  CorreoServerStatus,
 } from './types';
 export { DEFAULT_UMBRALES_HORAS, UMBRALES_HORAS_DISPONIBLES } from './types';
 export {
@@ -47,11 +52,25 @@ export {
   buildFueraDeRangoEmail,
   buildFueraDeRangoEmailLegacy,
 } from './buildAlertEmail';
-export { sendEmailViaApi } from './emailApi';
+export { sendEmailViaApi } from './correoServerApi';
 export {
-  ALERT_POLL_INTERVAL_MS,
-  runAlertEngine,
-  deviceRowKey,
-  resolveDeviceLabels,
-} from './alertEngine';
-export { CorreoAlertRunner } from './CorreoAlertRunner';
+  fetchCorreoStatus,
+  fetchServerSmtp,
+  saveServerSmtp,
+  fetchServerGrupos,
+  saveServerGrupo,
+  deleteServerGrupo,
+  fetchServerEnvios,
+  fetchServerIncidentes,
+  comentarIncidente,
+  atenderIncidente,
+  runServerAlertCycle,
+  migrateLocalCorreoToServer,
+} from './correoServerApi';
+export {
+  userHasCorreoIncidentAccess,
+  imeisCorreoForUser,
+  diaRelativoLabel,
+  tipoEventoLabel,
+} from './incidentAccess';
+export { ALERT_POLL_INTERVAL_MS, deviceRowKey, resolveDeviceLabels } from './alertEngine';
