@@ -70,6 +70,7 @@ export {
   fetchServerIncidentes,
   comentarIncidente,
   atenderIncidente,
+  deleteIncidente,
   runServerAlertCycle,
   migrateLocalCorreoToServer,
   fetchServerCiclos,
@@ -78,7 +79,10 @@ export {
 } from './correoServerApi';
 export {
   userHasCorreoIncidentAccess,
+  userMayAccessCorreoDevice,
+  rowKeysCorreoActivosForUser,
   imeisCorreoForUser,
+  incidenteVisibleParaUser,
   diaRelativoLabel,
   tipoEventoLabel,
 } from './incidentAccess';

@@ -111,10 +111,12 @@ app.get('/reefer/api/correo/envios', (req, res) => {
 });
 
 app.get('/reefer/api/correo/incidentes', (req, res) => {
-  const { imei, estado, dia } = req.query;
+  const { imei, rowKey, estado, dia } = req.query;
   const imeis = typeof imei === 'string' && imei ? imei.split(',') : null;
+  const rowKeys = typeof rowKey === 'string' && rowKey ? rowKey.split(',') : null;
   let list = getIncidentes();
-  if (imeis) list = list.filter((i) => imeis.includes(i.imei));
+  if (rowKeys) list = list.filter((i) => rowKeys.includes(i.rowKey));
+  else if (imeis) list = list.filter((i) => imeis.includes(i.imei));
   if (estado === 'pendiente' || estado === 'atendida') {
     list = list.filter((i) => i.estado === estado);
   }
@@ -128,6 +130,20 @@ app.get('/reefer/api/correo/incidentes', (req, res) => {
     data: list,
     meta: { hoy, ayer, total: list.length },
   });
+});
+
+app.delete('/reefer/api/correo/incidentes/:id', (req, res) => {
+  if (req.headers['x-ztrack-super-user'] !== 'true') {
+    return res.status(403).json({ ok: false, error: 'Solo superusuario puede eliminar incidentes' });
+  }
+  const all = getIncidentes();
+  const idx = all.findIndex((i) => i.id === req.params.id);
+  if (idx === -1) {
+    return res.status(404).json({ ok: false, error: 'Incidente no encontrado' });
+  }
+  all.splice(idx, 1);
+  writeJson('incidentes.json', all);
+  res.json({ ok: true, id: req.params.id });
 });
 
 app.patch('/reefer/api/correo/incidentes/:id', (req, res) => {

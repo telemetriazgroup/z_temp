@@ -17,9 +17,10 @@ import type {
 
 const BASE = import.meta.env.VITE_CORREO_API_BASE ?? '/reefer/api/correo';
 
-function headers(user?: string | null): HeadersInit {
+function headers(user?: string | null, superUser?: boolean): HeadersInit {
   const h: Record<string, string> = { 'Content-Type': 'application/json' };
   if (user?.trim()) h['X-ZTrack-User'] = user.trim();
+  if (superUser) h['X-ZTrack-Super-User'] = 'true';
   return h;
 }
 
@@ -110,13 +111,26 @@ export async function fetchServerEnvios(limit = 100): Promise<CorreoEnvioLog[]> 
 
 export async function fetchServerIncidentes(params?: {
   imeis?: string[];
+  rowKeys?: string[];
   estado?: 'pendiente' | 'atendida';
+  todos?: boolean;
 }): Promise<{ data: CorreoIncidente[]; meta: { hoy: string; ayer: string } }> {
   const q = new URLSearchParams();
-  if (params?.imeis?.length) q.set('imei', params.imeis.join(','));
+  if (!params?.todos) {
+    if (params?.rowKeys?.length) q.set('rowKey', params.rowKeys.join(','));
+    else if (params?.imeis?.length) q.set('imei', params.imeis.join(','));
+  }
   if (params?.estado) q.set('estado', params.estado);
   const res = await fetch(`${BASE}/incidentes?${q.toString()}`);
   return parseRes(res);
+}
+
+export async function deleteIncidente(id: string, usuario: string): Promise<void> {
+  const res = await fetch(`${BASE}/incidentes/${id}`, {
+    method: 'DELETE',
+    headers: headers(usuario, true),
+  });
+  await parseRes(res);
 }
 
 export async function comentarIncidente(

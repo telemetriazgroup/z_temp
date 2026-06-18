@@ -5,10 +5,12 @@ import {
   fetchServerIncidentes,
   comentarIncidente,
   atenderIncidente,
+  deleteIncidente,
 } from '../modules/correo/correoServerApi';
 import {
-  imeisCorreoForUser,
+  rowKeysCorreoActivosForUser,
   userHasCorreoIncidentAccess,
+  incidenteVisibleParaUser,
   diaRelativoLabel,
   tipoEventoLabel,
 } from '../modules/correo/incidentAccess';
@@ -25,12 +27,23 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../components/ui/dialog';
-import { Mail, RefreshCw, Loader2, MessageSquare, CheckCircle2 } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../components/ui/alert-dialog';
+import { Mail, RefreshCw, Loader2, MessageSquare, CheckCircle2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '../components/ui/utils';
 
 export default function IncidentesCorreo() {
   const { user } = useAuth();
+  const esSuperUser = user?.superUser === true;
   const [grupos, setGrupos] = useState<GrupoCorreo[]>([]);
   const [incidentes, setIncidentes] = useState<CorreoIncidente[]>([]);
   const [meta, setMeta] = useState({ hoy: '', ayer: '' });
@@ -39,8 +52,9 @@ export default function IncidentesCorreo() {
   const [detalle, setDetalle] = useState<CorreoIncidente | null>(null);
   const [comentario, setComentario] = useState('');
   const [accionando, setAccionando] = useState(false);
+  const [eliminarOpen, setEliminarOpen] = useState(false);
 
-  const imeis = useMemo(() => imeisCorreoForUser(user, grupos), [user, grupos]);
+  const rowKeysUsuario = useMemo(() => rowKeysCorreoActivosForUser(user, grupos), [user, grupos]);
   const tieneAcceso = userHasCorreoIncidentAccess(user, grupos);
 
   const load = useCallback(async () => {
@@ -48,23 +62,31 @@ export default function IncidentesCorreo() {
     try {
       const g = await fetchServerGrupos();
       setGrupos(g);
-      const imeiList = imeisCorreoForUser(user, g);
-      if (imeiList.length === 0) {
+
+      if (!userHasCorreoIncidentAccess(user, g)) {
         setIncidentes([]);
         return;
       }
+
+      const rowKeys = rowKeysCorreoActivosForUser(user, g);
       const res = await fetchServerIncidentes({
-        imeis: imeiList,
+        todos: esSuperUser,
+        rowKeys: esSuperUser ? undefined : rowKeys,
         estado: filtro === 'todos' ? undefined : filtro,
       });
-      setIncidentes(res.data);
+
+      const visibles = esSuperUser
+        ? res.data
+        : res.data.filter((inc) => incidenteVisibleParaUser(user, inc, g));
+
+      setIncidentes(visibles);
       setMeta({ hoy: res.meta.hoy, ayer: res.meta.ayer });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Error al cargar incidentes');
     } finally {
       setLoading(false);
     }
-  }, [user, filtro]);
+  }, [user, filtro, esSuperUser]);
 
   useEffect(() => {
     void load();
@@ -113,11 +135,28 @@ export default function IncidentesCorreo() {
     }
   };
 
+  const handleEliminar = async () => {
+    if (detalle == null || !user || !esSuperUser) return;
+    setAccionando(true);
+    try {
+      await deleteIncidente(detalle.id, user.username);
+      setEliminarOpen(false);
+      setDetalle(null);
+      setComentario('');
+      await load();
+      toast.success('Incidente eliminado');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Error al eliminar');
+    } finally {
+      setAccionando(false);
+    }
+  };
+
   if (!tieneAcceso && !loading) {
     return (
       <Card>
         <CardContent className="py-12 text-center text-muted-foreground">
-          No tiene equipos con alertas de correo asignadas.
+          No tiene equipos activos en grupos de correo asignados a su cuenta.
         </CardContent>
       </Card>
     );
@@ -132,8 +171,15 @@ export default function IncidentesCorreo() {
             Incidentes de correo
           </h1>
           <p className="text-muted-foreground mt-1">
-            Correos enviados por la plataforma, agrupados por día. Comente y cierre alarmas pendientes.
+            {esSuperUser
+              ? 'Todos los incidentes. Puede eliminar registros.'
+              : 'Incidentes de sus equipos activos en grupos de correo. Comente y cierre alarmas pendientes.'}
           </p>
+          {!esSuperUser && rowKeysUsuario.length > 0 && (
+            <p className="text-xs text-muted-foreground mt-1">
+              {rowKeysUsuario.length} equipo(s) activo(s) en su cuenta con alertas de correo.
+            </p>
+          )}
         </div>
         <Button variant="outline" onClick={() => void load()} disabled={loading}>
           <RefreshCw className={cn('h-4 w-4 mr-2', loading && 'animate-spin')} />
@@ -184,16 +230,12 @@ export default function IncidentesCorreo() {
                     <div className="flex flex-wrap items-center gap-2 mb-1">
                       <Badge
                         className={
-                          inc.tipoEvento === 'mantenimiento'
-                            ? 'bg-amber-600'
-                            : 'bg-blue-600'
+                          inc.tipoEvento === 'mantenimiento' ? 'bg-amber-600' : 'bg-blue-600'
                         }
                       >
                         {tipoEventoLabel(inc.tipoEvento)}
                       </Badge>
-                      <Badge
-                        variant={inc.estado === 'pendiente' ? 'destructive' : 'secondary'}
-                      >
+                      <Badge variant={inc.estado === 'pendiente' ? 'destructive' : 'secondary'}>
                         {inc.estado === 'pendiente' ? 'Pendiente' : 'Atendida'}
                       </Badge>
                       <Badge variant="outline">{inc.umbralHoras} h fuera de rango</Badge>
@@ -203,7 +245,9 @@ export default function IncidentesCorreo() {
                     </p>
                     <p className="text-xs text-muted-foreground mt-1">
                       {inc.grupoNombre} · IMEI {inc.imei} ·{' '}
-                      {new Date(inc.enviadoAt).toLocaleString('es-ES')}
+                      {new Date(inc.enviadoAt).toLocaleString('es-PE', {
+                        timeZone: 'America/Lima',
+                      })}
                     </p>
                   </button>
                 ))}
@@ -222,7 +266,11 @@ export default function IncidentesCorreo() {
               </DialogHeader>
               <div className="space-y-3 text-sm">
                 <div className="flex flex-wrap gap-2">
-                  <Badge className={detalle.tipoEvento === 'mantenimiento' ? 'bg-amber-600' : 'bg-blue-600'}>
+                  <Badge
+                    className={
+                      detalle.tipoEvento === 'mantenimiento' ? 'bg-amber-600' : 'bg-blue-600'
+                    }
+                  >
                     {tipoEventoLabel(detalle.tipoEvento)}
                   </Badge>
                   <Badge variant={detalle.estado === 'pendiente' ? 'destructive' : 'secondary'}>
@@ -234,8 +282,8 @@ export default function IncidentesCorreo() {
                   ({detalle.diaCalendario})
                 </p>
                 <p>
-                  <strong>Umbral:</strong> más de {detalle.umbralHoras} h (~{detalle.horasFueraRango} h
-                  acumuladas)
+                  <strong>Umbral:</strong> más de {detalle.umbralHoras} h (~{detalle.horasFueraRango}{' '}
+                  h acumuladas)
                 </p>
                 <p>
                   <strong>Equipo:</strong> {detalle.descripcionEquipo} / {detalle.nombrePlataforma}
@@ -246,7 +294,9 @@ export default function IncidentesCorreo() {
                 {detalle.atendidaAt != null && (
                   <p className="text-emerald-700">
                     Atendida por {detalle.atendidaPor} el{' '}
-                    {new Date(detalle.atendidaAt).toLocaleString('es-ES')}
+                    {new Date(detalle.atendidaAt).toLocaleString('es-PE', {
+                      timeZone: 'America/Lima',
+                    })}
                   </p>
                 )}
                 {(detalle.comentarios?.length ?? 0) > 0 && (
@@ -258,7 +308,9 @@ export default function IncidentesCorreo() {
                     {detalle.comentarios.map((c) => (
                       <div key={c.id} className="text-xs border-l-2 pl-2 border-primary/40">
                         <span className="font-medium">{c.autor}</span> ·{' '}
-                        {new Date(c.createdAt).toLocaleString('es-ES')}
+                        {new Date(c.createdAt).toLocaleString('es-PE', {
+                          timeZone: 'America/Lima',
+                        })}
                         <p className="mt-0.5">{c.texto}</p>
                       </div>
                     ))}
@@ -274,6 +326,17 @@ export default function IncidentesCorreo() {
                 )}
               </div>
               <DialogFooter className="flex-col sm:flex-row gap-2">
+                {esSuperUser && (
+                  <Button
+                    variant="destructive"
+                    disabled={accionando}
+                    onClick={() => setEliminarOpen(true)}
+                    className="sm:mr-auto"
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Eliminar
+                  </Button>
+                )}
                 {detalle.estado === 'pendiente' && (
                   <>
                     <Button
@@ -295,6 +358,30 @@ export default function IncidentesCorreo() {
           )}
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={eliminarOpen} onOpenChange={setEliminarOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar incidente?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Se borrará permanentemente del servidor. Solo superusuario puede hacer esto.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={accionando}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={accionando}
+              onClick={(e) => {
+                e.preventDefault();
+                void handleEliminar();
+              }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {accionando ? 'Eliminando…' : 'Eliminar'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
