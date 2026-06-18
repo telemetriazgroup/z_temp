@@ -164,6 +164,21 @@ export async function fetchServerCiclo(id: string): Promise<CorreoCicloAnalisis>
   return body.data;
 }
 
+export async function clearCorreoHistorial(options?: {
+  envios?: boolean;
+  ciclos?: boolean;
+  incidentes?: boolean;
+  episodios?: boolean;
+}): Promise<string[]> {
+  const res = await fetch(`${BASE}/historial/limpiar`, {
+    method: 'POST',
+    headers: headers(),
+    body: JSON.stringify(options ?? {}),
+  });
+  const body = await parseRes<{ cleared: string[] }>(res);
+  return body.cleared;
+}
+
 export async function migrateLocalCorreoToServer(payload: {
   smtp?: SmtpConfig | null;
   grupos?: GrupoCorreo[];

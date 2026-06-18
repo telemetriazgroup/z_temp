@@ -181,6 +181,37 @@ app.get('/reefer/api/correo/ciclos/:id', (req, res) => {
   res.json({ ok: true, data: ciclo });
 });
 
+app.post('/reefer/api/correo/historial/limpiar', (req, res) => {
+  const {
+    envios: limpiarEnvios = true,
+    ciclos: limpiarCiclos = true,
+    incidentes: limpiarIncidentes = true,
+    episodios: limpiarEpisodios = false,
+  } = req.body ?? {};
+  const cleared = [];
+  try {
+    if (limpiarEnvios) {
+      writeJson('envios.json', []);
+      cleared.push('envios');
+    }
+    if (limpiarCiclos) {
+      writeJson('ciclos.json', []);
+      cleared.push('ciclos');
+    }
+    if (limpiarIncidentes) {
+      writeJson('incidentes.json', []);
+      cleared.push('incidentes');
+    }
+    if (limpiarEpisodios) {
+      writeJson('state.json', { episodes: {}, lastRecovered: {} });
+      cleared.push('episodios');
+    }
+    res.json({ ok: true, cleared });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 app.post('/reefer/api/correo/run', async (_req, res) => {
   try {
     const result = await runAlertCycle({ trigger: 'manual' });

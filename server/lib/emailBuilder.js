@@ -1,25 +1,12 @@
+import { formatDateTimeTz, formatDateSubjectTz } from './timezone.js';
+
 function fmtTemp(v) {
   if (v == null || Number.isNaN(v)) return '—';
   return `${v} C°`;
 }
 
 function fmtDateShort(iso) {
-  if (iso == null) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  const h = String(d.getHours()).padStart(2, '0');
-  const min = String(d.getMinutes()).padStart(2, '0');
-  return `${y}/${m}/${day} ${h}:${min}`;
-}
-
-function fmtDateSubject(iso) {
-  if (iso == null) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
-  return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
+  return formatDateTimeTz(iso);
 }
 
 function diaLabel(diaCalendario, hoy) {
@@ -37,19 +24,25 @@ export function buildFueraDeRangoEmail(params) {
     horasFueraRango,
     diaCalendario,
     hoy,
+    referenciaDesde,
     tipoEvento = 'operaciones',
     esPrueba = false,
   } = params;
 
   const d = dispositivo.ultimo_dato ?? {};
-  const fechaAlerta = fmtDateSubject(new Date().toISOString());
+  const fechaAlerta = formatDateSubjectTz(new Date());
   const tipoAlarma = esPrueba ? 'FUERA DE RANGO (PRUEBA)' : 'FUERA DE RANGO';
   const tipoTxt = tipoEvento === 'mantenimiento' ? 'Mantenimiento' : 'Operaciones';
   const subject = `REEFER ${dispositivoReeferId} - ${nombrePlataforma} - ALERTA ${tipoAlarma} ${fechaAlerta}`;
 
+  const refTexto =
+    referenciaDesde != null
+      ? ` (referencia fuera de rango desde ${formatDateTimeTz(referenciaDesde)})`
+      : '';
+
   const tiempoTexto = esPrueba
     ? `Simulación: mayor a ${umbralHoras} h ${diaLabel(diaCalendario, hoy)} (~${horasFueraRango} h).`
-    : `Mayor a ${umbralHoras} horas ${diaLabel(diaCalendario, hoy)} (acumulado ~${horasFueraRango} h).`;
+    : `Mayor a ${umbralHoras} horas ${diaLabel(diaCalendario, hoy)} (acumulado ~${horasFueraRango} h)${refTexto}.`;
 
   const intro = esPrueba
     ? 'Se envía este correo de PRUEBA generado por la plataforma ZTRACK.'
@@ -67,8 +60,11 @@ export function buildFueraDeRangoEmail(params) {
     `• Tipo de evento: ${tipoTxt}`,
     `• Tipo de Alarma: ${tipoAlarma}`,
     `• Tiempo fuera de rango: ${tiempoTexto}`,
-    `• Día de referencia: ${diaCalendario}`,
-    `• Última Comunicación registrada: ${fmtDateShort(dispositivo.ultima_actualizacion)}`,
+    `• Día de referencia: ${diaCalendario} (GMT-5)`,
+    ...(referenciaDesde
+      ? [`• Inicio fuera de rango: ${formatDateTimeTz(referenciaDesde)} (GMT-5)`]
+      : []),
+    `• Última Comunicación registrada: ${fmtDateShort(dispositivo.ultima_actualizacion)} (GMT-5)`,
     '',
     'Últimos parámetros registrados del equipo :',
     `• Set Point: ${fmtTemp(d.set_point)}`,
@@ -92,8 +88,9 @@ export function buildFueraDeRangoEmail(params) {
 <li><strong>Nombre en la plataforma:</strong> ${nombrePlataforma}</li>
 <li><strong>Tipo de evento:</strong> ${tipoTxt}</li>
 <li><strong>Tiempo fuera de rango:</strong> ${tiempoTexto}</li>
-<li><strong>Día de referencia:</strong> ${diaCalendario}</li>
-<li><strong>Última comunicación:</strong> ${fmtDateShort(dispositivo.ultima_actualizacion)}</li>
+<li><strong>Día de referencia:</strong> ${diaCalendario} (GMT-5)</li>
+${referenciaDesde ? `<li><strong>Inicio fuera de rango:</strong> ${formatDateTimeTz(referenciaDesde)} (GMT-5)</li>` : ''}
+<li><strong>Última comunicación:</strong> ${fmtDateShort(dispositivo.ultima_actualizacion)} (GMT-5)</li>
 </ul>
 <p><strong>Temperaturas:</strong> Set ${fmtTemp(d.set_point)} · Supply ${fmtTemp(d.temp_supply_1)} · Return ${fmtTemp(d.return_air)}</p>
 <p>Atentamente,<br><strong>ZTRACK-ZGROUP</strong></p></body></html>`;

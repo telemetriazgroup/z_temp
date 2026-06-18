@@ -6,6 +6,7 @@ import {
   normalizeUmbrales,
   todayKey,
 } from './store.js';
+import { formatDateTimeTz } from './timezone.js';
 import { buildFueraDeRangoEmail } from './emailBuilder.js';
 import { fetchAllDispositivos, deviceRowKey } from './telemetry.js';
 import { getSmtpConfig } from './smtpRepository.js';
@@ -62,11 +63,7 @@ function startEpisode(state, rowKey, since, meta = {}) {
 }
 
 function formatRef(iso) {
-  try {
-    return new Date(iso).toLocaleString('es-ES');
-  } catch {
-    return iso;
-  }
+  return formatDateTimeTz(iso);
 }
 
 function getEnvios() {
@@ -101,13 +98,33 @@ function saveCiclo(ciclo) {
   return ciclo;
 }
 
-function resolveLabels(assignment) {
+function resolveLabels(assignment, dispositivo) {
   const desc = assignment.descripcionEquipo?.trim();
-  const platform = desc || assignment.imei;
+  const imei = dispositivo?.imei ?? assignment.imei ?? '—';
+  const codigo = dispositivo?.codigo ?? assignment.codigo ?? '';
+  const nombrePlataforma = codigo ? `${codigo} · ${imei}` : imei;
   return {
-    dispositivoReeferId: desc || platform,
-    nombrePlataforma: platform,
+    dispositivoReeferId: desc || nombrePlataforma,
+    nombrePlataforma,
   };
+}
+
+/** Marca el umbral enviado y los inferiores del episodio (evita reenvíos acumulados). */
+function markUmbralEnviado(episode, umbralHoras, umbrales) {
+  if (!episode.sentUmbrales) episode.sentUmbrales = [];
+  for (const u of umbrales) {
+    if (u <= umbralHoras && !episode.sentUmbrales.includes(u)) {
+      episode.sentUmbrales.push(u);
+    }
+  }
+  episode.sentUmbrales.sort((a, b) => a - b);
+}
+
+/** Solo el mayor umbral alcanzado y aún no notificado en el episodio. */
+function pickUmbralPendiente(umbrales, horasEnteras, sentUmbrales) {
+  const eligible = umbrales.filter((u) => horasEnteras >= u && !sentUmbrales.includes(u));
+  if (eligible.length === 0) return null;
+  return Math.max(...eligible);
 }
 
 async function ensureOutOfRangeReference(state, assignment, dispositivo, now) {
@@ -148,8 +165,8 @@ async function ensureOutOfRangeReference(state, assignment, dispositivo, now) {
   };
 }
 
-function baseEval(grupo, assignment) {
-  const { dispositivoReeferId } = resolveLabels(assignment);
+function baseEval(grupo, assignment, dispositivo) {
+  const { dispositivoReeferId } = resolveLabels(assignment, dispositivo);
   return {
     rowKey: assignment.rowKey,
     imei: assignment.imei,
@@ -248,7 +265,8 @@ export async function runAlertCycle(options = {}) {
 
   for (const grupo of allGrupos) {
     for (const assignment of grupo.devices ?? []) {
-      const base = baseEval(grupo, assignment);
+      const dispositivo = deviceMap.get(assignment.rowKey) ?? null;
+      const base = baseEval(grupo, assignment, dispositivo);
 
       if (!grupo.enabled) {
         pushEval(evaluaciones, {
@@ -282,9 +300,8 @@ export async function runAlertCycle(options = {}) {
       }
 
       result.devicesChecked++;
-      const dispositivo = deviceMap.get(assignment.rowKey);
 
-      if (!dispositivo) {
+      if (dispositivo == null) {
         pushEval(evaluaciones, {
           ...base,
           estado: 'sin_telemetria',
@@ -375,21 +392,19 @@ export async function runAlertCycle(options = {}) {
       const horasFuera = horasDesdeReferencia(episode.since, now);
       const horasEnteras = horasEnterasDesdeReferencia(episode.since, now);
       const sentUmbrales = episode.sentUmbrales ?? [];
-      const pending = umbrales.filter((u) => horasEnteras >= u && !sentUmbrales.includes(u));
-      const nextUmbral = umbrales.find((u) => horasEnteras < u);
-      const horasTexto =
-        horasFuera >= 10
-          ? `${Math.round(horasFuera * 10) / 10} h`
-          : `${Math.round(horasFuera * 10) / 10} h`;
+      const umbralHoras = pickUmbralPendiente(umbrales, horasEnteras, sentUmbrales);
+      const nextUmbral = umbrales.find((u) => horasEnteras < u && !sentUmbrales.includes(u));
+      const horasTexto = `${Math.round(horasFuera * 10) / 10} h`;
 
-      if (pending.length === 0) {
+      if (umbralHoras == null) {
         let criterio;
         if (sentUmbrales.length > 0) {
-          criterio = `FUERA DE RANGO ${horasTexto} desde ${formatRef(episode.since)}. Umbrales ya notificados en este episodio: ${sentUmbrales.join(', ')} h. ${criterioRef}`;
+          const ultimo = sentUmbrales[sentUmbrales.length - 1];
+          criterio = `FUERA DE RANGO ${horasTexto} desde ${formatRef(episode.since)} (GMT-5). Último aviso: ${ultimo} h. ${nextUmbral != null ? `Próximo: ${nextUmbral} h.` : 'Sin más umbrales.'} ${criterioRef}`;
         } else if (nextUmbral != null) {
-          criterio = `FUERA DE RANGO ${horasTexto} desde ${formatRef(episode.since)}. Próximo aviso al alcanzar ${nextUmbral} h (faltan ~${Math.max(0, nextUmbral - horasFuera).toFixed(1)} h). ${criterioRef}`;
+          criterio = `FUERA DE RANGO ${horasTexto} desde ${formatRef(episode.since)} (GMT-5). Próximo aviso al alcanzar ${nextUmbral} h (faltan ~${Math.max(0, nextUmbral - horasFuera).toFixed(1)} h). ${criterioRef}`;
         } else {
-          criterio = `FUERA DE RANGO ${horasTexto} desde ${formatRef(episode.since)}. Sin umbrales pendientes. ${criterioRef}`;
+          criterio = `FUERA DE RANGO ${horasTexto} desde ${formatRef(episode.since)} (GMT-5). Sin umbrales pendientes. ${criterioRef}`;
         }
         pushEval(evaluaciones, {
           ...base,
@@ -411,10 +426,10 @@ export async function runAlertCycle(options = {}) {
         continue;
       }
 
-      const { dispositivoReeferId, nombrePlataforma } = resolveLabels(assignment);
+      const { dispositivoReeferId, nombrePlataforma } = resolveLabels(assignment, dispositivo);
       const tipoEvento = assignment.tipoEvento === 'mantenimiento' ? 'mantenimiento' : 'operaciones';
 
-      for (const umbralHoras of pending) {
+      {
         const content = buildFueraDeRangoEmail({
           dispositivo,
           dispositivoReeferId,
@@ -424,17 +439,16 @@ export async function runAlertCycle(options = {}) {
           horasFueraRango: horasEnteras,
           diaCalendario: hoy,
           hoy,
+          referenciaDesde: episode.since,
           tipoEvento,
         });
 
         const envioId = uid('envio');
-        const criterioEnvio = `FUERA DE RANGO ${horasTexto} desde ${formatRef(episode.since)}. Se dispara umbral ${umbralHoras} h (tipo ${tipoEvento}). ${consultaHistorial ? 'Referencia obtenida por consulta 12 h.' : 'Referencia persistida.'} Envío a ${grupo.emails.join(', ')}.`;
+        const criterioEnvio = `FUERA DE RANGO ${horasTexto} desde ${formatRef(episode.since)} (GMT-5). Se envía solo umbral ${umbralHoras} h (tipo ${tipoEvento}). ${consultaHistorial ? 'Referencia por consulta 12 h.' : 'Referencia persistida.'} Destino: ${grupo.emails.join(', ')}.`;
 
         try {
           const messageId = await sendMail(smtp, grupo.emails, content);
-          if (!episode.sentUmbrales.includes(umbralHoras)) {
-            episode.sentUmbrales.push(umbralHoras);
-          }
+          markUmbralEnviado(episode, umbralHoras, umbrales);
 
           addEnvio({
             id: envioId,
@@ -513,17 +527,17 @@ export async function runAlertCycle(options = {}) {
             codigo: dispositivo.codigo ?? '—',
             descripcionEquipo: dispositivoReeferId,
             nombrePlataforma,
-          umbralHoras,
-          horasFueraRango: horasEnteras,
-          referenciaDesde: episode.since,
-          diaCalendario: hoy,
-          tipoEvento,
-          destinatarios: [...grupo.emails],
-          subject: content.subject,
-          sentAt: new Date().toISOString(),
-          success: false,
-          error: msg,
-        });
+            umbralHoras,
+            horasFueraRango: horasEnteras,
+            referenciaDesde: episode.since,
+            diaCalendario: hoy,
+            tipoEvento,
+            destinatarios: [...grupo.emails],
+            subject: content.subject,
+            sentAt: new Date().toISOString(),
+            success: false,
+            error: msg,
+          });
           pushEval(evaluaciones, {
             ...base,
             estado: 'error_envio',

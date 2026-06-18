@@ -32,12 +32,14 @@ import {
   migrateLocalCorreoToServer,
   fetchServerCiclos,
   sendTestEmailViaServer,
+  clearCorreoHistorial,
 } from '../modules/correo/correoServerApi';
 import type {
   CorreoEnvioLog,
   CorreoServerStatus,
   CorreoCicloAnalisis,
   CicloEvaluacionDispositivo,
+  SmtpConfigSaveInput,
 } from '../modules/correo/types';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -63,6 +65,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../components/ui/alert-dialog';
 import {
   Select,
   SelectContent,
@@ -155,6 +167,14 @@ export default function ConfiguracionCorreo() {
   const [emailsDraft, setEmailsDraft] = useState('');
   const [ciclos, setCiclos] = useState<CorreoCicloAnalisis[]>([]);
   const [cicloDetalle, setCicloDetalle] = useState<CorreoCicloAnalisis | null>(null);
+  const [limpiarOpen, setLimpiarOpen] = useState(false);
+  const [limpiando, setLimpiando] = useState(false);
+  const [limpiarOpts, setLimpiarOpts] = useState({
+    envios: true,
+    ciclos: true,
+    incidentes: true,
+    episodios: false,
+  });
 
   const localNames = useMemo(() => readDeviceLocalNames(), []);
 
@@ -225,6 +245,24 @@ export default function ConfiguracionCorreo() {
 
   const smtpReadyOnServer = (): boolean =>
     Boolean(smtpUser.trim() && (smtpPasswordSaved || smtpPass.replace(/\s/g, '')));
+
+  const handleLimpiarHistorial = async () => {
+    if (!limpiarOpts.envios && !limpiarOpts.ciclos && !limpiarOpts.incidentes && !limpiarOpts.episodios) {
+      toast.error('Seleccione al menos un tipo de historial a eliminar');
+      return;
+    }
+    setLimpiando(true);
+    try {
+      const cleared = await clearCorreoHistorial(limpiarOpts);
+      setLimpiarOpen(false);
+      await refreshLogs();
+      toast.success(`Historial eliminado: ${cleared.join(', ')}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Error al limpiar historial');
+    } finally {
+      setLimpiando(false);
+    }
+  };
 
   const buildSmtpSavePayload = (): SmtpConfigSaveInput | null => {
     const userVal = smtpUser.trim();
@@ -595,9 +633,9 @@ export default function ConfiguracionCorreo() {
           <div className="flex justify-between items-center">
             <p className="text-sm text-muted-foreground">
               Un grupo agrupa destinatarios y uno o más dispositivos. Si un equipo está fuera de
-              rango, el servidor consulta las últimas 12 h (misma fuente que la gráfica) para fijar
-              la referencia de inicio; luego cuenta desde ahí y envía cada umbral (2 h, 3 h …) una
-              sola vez por episodio. Al volver EN RANGO se cierra la referencia.
+              rango, el servidor consulta las últimas 12 h para fijar la referencia. Solo se envía
+              un correo por umbral alcanzado (a 12 h solo el de 12 h; el siguiente será a 13 h).
+              Complete «Descripción / ID Reefer» en cada equipo para el asunto del correo.
             </p>
             <Button onClick={openNewGrupo}>
               <Plus className="h-4 w-4 mr-2" />
@@ -709,15 +747,22 @@ export default function ConfiguracionCorreo() {
                 Registro de envíos
               </CardTitle>
               <CardDescription>
-                Cada umbral enviado queda registrado; no se repite hasta un nuevo episodio (vuelta a
-                EN RANGO).
+                Un solo correo por umbral alcanzado (ej. a las 12 h solo aviso de 12 h, no 2…11).
+                Fechas en GMT-5. No se repite el mismo umbral hasta un nuevo episodio (vuelta EN
+                RANGO).
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <Button variant="outline" size="sm" className="mb-4" onClick={() => void refreshLogs()}>
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Actualizar
-              </Button>
+              <div className="flex flex-wrap gap-2 mb-4">
+                <Button variant="outline" size="sm" onClick={() => void refreshLogs()}>
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Actualizar
+                </Button>
+                <Button variant="destructive" size="sm" onClick={() => setLimpiarOpen(true)}>
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Limpiar historial
+                </Button>
+              </div>
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -733,7 +778,7 @@ export default function ConfiguracionCorreo() {
                   {envioLogs.map((log) => (
                     <TableRow key={log.id}>
                       <TableCell className="text-xs whitespace-nowrap">
-                        {new Date(log.sentAt).toLocaleString('es-ES')}
+                        {new Date(log.sentAt).toLocaleString('es-PE', { timeZone: 'America/Lima' })}
                       </TableCell>
                       <TableCell>{log.grupoNombre}</TableCell>
                       <TableCell className="text-xs">
@@ -1141,6 +1186,64 @@ export default function ConfiguracionCorreo() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={limpiarOpen} onOpenChange={setLimpiarOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar historial de correo?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Esta acción no se puede deshacer. Seleccione qué registros borrar del servidor.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="grid gap-3 py-2">
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={limpiarOpts.envios}
+                onCheckedChange={(v) => setLimpiarOpts((o) => ({ ...o, envios: v === true }))}
+              />
+              Registro de envíos
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={limpiarOpts.ciclos}
+                onCheckedChange={(v) => setLimpiarOpts((o) => ({ ...o, ciclos: v === true }))}
+              />
+              Ciclos de análisis
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={limpiarOpts.incidentes}
+                onCheckedChange={(v) =>
+                  setLimpiarOpts((o) => ({ ...o, incidentes: v === true }))
+                }
+              />
+              Incidentes de correo
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={limpiarOpts.episodios}
+                onCheckedChange={(v) =>
+                  setLimpiarOpts((o) => ({ ...o, episodios: v === true }))
+                }
+              />
+              Referencias de episodios fuera de rango (state)
+            </label>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={limpiando}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={limpiando}
+              onClick={(e) => {
+                e.preventDefault();
+                void handleLimpiarHistorial();
+              }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {limpiando ? 'Eliminando…' : 'Eliminar seleccionado'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

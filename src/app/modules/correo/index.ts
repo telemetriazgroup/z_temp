@@ -74,6 +74,7 @@ export {
   migrateLocalCorreoToServer,
   fetchServerCiclos,
   fetchServerCiclo,
+  clearCorreoHistorial,
 } from './correoServerApi';
 export {
   userHasCorreoIncidentAccess,

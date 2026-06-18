@@ -43,15 +43,4 @@ export function normalizeUmbrales(list) {
   return [...new Set(src.filter((h) => h >= 2 && h <= 24))].sort((a, b) => a - b);
 }
 
-export function todayKey(d = new Date()) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
-export function yesterdayKey(d = new Date()) {
-  const x = new Date(d);
-  x.setDate(x.getDate() - 1);
-  return todayKey(x);
-}
+export { todayKey, yesterdayKey, formatoFechaQueryApi, formatDateTimeTz, formatDateSubjectTz, CORREO_TZ } from './timezone.js';

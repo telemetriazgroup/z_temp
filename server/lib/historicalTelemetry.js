@@ -1,13 +1,10 @@
 const TUNEL_BASE = process.env.TUNEL_API_BASE ?? 'http://161.132.53.51:9051';
 const STARCOOL_BASE = process.env.STARCOOL_API_BASE ?? 'http://161.132.206.104:9112';
 
+import { formatoFechaQueryApi } from './timezone.js';
+
 const MS_HORA = 60 * 60 * 1000;
 export const HISTORICAL_WINDOW_HOURS = 12;
-
-function formatoFechaQueryApi(d) {
-  const p = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
-}
 
 function buildHistorialUrl(codigo, imei) {
   const safe = encodeURIComponent(imei);
