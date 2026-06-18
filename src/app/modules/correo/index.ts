@@ -13,6 +13,8 @@ export type {
   CorreoIncidente,
   CorreoIncidenteComentario,
   CorreoServerStatus,
+  SmtpConfigServerView,
+  SmtpConfigSaveInput,
 } from './types';
 export { DEFAULT_UMBRALES_HORAS, UMBRALES_HORAS_DISPONIBLES } from './types';
 export {

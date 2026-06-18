@@ -11,9 +11,7 @@ import { fetchAllDispositivos, deviceRowKey } from './telemetry.js';
 
 const POLL_MINUTES = Number(process.env.CORREO_POLL_MINUTES ?? 2);
 
-function getSmtp() {
-  return readJson('smtp.json', null);
-}
+import { getSmtpConfig } from './smtpRepository.js';
 
 function getGrupos() {
   return readJson('grupos.json', []);
@@ -105,7 +103,7 @@ export async function runAlertCycle() {
   const checkedAt = new Date().toISOString();
   const result = { checkedAt, devicesChecked: 0, emailsSent: 0, errors: [] };
 
-  const smtp = getSmtp();
+  const smtp = getSmtpConfig();
   if (!smtp?.user || !smtp?.appPassword) {
     return { ...result, skipped: 'smtp_not_configured' };
   }
@@ -253,7 +251,6 @@ export function getLastRun() {
 }
 
 export {
-  getSmtp,
   getGrupos,
   getEnvios,
   getIncidentes,

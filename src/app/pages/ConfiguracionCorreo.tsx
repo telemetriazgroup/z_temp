@@ -98,6 +98,8 @@ export default function ConfiguracionCorreo() {
   const { user } = useAuth();
   const [smtpUser, setSmtpUser] = useState('');
   const [smtpPass, setSmtpPass] = useState('');
+  const [smtpPasswordSaved, setSmtpPasswordSaved] = useState(false);
+  const [smtpUpdatedAt, setSmtpUpdatedAt] = useState<string | null>(null);
   const [smtpFromName, setSmtpFromName] = useState('ZTRACK TELEMETRY');
   const [dispositivos, setDispositivos] = useState<DispositivoUltimoEstado[]>([]);
   const [grupos, setGrupos] = useState<GrupoCorreo[]>([]);
@@ -120,24 +122,33 @@ export default function ConfiguracionCorreo() {
   const loadServerConfig = useCallback(async () => {
     try {
       let g = await fetchServerGrupos();
-      const smtpSrv = await fetchServerSmtp();
-      if (g.length === 0) {
-        const localG = getGruposCorreo();
-        const localS = readSmtpConfig();
-        if (localG.length > 0 || localS) {
-          await migrateLocalCorreoToServer({ smtp: localS, grupos: localG });
-          g = await fetchServerGrupos();
-          toast.message('Configuración local migrada al servidor');
-        }
+      const localG = getGruposCorreo();
+      const localS = readSmtpConfig();
+      let smtpLoaded = await fetchServerSmtp();
+
+      if (!smtpLoaded?.hasPassword && localS?.user && localS.appPassword) {
+        smtpLoaded = await saveServerSmtp({
+          user: localS.user,
+          fromName: localS.fromName,
+          appPassword: localS.appPassword,
+        });
+        toast.message('Remitente migrado a la base interna del servidor');
+      } else if (g.length === 0 && (localG.length > 0 || localS)) {
+        await migrateLocalCorreoToServer({ smtp: localS, grupos: localG });
+        g = await fetchServerGrupos();
+        smtpLoaded = await fetchServerSmtp();
+        toast.message('Configuración local migrada al servidor');
       }
+
       setGrupos(g);
-      if (smtpSrv) {
-        setSmtpUser(smtpSrv.user);
-        setSmtpFromName(smtpSrv.fromName);
-        if (!smtpSrv.hasPassword) setSmtpPass('');
+      if (smtpLoaded) {
+        setSmtpUser(smtpLoaded.user);
+        setSmtpFromName(smtpLoaded.fromName);
+        setSmtpPasswordSaved(smtpLoaded.hasPassword);
+        setSmtpUpdatedAt(smtpLoaded.updatedAt);
+        setSmtpPass('');
       }
-      const logs = await fetchServerEnvios(80);
-      setEnvioLogs(logs);
+      setEnvioLogs(await fetchServerEnvios(80));
       setServerStatus(await fetchCorreoStatus());
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Error al cargar config del servidor');
@@ -171,28 +182,41 @@ export default function ConfiguracionCorreo() {
   };
   const refreshGrupos = async () => setGrupos(await fetchServerGrupos());
 
-  const smtpConfig = (): SmtpConfig | null => {
+  const smtpReadyOnServer = (): boolean =>
+    Boolean(smtpUser.trim() && (smtpPasswordSaved || smtpPass.replace(/\s/g, '')));
+
+  const buildSmtpSavePayload = (): SmtpConfigSaveInput | null => {
     const userVal = smtpUser.trim();
+    if (!userVal) return null;
     const pass = smtpPass.replace(/\s/g, '');
-    if (!userVal || !pass) return null;
+    if (!pass && !smtpPasswordSaved) return null;
     return {
       user: userVal,
-      appPassword: pass,
       fromName: smtpFromName.trim() || 'ZTRACK TELEMETRY',
+      ...(pass ? { appPassword: pass } : {}),
     };
   };
 
   const handleSaveSmtp = async () => {
-    const cfg = smtpConfig();
-    if (cfg == null) {
-      toast.error('Indique correo Gmail y clave de aplicación');
+    const payload = buildSmtpSavePayload();
+    if (payload == null) {
+      toast.error('Indique correo Gmail. La clave es obligatoria solo la primera vez.');
       return;
     }
     try {
-      await saveServerSmtp(cfg);
-      persistSmtpConfig(cfg);
+      const saved = await saveServerSmtp(payload);
+      if (payload.appPassword) {
+        persistSmtpConfig({
+          user: saved.user,
+          appPassword: payload.appPassword,
+          fromName: saved.fromName,
+        });
+      }
+      setSmtpPasswordSaved(saved.hasPassword);
+      setSmtpUpdatedAt(saved.updatedAt);
+      setSmtpPass('');
       setServerStatus(await fetchCorreoStatus());
-      toast.success('Remitente guardado en el servidor');
+      toast.success('Remitente guardado en la base interna del servidor');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Error al guardar SMTP');
     }
@@ -356,9 +380,8 @@ export default function ConfiguracionCorreo() {
   };
 
   const handleSendGroupTest = async (grupo: GrupoCorreo) => {
-    const cfg = smtpConfig();
-    if (cfg == null) {
-      toast.error('Configure el remitente Gmail primero');
+    if (!smtpReadyOnServer() && !serverStatus?.smtpConfigured) {
+      toast.error('Guarde el remitente Gmail en el servidor antes de enviar');
       return;
     }
     if (grupo.devices.length === 0) {
@@ -372,7 +395,6 @@ export default function ConfiguracionCorreo() {
       return;
     }
 
-    persistSmtpConfig(cfg);
     setSendingTest(true);
     try {
       const nombrePlat = displayNameForDevice(
@@ -393,7 +415,6 @@ export default function ConfiguracionCorreo() {
         esPrueba: true,
       });
       await sendTestEmailViaServer({
-        smtp: cfg,
         to: grupo.emails,
         subject: content.subject,
         text: content.text,
@@ -454,9 +475,22 @@ export default function ConfiguracionCorreo() {
         <TabsContent value="remitente" className="mt-4">
           <Card>
             <CardHeader>
-              <CardTitle>Remitente principal (Gmail)</CardTitle>
+              <CardTitle className="flex flex-wrap items-center gap-2">
+                Remitente principal (Gmail)
+                {smtpPasswordSaved && (
+                  <Badge className="bg-emerald-600">Guardado en servidor</Badge>
+                )}
+              </CardTitle>
               <CardDescription>
-                Ejemplo: ZTRACK TELEMETRY &lt;ztrack@zgroup.com.pe&gt; con clave de aplicación Google.
+                Persistido en la base interna del servidor. El sistema de alertas lo usa
+                automáticamente; no hace falta volver a guardarlo en cada envío.
+                {smtpUpdatedAt != null && (
+                  <>
+                    {' '}
+                    Última modificación:{' '}
+                    {new Date(smtpUpdatedAt).toLocaleString('es-ES')}.
+                  </>
+                )}
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-2">
@@ -471,12 +505,17 @@ export default function ConfiguracionCorreo() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="smtp-pass">Clave de aplicación</Label>
+                <Label htmlFor="smtp-pass">Clave de aplicación Gmail</Label>
                 <Input
                   id="smtp-pass"
                   type="password"
                   value={smtpPass}
                   onChange={(e) => setSmtpPass(e.target.value)}
+                  placeholder={
+                    smtpPasswordSaved
+                      ? 'Dejar vacío para mantener la clave guardada'
+                      : '16 caracteres — obligatoria la primera vez'
+                  }
                 />
               </div>
               <div className="space-y-2">

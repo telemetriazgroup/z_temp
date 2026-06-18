@@ -44,7 +44,7 @@ COPY --from=builder /app/dist /usr/share/nginx/html/reefer
 
 COPY server /app/server
 WORKDIR /app/server
-RUN npm install --omit=dev
+RUN mkdir -p /app/server/data && npm install --omit=dev
 
 EXPOSE 80
 

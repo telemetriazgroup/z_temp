@@ -7,6 +7,8 @@ import type {
   AlertEngineResult,
   SendEmailPayload,
   SendEmailResult,
+  SmtpConfigServerView,
+  SmtpConfigSaveInput,
 } from './types';
 
 const BASE = import.meta.env.VITE_CORREO_API_BASE ?? '/reefer/api/correo';
@@ -29,32 +31,41 @@ export async function fetchCorreoStatus(): Promise<CorreoServerStatus> {
   const res = await fetch(`${BASE}/status`);
   const body = await parseRes<{
     smtpConfigured: boolean;
+    smtpUpdatedAt?: string | null;
     gruposActivos: number;
     lastRun: AlertEngineResult | null;
     incidentesPendientes: number;
   }>(res);
   return {
     smtpConfigured: body.smtpConfigured,
+    smtpUpdatedAt: body.smtpUpdatedAt ?? null,
     gruposActivos: body.gruposActivos,
     lastRun: body.lastRun,
     incidentesPendientes: body.incidentesPendientes,
   };
 }
 
-export async function fetchServerSmtp(): Promise<(Omit<SmtpConfig, 'appPassword'> & { hasPassword: boolean }) | null> {
+export async function fetchServerSmtp(): Promise<SmtpConfigServerView | null> {
   const res = await fetch(`${BASE}/config/smtp`);
-  const body = await parseRes<{ data: { user: string; fromName: string; hasPassword: boolean } | null }>(res);
-  if (body.data == null) return null;
-  return { user: body.data.user, fromName: body.data.fromName, hasPassword: body.data.hasPassword, appPassword: '' };
+  const body = await parseRes<{ data: SmtpConfigServerView | null }>(res);
+  return body.data;
 }
 
-export async function saveServerSmtp(config: SmtpConfig): Promise<void> {
+export async function saveServerSmtp(config: SmtpConfigSaveInput): Promise<SmtpConfigServerView> {
+  const payload: SmtpConfigSaveInput = {
+    user: config.user.trim(),
+    fromName: config.fromName.trim() || 'ZTRACK TELEMETRY',
+  };
+  const pass = config.appPassword?.replace(/\s/g, '') ?? '';
+  if (pass) payload.appPassword = pass;
+
   const res = await fetch(`${BASE}/config/smtp`, {
     method: 'PUT',
     headers: headers(),
-    body: JSON.stringify(config),
+    body: JSON.stringify(payload),
   });
-  await parseRes(res);
+  const body = await parseRes<{ data: SmtpConfigServerView }>(res);
+  return body.data;
 }
 
 export async function fetchServerGrupos(): Promise<GrupoCorreo[]> {

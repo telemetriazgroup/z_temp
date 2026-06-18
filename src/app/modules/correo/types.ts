@@ -149,7 +149,23 @@ export interface CorreoIncidente {
 
 export interface CorreoServerStatus {
   smtpConfigured: boolean;
+  smtpUpdatedAt?: string | null;
   gruposActivos: number;
   lastRun: AlertEngineResult | null;
   incidentesPendientes: number;
 }
+
+/** Vista pública del SMTP guardado en servidor (sin contraseña). */
+export interface SmtpConfigServerView {
+  user: string;
+  fromName: string;
+  hasPassword: boolean;
+  updatedAt: string | null;
+}
+
+export type SmtpConfigSaveInput = {
+  user: string;
+  fromName: string;
+  /** Omitir o vacío = mantener clave ya guardada en servidor. */
+  appPassword?: string;
+};

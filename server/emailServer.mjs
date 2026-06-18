@@ -10,11 +10,11 @@ import {
 import {
   runAlertCycle,
   getLastRun,
-  getSmtp,
   getGrupos,
   getEnvios,
   getIncidentes,
 } from './lib/alertEngine.js';
+import { getSmtpConfig, saveSmtpConfig, smtpPublicView } from './lib/smtpRepository.js';
 import { buildFueraDeRangoEmail } from './lib/emailBuilder.js';
 
 const PORT = Number(process.env.CORREO_PORT ?? 3003);
@@ -40,11 +40,12 @@ app.get('/health', (_req, res) => {
 });
 
 app.get('/reefer/api/correo/status', (_req, res) => {
-  const smtp = getSmtp();
+  const smtp = getSmtpConfig();
   const grupos = getGrupos();
   res.json({
     ok: true,
     smtpConfigured: Boolean(smtp?.user && smtp?.appPassword),
+    smtpUpdatedAt: smtp?.updatedAt ?? null,
     gruposActivos: grupos.filter((g) => g.enabled).length,
     lastRun: getLastRun(),
     incidentesPendientes: getIncidentes().filter((i) => i.estado === 'pendiente').length,
@@ -52,37 +53,16 @@ app.get('/reefer/api/correo/status', (_req, res) => {
 });
 
 app.get('/reefer/api/correo/config/smtp', (_req, res) => {
-  const smtp = getSmtp();
-  if (!smtp) return res.json({ ok: true, data: null });
-  res.json({
-    ok: true,
-    data: {
-      user: smtp.user,
-      fromName: smtp.fromName ?? 'ZTRACK TELEMETRY',
-      hasPassword: Boolean(smtp.appPassword),
-    },
-  });
+  res.json({ ok: true, data: smtpPublicView(getSmtpConfig()) });
 });
 
 app.put('/reefer/api/correo/config/smtp', (req, res) => {
-  const { user, appPassword, fromName } = req.body ?? {};
-  const prev = getSmtp() ?? {};
-  const next = {
-    user: typeof user === 'string' ? user.trim() : prev.user,
-    appPassword:
-      typeof appPassword === 'string' && appPassword.trim()
-        ? appPassword.replace(/\s/g, '')
-        : prev.appPassword,
-    fromName:
-      typeof fromName === 'string' && fromName.trim()
-        ? fromName.trim()
-        : prev.fromName ?? 'ZTRACK TELEMETRY',
-  };
-  if (!next.user || !next.appPassword) {
-    return res.status(400).json({ ok: false, error: 'Correo y clave de aplicación obligatorios' });
+  try {
+    const saved = saveSmtpConfig(req.body ?? {});
+    res.json({ ok: true, data: smtpPublicView(saved) });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
   }
-  writeJson('smtp.json', next);
-  res.json({ ok: true });
 });
 
 app.get('/reefer/api/correo/grupos', (_req, res) => {
@@ -199,17 +179,26 @@ app.post('/reefer/api/correo/run', async (_req, res) => {
 
 app.post('/reefer/api/correo/migrate', (req, res) => {
   const { smtp, grupos } = req.body ?? {};
-  if (smtp?.user && smtp?.appPassword) writeJson('smtp.json', smtp);
-  if (Array.isArray(grupos) && grupos.length) {
-    const existing = getGrupos();
-    if (existing.length === 0) writeJson('grupos.json', grupos);
+  try {
+    if (smtp?.user && smtp?.appPassword) {
+      const current = getSmtpConfig();
+      if (!current?.appPassword) {
+        saveSmtpConfig(smtp);
+      }
+    }
+    if (Array.isArray(grupos) && grupos.length) {
+      const existing = getGrupos();
+      if (existing.length === 0) writeJson('grupos.json', grupos);
+    }
+    res.json({ ok: true, data: smtpPublicView(getSmtpConfig()) });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
   }
-  res.json({ ok: true });
 });
 
 app.post('/reefer/api/correo/send', async (req, res) => {
   const { smtp, to, subject, text, html } = req.body ?? {};
-  const cfg = smtp ?? getSmtp();
+  const cfg = smtp ?? getSmtpConfig();
   if (!cfg?.user || !cfg?.appPassword) {
     return res.status(400).json({ ok: false, error: 'SMTP no configurado' });
   }
