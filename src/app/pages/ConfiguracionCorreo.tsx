@@ -30,9 +30,15 @@ import {
   fetchServerEnvios,
   runServerAlertCycle,
   migrateLocalCorreoToServer,
+  fetchServerCiclos,
   sendTestEmailViaServer,
 } from '../modules/correo/correoServerApi';
-import type { CorreoEnvioLog, CorreoServerStatus } from '../modules/correo/types';
+import type {
+  CorreoEnvioLog,
+  CorreoServerStatus,
+  CorreoCicloAnalisis,
+  CicloEvaluacionDispositivo,
+} from '../modules/correo/types';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -78,10 +84,41 @@ import {
   Pencil,
   Trash2,
   Play,
+  ClipboardList,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
 const SIN_ASIGNAR = 'SIN ASIGNAR';
+
+function estadoCicloLabel(estado: CicloEvaluacionDispositivo['estado']): string {
+  const map: Record<CicloEvaluacionDispositivo['estado'], string> = {
+    normal: 'Normal',
+    fuera_rango_sin_envio: 'Fuera de rango (sin envío)',
+    correo_enviado: 'Correo enviado',
+    error_envio: 'Error de envío',
+    sin_telemetria: 'Sin telemetría',
+    sin_dato_rango: 'Sin dato en_rango',
+    equipo_off: 'Equipo off en grupo',
+    grupo_inactivo: 'Grupo inactivo',
+    grupo_sin_correos: 'Grupo sin correos',
+  };
+  return map[estado] ?? estado;
+}
+
+function estadoCicloBadgeClass(estado: CicloEvaluacionDispositivo['estado']): string {
+  switch (estado) {
+    case 'normal':
+      return 'bg-emerald-600';
+    case 'correo_enviado':
+      return 'bg-blue-600';
+    case 'fuera_rango_sin_envio':
+      return 'bg-amber-600';
+    case 'error_envio':
+      return 'bg-red-600';
+    default:
+      return 'bg-gray-500';
+  }
+}
 
 function emptyGrupo(): Omit<GrupoCorreo, 'createdAt' | 'updatedAt'> {
   return {
@@ -116,6 +153,8 @@ export default function ConfiguracionCorreo() {
   );
   const [editingCreatedAt, setEditingCreatedAt] = useState<string | undefined>(undefined);
   const [emailsDraft, setEmailsDraft] = useState('');
+  const [ciclos, setCiclos] = useState<CorreoCicloAnalisis[]>([]);
+  const [cicloDetalle, setCicloDetalle] = useState<CorreoCicloAnalisis | null>(null);
 
   const localNames = useMemo(() => readDeviceLocalNames(), []);
 
@@ -149,6 +188,7 @@ export default function ConfiguracionCorreo() {
         setSmtpPass('');
       }
       setEnvioLogs(await fetchServerEnvios(80));
+      setCiclos(await fetchServerCiclos(40));
       setServerStatus(await fetchCorreoStatus());
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Error al cargar config del servidor');
@@ -178,6 +218,7 @@ export default function ConfiguracionCorreo() {
 
   const refreshLogs = async () => {
     setEnvioLogs(await fetchServerEnvios(80));
+    setCiclos(await fetchServerCiclos(40));
     setServerStatus(await fetchCorreoStatus());
   };
   const refreshGrupos = async () => setGrupos(await fetchServerGrupos());
@@ -365,12 +406,15 @@ export default function ConfiguracionCorreo() {
     try {
       const result = await runServerAlertCycle();
       await refreshLogs();
+      setCicloDetalle(result);
       if (result.emailsSent > 0) {
-        toast.success(`${result.emailsSent} correo(s) enviado(s) por el servidor`);
+        toast.success(
+          `${result.emailsSent} correo(s). ${result.resumen?.normal ?? 0} equipo(s) normal(es).`
+        );
       } else if (result.errors.length > 0) {
         toast.error(result.errors[0]);
       } else {
-        toast.message('Ciclo del servidor completado sin envíos pendientes');
+        toast.message(result.criterio ?? 'Ciclo completado. Revise el análisis por equipo.');
       }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Error en ciclo del servidor');
@@ -446,6 +490,16 @@ export default function ConfiguracionCorreo() {
               {new Date(serverStatus.lastRun.checkedAt).toLocaleString('es-ES')} ·{' '}
               {serverStatus.lastRun.emailsSent} enviados · {serverStatus.incidentesPendientes}{' '}
               incidentes pendientes
+              {serverStatus.lastRun.criterio != null && serverStatus.lastRun.criterio !== '' && (
+                <> · {serverStatus.lastRun.criterio}</>
+              )}
+              {serverStatus.lastRun.resumen != null && (
+                <>
+                  {' '}
+                  · {serverStatus.lastRun.resumen.normal} normal(es) ·{' '}
+                  {serverStatus.lastRun.resumen.correoEnviado} con correo
+                </>
+              )}
             </p>
           )}
         </div>
@@ -470,6 +524,7 @@ export default function ConfiguracionCorreo() {
           <TabsTrigger value="remitente">Remitente</TabsTrigger>
           <TabsTrigger value="grupos">Grupos de correo</TabsTrigger>
           <TabsTrigger value="log">Registro de envíos</TabsTrigger>
+          <TabsTrigger value="ciclos">Ciclos de análisis</TabsTrigger>
         </TabsList>
 
         <TabsContent value="remitente" className="mt-4">
@@ -711,7 +766,185 @@ export default function ConfiguracionCorreo() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        <TabsContent value="ciclos" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ClipboardList className="h-5 w-5" />
+                Ciclos de análisis
+              </CardTitle>
+              <CardDescription>
+                Cada ciclo (automático cada {ALERT_POLL_INTERVAL_MS / 60000} min o manual) evalúa
+                todos los equipos en grupos de correo y registra por qué está normal o qué acción
+                tomó.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Fecha</TableHead>
+                    <TableHead>Origen</TableHead>
+                    <TableHead>Equipos</TableHead>
+                    <TableHead>Resumen</TableHead>
+                    <TableHead>Criterio general</TableHead>
+                    <TableHead className="w-[100px]" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {ciclos.map((ciclo) => (
+                    <TableRow key={ciclo.id}>
+                      <TableCell className="text-xs whitespace-nowrap">
+                        {new Date(ciclo.checkedAt).toLocaleString('es-ES')}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={ciclo.trigger === 'manual' ? 'default' : 'secondary'}>
+                          {ciclo.trigger === 'manual' ? 'Manual' : 'Automático'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {ciclo.devicesChecked} revisados · {ciclo.emailsSent} correo(s)
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {ciclo.resumen != null ? (
+                          <span>
+                            {ciclo.resumen.normal} normal · {ciclo.resumen.fueraRangoSinEnvio}{' '}
+                            fuera sin envío · {ciclo.resumen.correoEnviado} enviado
+                            {ciclo.resumen.errores > 0 && (
+                              <> · {ciclo.resumen.errores} error(es)</>
+                            )}
+                          </span>
+                        ) : (
+                          '—'
+                        )}
+                      </TableCell>
+                      <TableCell className="text-xs max-w-[240px] truncate" title={ciclo.criterio}>
+                        {ciclo.criterio ?? ciclo.skipped ?? '—'}
+                      </TableCell>
+                      <TableCell>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setCicloDetalle(ciclo)}
+                        >
+                          Ver detalle
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {ciclos.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center text-muted-foreground">
+                        Aún no hay ciclos registrados. Use «Ejecutar ahora» o espere el ciclo
+                        automático.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
+
+      <Dialog open={cicloDetalle != null} onOpenChange={(open) => !open && setCicloDetalle(null)}>
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Detalle del ciclo de análisis</DialogTitle>
+            <DialogDescription>
+              {cicloDetalle != null && (
+                <>
+                  {new Date(cicloDetalle.checkedAt).toLocaleString('es-ES')} ·{' '}
+                  {cicloDetalle.trigger === 'manual' ? 'Manual' : 'Automático'} ·{' '}
+                  {cicloDetalle.devicesChecked} equipo(s) · {cicloDetalle.emailsSent} correo(s)
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          {cicloDetalle != null && (
+            <div className="space-y-4">
+              {(cicloDetalle.criterio != null || cicloDetalle.skipped != null) && (
+                <p className="text-sm rounded-md border bg-muted/40 px-3 py-2">
+                  {cicloDetalle.criterio ?? cicloDetalle.skipped}
+                </p>
+              )}
+              {cicloDetalle.resumen != null && (
+                <div className="flex flex-wrap gap-2">
+                  <Badge className="bg-emerald-600">{cicloDetalle.resumen.normal} normal</Badge>
+                  <Badge className="bg-amber-600">
+                    {cicloDetalle.resumen.fueraRangoSinEnvio} fuera sin envío
+                  </Badge>
+                  <Badge className="bg-blue-600">
+                    {cicloDetalle.resumen.correoEnviado} correo enviado
+                  </Badge>
+                  {cicloDetalle.resumen.sinTelemetria > 0 && (
+                    <Badge variant="secondary">
+                      {cicloDetalle.resumen.sinTelemetria} sin telemetría
+                    </Badge>
+                  )}
+                  {cicloDetalle.resumen.errores > 0 && (
+                    <Badge variant="destructive">{cicloDetalle.resumen.errores} error(es)</Badge>
+                  )}
+                </div>
+              )}
+              {cicloDetalle.errors.length > 0 && (
+                <ul className="text-sm text-destructive list-disc pl-5">
+                  {cicloDetalle.errors.map((err) => (
+                    <li key={err}>{err}</li>
+                  ))}
+                </ul>
+              )}
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Equipo</TableHead>
+                    <TableHead>Grupo</TableHead>
+                    <TableHead>Estado</TableHead>
+                    <TableHead>Criterio</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {cicloDetalle.evaluaciones.map((ev) => (
+                    <TableRow key={`${ev.grupoId}-${ev.rowKey}-${ev.estado}`}>
+                      <TableCell className="text-xs">
+                        <div className="font-medium">{ev.descripcionEquipo || ev.codigo}</div>
+                        <div className="text-muted-foreground">{ev.imei}</div>
+                        {ev.horasFueraHoy != null && (
+                          <div className="text-muted-foreground">
+                            {ev.horasFueraHoy.toFixed(1)} h fuera hoy
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-xs">{ev.grupoNombre}</TableCell>
+                      <TableCell>
+                        <Badge className={estadoCicloBadgeClass(ev.estado)}>
+                          {estadoCicloLabel(ev.estado)}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-xs max-w-[360px] whitespace-normal">
+                        {ev.criterio}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {cicloDetalle.evaluaciones.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-center text-muted-foreground">
+                        Sin evaluaciones en este ciclo
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCicloDetalle(null)}>
+              Cerrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={dialogOpen}

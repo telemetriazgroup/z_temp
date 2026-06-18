@@ -15,6 +15,10 @@ export type {
   CorreoServerStatus,
   SmtpConfigServerView,
   SmtpConfigSaveInput,
+  CorreoCicloAnalisis,
+  CicloEvaluacionDispositivo,
+  CicloEvaluacionEstado,
+  CicloResumen,
 } from './types';
 export { DEFAULT_UMBRALES_HORAS, UMBRALES_HORAS_DISPONIBLES } from './types';
 export {
@@ -68,6 +72,8 @@ export {
   atenderIncidente,
   runServerAlertCycle,
   migrateLocalCorreoToServer,
+  fetchServerCiclos,
+  fetchServerCiclo,
 } from './correoServerApi';
 export {
   userHasCorreoIncidentAccess,

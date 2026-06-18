@@ -9,6 +9,10 @@ import type {
   SendEmailResult,
   SmtpConfigServerView,
   SmtpConfigSaveInput,
+  CorreoCicloAnalisis,
+  CicloEvaluacionDispositivo,
+  CicloEvaluacionEstado,
+  CicloResumen,
 } from './types';
 
 const BASE = import.meta.env.VITE_CORREO_API_BASE ?? '/reefer/api/correo';
@@ -143,9 +147,21 @@ export async function atenderIncidente(
   return body.data;
 }
 
-export async function runServerAlertCycle(): Promise<AlertEngineResult> {
+export async function runServerAlertCycle(): Promise<CorreoCicloAnalisis> {
   const res = await fetch(`${BASE}/run`, { method: 'POST' });
   return parseRes(res);
+}
+
+export async function fetchServerCiclos(limit = 30): Promise<CorreoCicloAnalisis[]> {
+  const res = await fetch(`${BASE}/ciclos?limit=${limit}`);
+  const body = await parseRes<{ data: CorreoCicloAnalisis[] }>(res);
+  return body.data;
+}
+
+export async function fetchServerCiclo(id: string): Promise<CorreoCicloAnalisis> {
+  const res = await fetch(`${BASE}/ciclos/${id}`);
+  const body = await parseRes<{ data: CorreoCicloAnalisis }>(res);
+  return body.data;
 }
 
 export async function migrateLocalCorreoToServer(payload: {

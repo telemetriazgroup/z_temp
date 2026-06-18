@@ -113,6 +113,79 @@ export interface AlertEngineResult {
   emailsSent: number;
   errors: string[];
   skipped?: string;
+  id?: string;
+  trigger?: 'automatic' | 'manual';
+  startedAt?: string;
+  finishedAt?: string;
+  criterio?: string;
+  resumen?: CicloResumen;
+}
+
+export type CicloEvaluacionEstado =
+  | 'normal'
+  | 'fuera_rango_sin_envio'
+  | 'correo_enviado'
+  | 'error_envio'
+  | 'sin_telemetria'
+  | 'sin_dato_rango'
+  | 'equipo_off'
+  | 'grupo_inactivo'
+  | 'grupo_sin_correos';
+
+export interface CicloResumen {
+  normal: number;
+  fueraRangoSinEnvio: number;
+  correoEnviado: number;
+  sinTelemetria: number;
+  sinDatoRango: number;
+  equipoOff: number;
+  errores: number;
+}
+
+export interface CicloEvaluacionDispositivo {
+  rowKey: string;
+  imei: string;
+  codigo: string;
+  grupoId: string;
+  grupoNombre: string;
+  descripcionEquipo: string;
+  assignmentEnabled?: boolean;
+  estado: CicloEvaluacionEstado;
+  accion: 'ninguna' | 'envio' | 'error';
+  criterio: string;
+  enRango?: boolean | null;
+  diaCalendario?: string;
+  horasFueraHoy?: number;
+  umbralesConfigurados?: number[];
+  umbralesEnviadosHoy?: number[];
+  umbralesPendientes?: number[];
+  proximoUmbralHoras?: number | null;
+  umbralDisparado?: number;
+  tipoEvento?: CorreoTipoEvento;
+  envioId?: string;
+  incidenteId?: string;
+  telemetria?: {
+    setPoint: number | null;
+    tempSupply: number | null;
+    returnAir: number | null;
+    ultimaActualizacion: string | null;
+    estadoConexion: string | null;
+  };
+}
+
+export interface CorreoCicloAnalisis {
+  id: string;
+  trigger: 'automatic' | 'manual';
+  startedAt: string;
+  finishedAt?: string;
+  checkedAt: string;
+  devicesChecked: number;
+  emailsSent: number;
+  errors: string[];
+  skipped?: string;
+  criterio?: string;
+  resumen?: CicloResumen;
+  evaluaciones: CicloEvaluacionDispositivo[];
 }
 
 export interface CorreoIncidenteComentario {

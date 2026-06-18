@@ -13,6 +13,8 @@ import {
   getGrupos,
   getEnvios,
   getIncidentes,
+  listCiclos,
+  getCicloById,
 } from './lib/alertEngine.js';
 import { getSmtpConfig, saveSmtpConfig, smtpPublicView } from './lib/smtpRepository.js';
 import { buildFueraDeRangoEmail } from './lib/emailBuilder.js';
@@ -168,9 +170,20 @@ app.patch('/reefer/api/correo/incidentes/:id', (req, res) => {
   res.json({ ok: true, data: inc });
 });
 
+app.get('/reefer/api/correo/ciclos', (req, res) => {
+  const limit = Math.min(Number(req.query.limit ?? 30), 100);
+  res.json({ ok: true, data: listCiclos(limit) });
+});
+
+app.get('/reefer/api/correo/ciclos/:id', (req, res) => {
+  const ciclo = getCicloById(req.params.id);
+  if (!ciclo) return res.status(404).json({ ok: false, error: 'Ciclo no encontrado' });
+  res.json({ ok: true, data: ciclo });
+});
+
 app.post('/reefer/api/correo/run', async (_req, res) => {
   try {
-    const result = await runAlertCycle();
+    const result = await runAlertCycle({ trigger: 'manual' });
     res.json({ ok: true, ...result });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -231,9 +244,13 @@ app.post('/reefer/api/correo/send', async (req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`ZTRACK correo API :${PORT} · ciclo cada ${POLL_MS / 1000}s`);
   setTimeout(() => {
-    runAlertCycle().catch((e) => console.error('[correo] ciclo inicial', e.message));
+    runAlertCycle({ trigger: 'automatic' }).catch((e) =>
+      console.error('[correo] ciclo inicial', e.message)
+    );
   }, 5000);
   setInterval(() => {
-    runAlertCycle().catch((e) => console.error('[correo] ciclo', e.message));
+    runAlertCycle({ trigger: 'automatic' }).catch((e) =>
+      console.error('[correo] ciclo', e.message)
+    );
   }, POLL_MS);
 });
