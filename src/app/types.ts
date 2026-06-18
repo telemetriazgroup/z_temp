@@ -177,6 +177,8 @@ export interface DatoOficialHistorial {
   created_at?: string | null;
   /** Alternativa cuando la API no envía `created_at`. */
   fecha?: string | null;
+  /** Indicador en_rango si la API lo incluye en historial. */
+  en_rango?: boolean | null;
 }
 
 export interface BuscarDatosOficialesResponse {

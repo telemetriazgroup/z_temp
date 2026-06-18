@@ -594,8 +594,10 @@ export default function ConfiguracionCorreo() {
         <TabsContent value="grupos" className="mt-4 space-y-4">
           <div className="flex justify-between items-center">
             <p className="text-sm text-muted-foreground">
-              Un grupo agrupa destinatarios y uno o más dispositivos. Cada umbral (2 h, 3 h …) se
-              envía una sola vez por episodio fuera de rango.
+              Un grupo agrupa destinatarios y uno o más dispositivos. Si un equipo está fuera de
+              rango, el servidor consulta las últimas 12 h (misma fuente que la gráfica) para fijar
+              la referencia de inicio; luego cuenta desde ahí y envía cada umbral (2 h, 3 h …) una
+              sola vez por episodio. Al volver EN RANGO se cierra la referencia.
             </p>
             <Button onClick={openNewGrupo}>
               <Plus className="h-4 w-4 mr-2" />
@@ -775,9 +777,9 @@ export default function ConfiguracionCorreo() {
                 Ciclos de análisis
               </CardTitle>
               <CardDescription>
-                Cada ciclo (automático cada {ALERT_POLL_INTERVAL_MS / 60000} min o manual) evalúa
-                todos los equipos en grupos de correo y registra por qué está normal o qué acción
-                tomó.
+              Cada ciclo evalúa todos los equipos en grupos de correo. Fuera de rango sin
+              referencia: consulta historial 12 h; con referencia: cuenta horas sin volver a
+              consultar. EN RANGO: no consulta historial.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -910,9 +912,15 @@ export default function ConfiguracionCorreo() {
                       <TableCell className="text-xs">
                         <div className="font-medium">{ev.descripcionEquipo || ev.codigo}</div>
                         <div className="text-muted-foreground">{ev.imei}</div>
-                        {ev.horasFueraHoy != null && (
+                        {ev.referenciaDesde != null && (
                           <div className="text-muted-foreground">
-                            {ev.horasFueraHoy.toFixed(1)} h fuera hoy
+                            Ref. desde {new Date(ev.referenciaDesde).toLocaleString('es-ES')}
+                            {ev.consultaHistorial ? ' (historial 12 h)' : ''}
+                          </div>
+                        )}
+                        {ev.horasFueraHoy != null && ev.referenciaDesde != null && (
+                          <div className="text-muted-foreground">
+                            ~{ev.horasFueraHoy} h fuera desde referencia
                           </div>
                         )}
                       </TableCell>

@@ -9,8 +9,14 @@ import {
 import { buildFueraDeRangoEmail } from './emailBuilder.js';
 import { fetchAllDispositivos, deviceRowKey } from './telemetry.js';
 import { getSmtpConfig } from './smtpRepository.js';
+import {
+  fetchHistorialUltimasHoras,
+  resolveOutOfRangeSince,
+  horasDesdeReferencia,
+  horasEnterasDesdeReferencia,
+  HISTORICAL_WINDOW_HOURS,
+} from './historicalTelemetry.js';
 
-const POLL_MINUTES = Number(process.env.CORREO_POLL_MINUTES ?? 2);
 const MAX_CICLOS = 200;
 
 function getGrupos() {
@@ -18,11 +24,49 @@ function getGrupos() {
 }
 
 function getState() {
-  return readJson('state.json', { daily: {}, inRangeSince: {} });
+  return readJson('state.json', { episodes: {}, lastRecovered: {} });
 }
 
 function saveState(state) {
   writeJson('state.json', state);
+}
+
+function getEpisode(state, rowKey) {
+  return state.episodes?.[rowKey] ?? null;
+}
+
+function clearEpisode(state, rowKey, now) {
+  const ep = state.episodes?.[rowKey];
+  if (!ep) return null;
+  const endedAt = now.toISOString();
+  const durationHours = horasDesdeReferencia(ep.since, now);
+  if (!state.lastRecovered) state.lastRecovered = {};
+  state.lastRecovered[rowKey] = {
+    since: ep.since,
+    endedAt,
+    durationHours: Math.round(durationHours * 10) / 10,
+  };
+  delete state.episodes[rowKey];
+  return state.lastRecovered[rowKey];
+}
+
+function startEpisode(state, rowKey, since, meta = {}) {
+  if (!state.episodes) state.episodes = {};
+  state.episodes[rowKey] = {
+    since,
+    sentUmbrales: [],
+    establishedAt: new Date().toISOString(),
+    ...meta,
+  };
+  return state.episodes[rowKey];
+}
+
+function formatRef(iso) {
+  try {
+    return new Date(iso).toLocaleString('es-ES');
+  } catch {
+    return iso;
+  }
 }
 
 function getEnvios() {
@@ -66,37 +110,42 @@ function resolveLabels(assignment) {
   };
 }
 
-function ensureDayBucket(state, rowKey, dayKey, nowIso) {
-  if (!state.daily[rowKey]) state.daily[rowKey] = {};
-  if (!state.daily[rowKey][dayKey]) {
-    state.daily[rowKey][dayKey] = {
-      minutesOut: 0,
-      sentUmbrales: [],
-      lastPollAt: nowIso,
+async function ensureOutOfRangeReference(state, assignment, dispositivo, now) {
+  let episode = getEpisode(state, assignment.rowKey);
+  if (episode) {
+    return {
+      episode,
+      consultaHistorial: false,
+      criterioRef: `Referencia persistida desde ${formatRef(episode.since)}. No se consulta historial.`,
     };
   }
-  return state.daily[rowKey][dayKey];
-}
 
-function peekHorasHoy(state, rowKey, now) {
-  const hoy = todayKey(now);
-  const bucket = state.daily[rowKey]?.[hoy];
-  if (!bucket) return 0;
-  return Math.floor(bucket.minutesOut / 60);
-}
+  const codigo = dispositivo.codigo ?? assignment.codigo;
+  const hist = await fetchHistorialUltimasHoras(codigo, dispositivo.imei, HISTORICAL_WINDOW_HOURS, now);
+  const since = resolveOutOfRangeSince(hist.datos, now);
 
-function accumulateMinutes(state, rowKey, now) {
-  const hoy = todayKey(now);
-  const bucket = ensureDayBucket(state, rowKey, hoy, now.toISOString());
-  const last = bucket.lastPollAt ? new Date(bucket.lastPollAt) : null;
-  let delta = POLL_MINUTES;
-  if (last && !Number.isNaN(last.getTime())) {
-    delta = Math.round((now.getTime() - last.getTime()) / 60000);
-    delta = Math.max(POLL_MINUTES, Math.min(delta, POLL_MINUTES * 3));
+  if (since) {
+    episode = startEpisode(state, assignment.rowKey, since, {
+      fromHistorial: true,
+      historialPuntos: hist.datos?.length ?? 0,
+    });
+    return {
+      episode,
+      consultaHistorial: true,
+      criterioRef: `Consulta últimas ${HISTORICAL_WINDOW_HOURS} h (${formatRef(hist.fecha_inicial)} → ${formatRef(hist.fecha_final)}): fuera de rango desde ${formatRef(since)}.`,
+    };
   }
-  bucket.minutesOut += delta;
-  bucket.lastPollAt = now.toISOString();
-  return Math.floor(bucket.minutesOut / 60);
+
+  const fallbackSince = now.toISOString();
+  episode = startEpisode(state, assignment.rowKey, fallbackSince, {
+    fromHistorial: false,
+    fallback: true,
+  });
+  return {
+    episode,
+    consultaHistorial: true,
+    criterioRef: `Consulta últimas ${HISTORICAL_WINDOW_HOURS} h sin punto claro de inicio; referencia desde ahora (${formatRef(fallbackSince)}).`,
+  };
 }
 
 function baseEval(grupo, assignment) {
@@ -259,19 +308,24 @@ export async function runAlertCycle(options = {}) {
       };
 
       if (enRango === true) {
-        state.inRangeSince[assignment.rowKey] = now.toISOString();
-        const horasPrevias = peekHorasHoy(state, assignment.rowKey, now);
+        const recovered = clearEpisode(state, assignment.rowKey, now);
+        let criterio;
+        if (recovered) {
+          criterio = `EN RANGO. Equipo recuperado; episodio cerrado (estuvo fuera desde ${formatRef(recovered.since)} hasta ${formatRef(recovered.endedAt)}, ~${recovered.durationHours} h). No se consulta historial.`;
+        } else {
+          criterio = 'EN RANGO. Temperatura dentro de parámetros. No se consulta historial ni se envía correo.';
+        }
         pushEval(evaluaciones, {
           ...base,
           estado: 'normal',
           accion: 'ninguna',
           enRango: true,
           diaCalendario: hoy,
-          horasFueraHoy: horasPrevias,
           umbralesConfigurados: umbrales,
-          umbralesEnviadosHoy: state.daily[assignment.rowKey]?.[hoy]?.sentUmbrales ?? [],
+          referenciaDesde: recovered?.since ?? null,
+          recuperadoAt: recovered?.endedAt ?? null,
           telemetria: telem,
-          criterio: `EN RANGO. Temperatura dentro de parámetros. No se envía correo (hoy ~${horasPrevias} h fuera acumuladas sin incremento).`,
+          criterio,
         });
         result.resumen.normal++;
         continue;
@@ -293,20 +347,49 @@ export async function runAlertCycle(options = {}) {
         continue;
       }
 
-      const horasHoy = accumulateMinutes(state, assignment.rowKey, now);
-      const bucket = state.daily[assignment.rowKey][hoy];
-      const pending = umbrales.filter((u) => horasHoy >= u && !bucket.sentUmbrales.includes(u));
-      const nextUmbral = umbrales.find((u) => horasHoy < u);
-      const alreadySent = umbrales.filter((u) => bucket.sentUmbrales.includes(u));
+      let episode;
+      let consultaHistorial = false;
+      let criterioRef;
+      try {
+        const ref = await ensureOutOfRangeReference(state, assignment, dispositivo, now);
+        episode = ref.episode;
+        consultaHistorial = ref.consultaHistorial;
+        criterioRef = ref.criterioRef;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        pushEval(evaluaciones, {
+          ...base,
+          estado: 'sin_telemetria',
+          accion: 'ninguna',
+          enRango: false,
+          diaCalendario: hoy,
+          umbralesConfigurados: umbrales,
+          telemetria: telem,
+          criterio: `FUERA DE RANGO sin referencia. Error al consultar historial 12 h: ${msg}`,
+        });
+        result.resumen.sinTelemetria++;
+        result.errors.push(`${base.descripcionEquipo}: historial — ${msg}`);
+        continue;
+      }
+
+      const horasFuera = horasDesdeReferencia(episode.since, now);
+      const horasEnteras = horasEnterasDesdeReferencia(episode.since, now);
+      const sentUmbrales = episode.sentUmbrales ?? [];
+      const pending = umbrales.filter((u) => horasEnteras >= u && !sentUmbrales.includes(u));
+      const nextUmbral = umbrales.find((u) => horasEnteras < u);
+      const horasTexto =
+        horasFuera >= 10
+          ? `${Math.round(horasFuera * 10) / 10} h`
+          : `${Math.round(horasFuera * 10) / 10} h`;
 
       if (pending.length === 0) {
         let criterio;
-        if (alreadySent.length > 0) {
-          criterio = `FUERA DE RANGO ~${horasHoy} h hoy. Umbrales ya notificados hoy: ${alreadySent.join(', ')} h.`;
+        if (sentUmbrales.length > 0) {
+          criterio = `FUERA DE RANGO ${horasTexto} desde ${formatRef(episode.since)}. Umbrales ya notificados en este episodio: ${sentUmbrales.join(', ')} h. ${criterioRef}`;
         } else if (nextUmbral != null) {
-          criterio = `FUERA DE RANGO ~${horasHoy} h hoy. Próximo aviso al alcanzar ${nextUmbral} h (faltan ~${nextUmbral - horasHoy} h).`;
+          criterio = `FUERA DE RANGO ${horasTexto} desde ${formatRef(episode.since)}. Próximo aviso al alcanzar ${nextUmbral} h (faltan ~${Math.max(0, nextUmbral - horasFuera).toFixed(1)} h). ${criterioRef}`;
         } else {
-          criterio = `FUERA DE RANGO ~${horasHoy} h hoy. Sin umbrales pendientes configurados.`;
+          criterio = `FUERA DE RANGO ${horasTexto} desde ${formatRef(episode.since)}. Sin umbrales pendientes. ${criterioRef}`;
         }
         pushEval(evaluaciones, {
           ...base,
@@ -314,9 +397,11 @@ export async function runAlertCycle(options = {}) {
           accion: 'ninguna',
           enRango: false,
           diaCalendario: hoy,
-          horasFueraHoy: horasHoy,
+          horasFueraHoy: horasEnteras,
+          referenciaDesde: episode.since,
+          consultaHistorial,
           umbralesConfigurados: umbrales,
-          umbralesEnviadosHoy: [...bucket.sentUmbrales],
+          umbralesEnviadosHoy: [...sentUmbrales],
           umbralesPendientes: [],
           proximoUmbralHoras: nextUmbral ?? null,
           telemetria: telem,
@@ -336,18 +421,20 @@ export async function runAlertCycle(options = {}) {
           nombrePlataforma,
           cliente: grupo.cliente?.trim() || 'Cliente',
           umbralHoras,
-          horasFueraRango: horasHoy,
+          horasFueraRango: horasEnteras,
           diaCalendario: hoy,
           hoy,
           tipoEvento,
         });
 
         const envioId = uid('envio');
-        const criterioEnvio = `FUERA DE RANGO ~${horasHoy} h el día ${hoy}. Se dispara umbral ${umbralHoras} h (tipo ${tipoEvento}). Envío a ${grupo.emails.join(', ')}.`;
+        const criterioEnvio = `FUERA DE RANGO ${horasTexto} desde ${formatRef(episode.since)}. Se dispara umbral ${umbralHoras} h (tipo ${tipoEvento}). ${consultaHistorial ? 'Referencia obtenida por consulta 12 h.' : 'Referencia persistida.'} Envío a ${grupo.emails.join(', ')}.`;
 
         try {
           const messageId = await sendMail(smtp, grupo.emails, content);
-          bucket.sentUmbrales.push(umbralHoras);
+          if (!episode.sentUmbrales.includes(umbralHoras)) {
+            episode.sentUmbrales.push(umbralHoras);
+          }
 
           addEnvio({
             id: envioId,
@@ -359,7 +446,8 @@ export async function runAlertCycle(options = {}) {
             descripcionEquipo: dispositivoReeferId,
             nombrePlataforma,
             umbralHoras,
-            horasFueraRango: horasHoy,
+            horasFueraRango: horasEnteras,
+            referenciaDesde: episode.since,
             diaCalendario: hoy,
             tipoEvento,
             destinatarios: [...grupo.emails],
@@ -382,7 +470,8 @@ export async function runAlertCycle(options = {}) {
             nombrePlataforma,
             diaCalendario: hoy,
             umbralHoras,
-            horasFueraRango: horasHoy,
+            horasFueraRango: horasEnteras,
+            referenciaDesde: episode.since,
             tipoEvento,
             estado: 'pendiente',
             subject: content.subject,
@@ -397,10 +486,12 @@ export async function runAlertCycle(options = {}) {
             accion: 'envio',
             enRango: false,
             diaCalendario: hoy,
-            horasFueraHoy: horasHoy,
+            horasFueraHoy: horasEnteras,
+            referenciaDesde: episode.since,
+            consultaHistorial,
             umbralDisparado: umbralHoras,
             umbralesConfigurados: umbrales,
-            umbralesEnviadosHoy: [...bucket.sentUmbrales],
+            umbralesEnviadosHoy: [...episode.sentUmbrales],
             tipoEvento,
             envioId,
             incidenteId,
@@ -422,23 +513,26 @@ export async function runAlertCycle(options = {}) {
             codigo: dispositivo.codigo ?? '—',
             descripcionEquipo: dispositivoReeferId,
             nombrePlataforma,
-            umbralHoras,
-            horasFueraRango: horasHoy,
-            diaCalendario: hoy,
-            tipoEvento,
-            destinatarios: [...grupo.emails],
-            subject: content.subject,
-            sentAt: new Date().toISOString(),
-            success: false,
-            error: msg,
-          });
+          umbralHoras,
+          horasFueraRango: horasEnteras,
+          referenciaDesde: episode.since,
+          diaCalendario: hoy,
+          tipoEvento,
+          destinatarios: [...grupo.emails],
+          subject: content.subject,
+          sentAt: new Date().toISOString(),
+          success: false,
+          error: msg,
+        });
           pushEval(evaluaciones, {
             ...base,
             estado: 'error_envio',
             accion: 'error',
             enRango: false,
             diaCalendario: hoy,
-            horasFueraHoy: horasHoy,
+            horasFueraHoy: horasEnteras,
+            referenciaDesde: episode.since,
+            consultaHistorial,
             umbralDisparado: umbralHoras,
             telemetria: telem,
             criterio: `${criterioEnvio} Error SMTP: ${msg}`,

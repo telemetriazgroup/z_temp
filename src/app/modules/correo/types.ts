@@ -156,6 +156,11 @@ export interface CicloEvaluacionDispositivo {
   enRango?: boolean | null;
   diaCalendario?: string;
   horasFueraHoy?: number;
+  /** Inicio del episodio fuera de rango (referencia persistida o desde historial 12 h). */
+  referenciaDesde?: string | null;
+  /** true si en este ciclo se consultó buscar_datos_oficiales para fijar referencia. */
+  consultaHistorial?: boolean;
+  recuperadoAt?: string | null;
   umbralesConfigurados?: number[];
   umbralesEnviadosHoy?: number[];
   umbralesPendientes?: number[];
