@@ -10,9 +10,11 @@ import { formatDateTimeTz } from './timezone.js';
 import { buildFueraDeRangoEmail } from './emailBuilder.js';
 import { fetchAllDispositivos, deviceRowKey } from './telemetry.js';
 import { getSmtpConfig } from './smtpRepository.js';
+import { getDeviceNameByImei } from './deviceNamesRepository.js';
 import {
   fetchHistorialUltimasHoras,
   resolveOutOfRangeSince,
+  effectiveEnRangoFromDispositivo,
   horasDesdeReferencia,
   horasEnterasDesdeReferencia,
   HISTORICAL_WINDOW_HOURS,
@@ -100,12 +102,18 @@ function saveCiclo(ciclo) {
 
 function resolveLabels(assignment, dispositivo) {
   const desc = assignment.descripcionEquipo?.trim();
+  const nombreAsignado = assignment.nombrePlataforma?.trim();
   const imei = dispositivo?.imei ?? assignment.imei ?? '—';
   const codigo = dispositivo?.codigo ?? assignment.codigo ?? '';
-  const nombrePlataforma = codigo ? `${codigo} · ${imei}` : imei;
+  const fromServer = getDeviceNameByImei(imei);
+  const fallbackTecnico = codigo ? `${codigo} · ${imei}` : imei;
+
+  const nombreCliente =
+    [nombreAsignado, fromServer].find((v) => v && v !== 'SIN ASIGNAR') ?? fallbackTecnico;
+
   return {
-    dispositivoReeferId: desc || nombrePlataforma,
-    nombrePlataforma,
+    dispositivoReeferId: desc || nombreCliente,
+    nombrePlataforma: nombreCliente,
   };
 }
 
@@ -128,40 +136,56 @@ function pickUmbralPendiente(umbrales, horasEnteras, sentUmbrales) {
 }
 
 async function ensureOutOfRangeReference(state, assignment, dispositivo, now) {
-  let episode = getEpisode(state, assignment.rowKey);
-  if (episode) {
+  const codigo = dispositivo.codigo ?? assignment.codigo;
+  const hist = await fetchHistorialUltimasHoras(
+    codigo,
+    dispositivo.imei,
+    HISTORICAL_WINDOW_HOURS,
+    now
+  );
+  const since = resolveOutOfRangeSince(hist.datos, now);
+
+  if (since == null) {
+    const had = getEpisode(state, assignment.rowKey);
+    if (had) clearEpisode(state, assignment.rowKey, now);
     return {
-      episode,
-      consultaHistorial: false,
-      criterioRef: `Referencia persistida desde ${formatRef(episode.since)}. No se consulta historial.`,
+      episode: null,
+      recovered: true,
+      consultaHistorial: true,
+      criterioRef:
+        'Historial 12 h: EN RANGO efectivo (suministro en banda / entre ciclos defrost). Episodio cerrado; contador en 0.',
     };
   }
 
-  const codigo = dispositivo.codigo ?? assignment.codigo;
-  const hist = await fetchHistorialUltimasHoras(codigo, dispositivo.imei, HISTORICAL_WINDOW_HOURS, now);
-  const since = resolveOutOfRangeSince(hist.datos, now);
-
-  if (since) {
-    episode = startEpisode(state, assignment.rowKey, since, {
-      fromHistorial: true,
-      historialPuntos: hist.datos?.length ?? 0,
-    });
+  let episode = getEpisode(state, assignment.rowKey);
+  if (episode) {
+    const prev = new Date(episode.since).getTime();
+    const next = new Date(since).getTime();
+    if (!Number.isNaN(prev) && Math.abs(next - prev) > 60_000) {
+      episode.since = since;
+      episode.sentUmbrales = [];
+      episode.reconciledAt = now.toISOString();
+      return {
+        episode,
+        consultaHistorial: true,
+        criterioRef: `Tras recuperación intermedia, referencia ${formatRef(since)}. Umbrales reiniciados.`,
+      };
+    }
     return {
       episode,
       consultaHistorial: true,
-      criterioRef: `Consulta últimas ${HISTORICAL_WINDOW_HOURS} h (${formatRef(hist.fecha_inicial)} → ${formatRef(hist.fecha_final)}): fuera de rango desde ${formatRef(since)}.`,
+      criterioRef: `Episodio continuo fuera de rango efectivo desde ${formatRef(since)}.`,
     };
   }
 
-  const fallbackSince = now.toISOString();
-  episode = startEpisode(state, assignment.rowKey, fallbackSince, {
-    fromHistorial: false,
-    fallback: true,
+  episode = startEpisode(state, assignment.rowKey, since, {
+    fromHistorial: true,
+    historialPuntos: hist.datos?.length ?? 0,
   });
   return {
     episode,
     consultaHistorial: true,
-    criterioRef: `Consulta últimas ${HISTORICAL_WINDOW_HOURS} h sin punto claro de inicio; referencia desde ahora (${formatRef(fallbackSince)}).`,
+    criterioRef: `Nuevo episodio continuo desde ${formatRef(since)} (consulta 12 h).`,
   };
 }
 
@@ -314,7 +338,8 @@ export async function runAlertCycle(options = {}) {
         continue;
       }
 
-      const enRango = dispositivo.en_rango;
+      const enRangoRaw = dispositivo.en_rango;
+      const enRangoEfectivo = effectiveEnRangoFromDispositivo(dispositivo);
       const umbrales = normalizeUmbrales(assignment.umbralesHoras);
       const telem = {
         setPoint: dispositivo.ultimo_dato?.set_point ?? null,
@@ -322,15 +347,22 @@ export async function runAlertCycle(options = {}) {
         returnAir: dispositivo.ultimo_dato?.return_air ?? null,
         ultimaActualizacion: dispositivo.ultima_actualizacion ?? null,
         estadoConexion: dispositivo.estado_conexion ?? null,
+        enDefrost: dispositivo.en_defrost ?? null,
       };
 
-      if (enRango === true) {
+      if (enRangoEfectivo === true) {
         const recovered = clearEpisode(state, assignment.rowKey, now);
         let criterio;
         if (recovered) {
-          criterio = `EN RANGO. Equipo recuperado; episodio cerrado (estuvo fuera desde ${formatRef(recovered.since)} hasta ${formatRef(recovered.endedAt)}, ~${recovered.durationHours} h). No se consulta historial.`;
+          criterio = `EN RANGO efectivo. Episodio cerrado (estuvo fuera desde ${formatRef(recovered.since)} hasta ${formatRef(recovered.endedAt)}, ~${recovered.durationHours} h). Contador en 0.`;
+        } else if (enRangoRaw === false && dispositivo.en_defrost === true) {
+          criterio =
+            'EN RANGO efectivo (defrost activo / suministro en banda). No se alerta. No se consulta historial.';
+        } else if (enRangoRaw === false) {
+          criterio =
+            'EN RANGO efectivo (suministro en banda pese a retorno elevado, p. ej. defrost). Contador en 0.';
         } else {
-          criterio = 'EN RANGO. Temperatura dentro de parámetros. No se consulta historial ni se envía correo.';
+          criterio = 'EN RANGO. Temperatura dentro de parámetros. No se envía correo.';
         }
         pushEval(evaluaciones, {
           ...base,
@@ -348,7 +380,7 @@ export async function runAlertCycle(options = {}) {
         continue;
       }
 
-      if (enRango !== false) {
+      if (enRangoEfectivo !== false && enRangoRaw !== false) {
         pushEval(evaluaciones, {
           ...base,
           estado: 'sin_dato_rango',
@@ -369,9 +401,26 @@ export async function runAlertCycle(options = {}) {
       let criterioRef;
       try {
         const ref = await ensureOutOfRangeReference(state, assignment, dispositivo, now);
-        episode = ref.episode;
         consultaHistorial = ref.consultaHistorial;
         criterioRef = ref.criterioRef;
+
+        if (ref.recovered || ref.episode == null) {
+          pushEval(evaluaciones, {
+            ...base,
+            estado: 'normal',
+            accion: 'ninguna',
+            enRango: true,
+            diaCalendario: hoy,
+            umbralesConfigurados: umbrales,
+            consultaHistorial,
+            telemetria: telem,
+            criterio: criterioRef,
+          });
+          result.resumen.normal++;
+          continue;
+        }
+
+        episode = ref.episode;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         pushEval(evaluaciones, {

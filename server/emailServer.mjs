@@ -17,6 +17,7 @@ import {
   getCicloById,
 } from './lib/alertEngine.js';
 import { getSmtpConfig, saveSmtpConfig, smtpPublicView } from './lib/smtpRepository.js';
+import { mergeDeviceNames, getDeviceNameByImei } from './lib/deviceNamesRepository.js';
 import { buildFueraDeRangoEmail } from './lib/emailBuilder.js';
 
 const PORT = Number(process.env.CORREO_PORT ?? 3003);
@@ -69,6 +70,15 @@ app.put('/reefer/api/correo/config/smtp', (req, res) => {
 
 app.get('/reefer/api/correo/grupos', (_req, res) => {
   res.json({ ok: true, data: getGrupos() });
+});
+
+app.post('/reefer/api/correo/device-names/sync', (req, res) => {
+  const { names } = req.body ?? {};
+  if (names == null || typeof names !== 'object' || Array.isArray(names)) {
+    return res.status(400).json({ ok: false, error: 'names debe ser un objeto imei → nombre' });
+  }
+  const merged = mergeDeviceNames(names);
+  res.json({ ok: true, count: Object.keys(merged).length });
 });
 
 app.put('/reefer/api/correo/grupos', (req, res) => {

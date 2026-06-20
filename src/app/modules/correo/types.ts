@@ -21,6 +21,8 @@ export interface GrupoCorreoDevice {
   codigo: string;
   /** ID/descripción en el correo (ej. ZGRU5295105). Si vacío → nombre en plataforma. */
   descripcionEquipo?: string;
+  /** Nombre reconocido por el cliente (columna Nombre del listado). */
+  nombrePlataforma?: string;
   /** Horas en las que avisar; vacío → DEFAULT_UMBRALES_HORAS */
   umbralesHoras?: number[];
   /** Clasificación del evento en incidentes y correo. */

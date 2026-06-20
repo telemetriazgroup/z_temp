@@ -40,72 +40,119 @@ function enBandaSetpoint(valor, setPoint) {
   return valor >= setPoint - t && valor <= setPoint + t;
 }
 
-/** @returns {boolean | null} */
-export function rowEnRango(row) {
+/**
+ * Evalúa si el registro está en rango operativo.
+ * Durante defrost el retorno sube pero el suministro suele mantenerse en banda:
+ * eso NO debe contarse como fuera de rango ni generar alertas.
+ * @returns {boolean | null}
+ */
+export function rowEnRangoEffective(row) {
+  if (row == null) return null;
+  if (row.en_defrost === true) return true;
   if (row.en_rango === true) return true;
-  if (row.en_rango === false) return false;
 
   const setPoint = row.set_point;
-  if (setPoint == null || Number.isNaN(setPoint)) return null;
-
   const sup = row.temp_supply_1;
   const ret = row.return_air;
+
+  if (setPoint != null && sup != null && enBandaSetpoint(sup, setPoint) === true) {
+    return true;
+  }
+
+  if (row.en_rango === false) return false;
+
   const supOk = enBandaSetpoint(sup, setPoint);
   const retOk = enBandaSetpoint(ret, setPoint);
-  if (supOk == null && retOk == null) return null;
   if (supOk === false || retOk === false) return false;
   if (supOk === true && retOk === true) return true;
   return null;
 }
 
+/** @deprecated usar rowEnRangoEffective */
+export function rowEnRango(row) {
+  return rowEnRangoEffective(row);
+}
+
 /**
- * Busca el inicio del episodio actual fuera de rango en la ventana (más antiguo punto
- * consecutivo fuera de rango hasta el presente).
- * @param {object[]} datos
- * @param {Date} [referencia]
- * @returns {string | null} ISO de la referencia
+ * Misma lógica que historial, aplicada al último estado del dispositivo.
+ * @returns {boolean | null}
+ */
+export function effectiveEnRangoFromDispositivo(dispositivo) {
+  if (dispositivo == null) return null;
+  if (dispositivo.en_defrost === true) return true;
+  if (dispositivo.en_rango === true) return true;
+
+  const d = dispositivo.ultimo_dato ?? {};
+  const row = {
+    en_rango: dispositivo.en_rango,
+    en_defrost: dispositivo.en_defrost,
+    set_point: d.set_point,
+    temp_supply_1: d.temp_supply_1,
+    return_air: d.return_air,
+  };
+
+  const fromRow = rowEnRangoEffective(row);
+  if (fromRow === true) return true;
+  if (dispositivo.en_rango === false) return false;
+  return fromRow;
+}
+
+/**
+ * Inicio del episodio **continuo actual** fuera de rango efectivo (hacia atrás desde ahora).
+ * Se detiene en el primer punto en rango o dato nulo (no une episodios separados por defrost).
  */
 export function resolveOutOfRangeSince(datos, referencia = new Date()) {
   const sorted = [...(datos ?? [])]
     .map((row) => ({
       row,
       ts: timestampRegistro(row),
-      enRango: rowEnRango(row),
+      effective: rowEnRangoEffective(row),
     }))
     .filter((x) => !Number.isNaN(x.ts))
     .sort((a, b) => a.ts - b.ts);
 
   if (sorted.length === 0) return null;
 
+  const latest = sorted[sorted.length - 1];
+  if (latest.effective !== false) return null;
+
   let sinceTs = null;
   for (let i = sorted.length - 1; i >= 0; i -= 1) {
-    const { ts, enRango } = sorted[i];
-    if (enRango === false) {
+    const { ts, effective } = sorted[i];
+    if (effective === false) {
       sinceTs = ts;
       continue;
     }
-    if (enRango === true) break;
+    if (effective === true) break;
+    if (sinceTs != null) break;
   }
 
   if (sinceTs != null) return new Date(sinceTs).toISOString();
-
-  const windowStart = referencia.getTime() - HISTORICAL_WINDOW_HOURS * MS_HORA;
-  const allFalse = sorted.every((x) => x.enRango === false);
-  if (allFalse && sorted.length > 0) {
-    const oldest = sorted[0].ts;
-    return new Date(Math.max(oldest, windowStart)).toISOString();
-  }
-
   return null;
 }
 
 /**
- * @param {string} codigo TUNEL | TERMOKING | STARCOOL
- * @param {string} imei
- * @param {number} horas
- * @param {Date} [referencia]
+ * Ajusta o invalida la referencia persistida según historial reciente.
+ * @returns {{ since: string, resetUmbrales: boolean } | null} null = equipo recuperado (en rango)
  */
-export async function fetchHistorialUltimasHoras(codigo, imei, horas = HISTORICAL_WINDOW_HOURS, referencia = new Date()) {
+export function reconcileEpisodeReference(episode, datos, now = new Date()) {
+  const resolved = resolveOutOfRangeSince(datos, now);
+  if (resolved == null) return null;
+
+  const prev = new Date(episode.since).getTime();
+  const next = new Date(resolved).getTime();
+  if (Number.isNaN(prev) || Math.abs(next - prev) > 60_000) {
+    return { since: resolved, resetUmbrales: true };
+  }
+  return { since: episode.since, resetUmbrales: false };
+}
+
+export async function fetchHistorialUltimasHoras(
+  codigo,
+  imei,
+  horas = HISTORICAL_WINDOW_HOURS,
+  referencia = new Date()
+) {
   const fechaFinal = referencia;
   const fechaInicial = new Date(referencia.getTime() - horas * MS_HORA);
   let url = buildHistorialUrl(codigo, imei);

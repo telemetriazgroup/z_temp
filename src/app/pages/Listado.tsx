@@ -11,6 +11,7 @@ import {
   persistDeviceLocalNames,
   type DeviceLocalNameMap,
 } from '../lib/deviceLocalNames';
+import { syncDeviceNamesToServer } from '../modules/correo/correoServerApi';
 import { Input } from '../components/ui/input';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
@@ -263,6 +264,9 @@ export default function Listado() {
       if (trimmed === '') delete next[nameEdit.rowKey];
       else next[nameEdit.rowKey] = trimmed;
       persistDeviceLocalNames(next);
+      if (trimmed !== '') {
+        void syncDeviceNamesToServer({ [nameEdit.containerId]: trimmed }).catch(() => {});
+      }
       return next;
     });
     setNameEdit(null);

@@ -76,6 +76,7 @@ export {
   fetchServerCiclos,
   fetchServerCiclo,
   clearCorreoHistorial,
+  syncDeviceNamesToServer,
 } from './correoServerApi';
 export {
   userHasCorreoIncidentAccess,

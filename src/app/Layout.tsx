@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Outlet, Link, useNavigate, useLocation } from 'react-router';
 import { useAuth } from './AuthContext';
 import { userIsIffRestrictedNavigation } from './modules/usuario';
-import { fetchServerGrupos } from './modules/correo/correoServerApi';
+import { fetchServerGrupos, syncDeviceNamesToServer } from './modules/correo/correoServerApi';
 import { userHasCorreoIncidentAccess } from './modules/correo/incidentAccess';
 import { Button } from './components/ui/button';
 import { 
@@ -45,6 +45,9 @@ export default function Layout() {
     fetchServerGrupos()
       .then(setGruposCorreo)
       .catch(() => setGruposCorreo([]));
+    if (user.deviceNames && Object.keys(user.deviceNames).length > 0) {
+      void syncDeviceNamesToServer(user.deviceNames).catch(() => {});
+    }
   }, [user]);
 
   useEffect(() => {

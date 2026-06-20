@@ -33,7 +33,13 @@ import {
   fetchServerCiclos,
   sendTestEmailViaServer,
   clearCorreoHistorial,
+  syncDeviceNamesToServer,
 } from '../modules/correo/correoServerApi';
+import {
+  buildDeviceNamesForServer,
+  enrichGrupoDevicesWithNames,
+  nombrePlataformaForDevice,
+} from '../modules/correo/deviceNamesSync';
 import type {
   CorreoEnvioLog,
   CorreoServerStatus,
@@ -236,6 +242,15 @@ export default function ConfiguracionCorreo() {
     void loadDevices();
   }, [loadDevices]);
 
+  useEffect(() => {
+    if (user == null || dispositivos.length === 0) return;
+    void syncDeviceNamesToServer(
+      buildDeviceNamesForServer(user, dispositivos, localNames)
+    ).catch(() => {
+      /* silencioso: el ciclo usará nombres ya guardados en grupos */
+    });
+  }, [user, dispositivos, localNames]);
+
   const refreshLogs = async () => {
     setEnvioLogs(await fetchServerEnvios(80));
     setCiclos(await fetchServerCiclos(40));
@@ -346,14 +361,22 @@ export default function ConfiguracionCorreo() {
       return;
     }
     try {
+      const devices = enrichGrupoDevicesWithNames(
+        editing.devices,
+        dispositivos,
+        user,
+        localNames
+      );
       await saveServerGrupo({
         ...editing,
+        devices,
         nombre: editing.nombre.trim(),
         cliente: editing.cliente.trim() || 'Cliente',
         emails,
         createdAt: editingCreatedAt ?? new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       });
+      await syncDeviceNamesToServer(buildDeviceNamesForServer(user, dispositivos, localNames));
       await refreshGrupos();
       closeGrupoDialog();
       toast.success(isEditingExisting ? 'Grupo actualizado en servidor' : 'Grupo creado en servidor');
@@ -402,6 +425,7 @@ export default function ConfiguracionCorreo() {
       toast.error('Equipo no encontrado. Pulse «Equipos» para actualizar el listado.');
       return;
     }
+    const nombre = nombrePlataformaForDevice(user, d, localNames);
     setEditing({
       ...editing,
       devices: [
@@ -411,6 +435,7 @@ export default function ConfiguracionCorreo() {
           imei: d.imei,
           codigo: d.codigo ?? '—',
           descripcionEquipo: '',
+          nombrePlataforma: nombre !== SIN_ASIGNAR ? nombre : undefined,
           umbralesHoras: [...DEFAULT_UMBRALES_HORAS],
           tipoEvento: 'operaciones',
           enabled: true,
@@ -701,10 +726,21 @@ export default function ConfiguracionCorreo() {
                         const live = dispositivos.find((d) => deviceRowKey(d) === dev.rowKey);
                         return (
                           <TableRow key={dev.rowKey}>
-                            <TableCell className="text-xs font-mono">
-                              {dev.codigo} · {dev.imei}
+                            <TableCell className="text-xs">
+                              <div className="font-medium">
+                                {dev.nombrePlataforma?.trim() ||
+                                  (live
+                                    ? nombrePlataformaForDevice(user, live, localNames)
+                                    : null) ||
+                                  'SIN ASIGNAR'}
+                              </div>
+                              <div className="text-muted-foreground font-mono">
+                                {dev.codigo} · {dev.imei}
+                              </div>
                             </TableCell>
-                            <TableCell>{dev.descripcionEquipo?.trim() || '(nombre plataforma)'}</TableCell>
+                            <TableCell>
+                              {dev.descripcionEquipo?.trim() || '(opcional Reefer ID)'}
+                            </TableCell>
                             <TableCell className="text-xs">
                               {dev.tipoEvento === 'mantenimiento' ? 'Mantenimiento' : 'Operaciones'} ·{' '}
                               {normalizeUmbrales(dev.umbralesHoras).join(', ')} h
@@ -1096,9 +1132,20 @@ export default function ConfiguracionCorreo() {
                 {editing.devices.map((dev) => (
                   <Card key={dev.rowKey} className="p-3 space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-sm font-mono">
-                        {dev.codigo} · {dev.imei}
-                      </span>
+                      <div>
+                        <span className="text-sm font-medium block">
+                          {dev.nombrePlataforma?.trim() ||
+                            (() => {
+                              const live = dispositivos.find((d) => deviceRowKey(d) === dev.rowKey);
+                              return live
+                                ? nombrePlataformaForDevice(user, live, localNames)
+                                : SIN_ASIGNAR;
+                            })()}
+                        </span>
+                        <span className="text-xs text-muted-foreground font-mono">
+                          {dev.codigo} · {dev.imei}
+                        </span>
+                      </div>
                       <div className="flex items-center gap-2">
                         <Switch
                           checked={dev.enabled}
@@ -1139,8 +1186,8 @@ export default function ConfiguracionCorreo() {
                     </div>
                     <div className="space-y-2">
                       <Label className="text-xs">
-                        Descripción / ID Reefer en correo (ej. ZGRU5295105). Vacío = nombre en
-                        plataforma.
+                        ID Reefer en correo (opcional, ej. ZGRU6645466). Si vacío se usa el nombre
+                        del listado.
                       </Label>
                       <Input
                         value={dev.descripcionEquipo ?? ''}

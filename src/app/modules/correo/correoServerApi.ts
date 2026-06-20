@@ -89,6 +89,16 @@ export async function saveServerGrupo(grupo: GrupoCorreo): Promise<GrupoCorreo> 
   return body.data;
 }
 
+export async function syncDeviceNamesToServer(names: Record<string, string>): Promise<number> {
+  const res = await fetch(`${BASE}/device-names/sync`, {
+    method: 'POST',
+    headers: headers(),
+    body: JSON.stringify({ names }),
+  });
+  const body = await parseRes<{ count: number }>(res);
+  return body.count;
+}
+
 export async function replaceServerGrupos(grupos: GrupoCorreo[]): Promise<void> {
   const res = await fetch(`${BASE}/grupos`, {
     method: 'PUT',
