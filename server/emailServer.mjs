@@ -15,9 +15,17 @@ import {
   getIncidentes,
   listCiclos,
   getCicloById,
+  getAlertStateView,
+  refreshDeviceReferenceFromHistorial,
+  applyManualDeviceReference,
 } from './lib/alertEngine.js';
 import { getSmtpConfig, saveSmtpConfig, smtpPublicView } from './lib/smtpRepository.js';
 import { mergeDeviceNames, getDeviceNameByImei } from './lib/deviceNamesRepository.js';
+import {
+  getDeviceAlertConfigMap,
+  saveDeviceAlertConfig,
+  deleteDeviceAlertConfig,
+} from './lib/deviceAlertConfigRepository.js';
 import { buildFueraDeRangoEmail } from './lib/emailBuilder.js';
 
 const PORT = Number(process.env.CORREO_PORT ?? 3003);
@@ -205,6 +213,53 @@ app.get('/reefer/api/correo/ciclos/:id', (req, res) => {
   const ciclo = getCicloById(req.params.id);
   if (!ciclo) return res.status(404).json({ ok: false, error: 'Ciclo no encontrado' });
   res.json({ ok: true, data: ciclo });
+});
+
+app.get('/reefer/api/correo/alert-config', (_req, res) => {
+  res.json({ ok: true, data: getDeviceAlertConfigMap() });
+});
+
+app.get('/reefer/api/correo/alert-config/state', (_req, res) => {
+  res.json({ ok: true, data: getAlertStateView() });
+});
+
+app.put('/reefer/api/correo/alert-config/:rowKey', (req, res) => {
+  const rowKey = decodeURIComponent(req.params.rowKey);
+  const { mode, umbralesHoras, useReferenciaManual, referenciaManual } = req.body ?? {};
+  try {
+    if (mode === 'standard') {
+      deleteDeviceAlertConfig(rowKey);
+      return res.json({ ok: true, data: null });
+    }
+    const entry = saveDeviceAlertConfig(rowKey, {
+      mode: 'custom',
+      umbralesHoras,
+      useReferenciaManual: Boolean(useReferenciaManual),
+      referenciaManual: referenciaManual ?? undefined,
+    });
+    res.json({ ok: true, data: entry });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/reefer/api/correo/alert-config/:rowKey/referencia', async (req, res) => {
+  const rowKey = decodeURIComponent(req.params.rowKey);
+  const { action, since, resetSentUmbrales } = req.body ?? {};
+  try {
+    if (action === 'manual') {
+      if (!since) return res.status(400).json({ ok: false, error: 'since obligatorio para referencia manual' });
+      const data = applyManualDeviceReference(rowKey, since, Boolean(resetSentUmbrales));
+      return res.json({ ok: true, data });
+    }
+    if (action === 'historial') {
+      const data = await refreshDeviceReferenceFromHistorial(rowKey);
+      return res.json({ ok: true, data });
+    }
+    res.status(400).json({ ok: false, error: 'action debe ser historial o manual' });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
 });
 
 app.post('/reefer/api/correo/historial/limpiar', (req, res) => {

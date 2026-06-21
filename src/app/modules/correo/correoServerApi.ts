@@ -13,6 +13,9 @@ import type {
   CicloEvaluacionDispositivo,
   CicloEvaluacionEstado,
   CicloResumen,
+  DeviceAlertConfig,
+  DeviceAlertStateView,
+  ReferenciaUpdateResult,
 } from './types';
 
 const BASE = import.meta.env.VITE_CORREO_API_BASE ?? '/reefer/api/correo';
@@ -185,6 +188,51 @@ export async function fetchServerCiclos(limit = 30): Promise<CorreoCicloAnalisis
 export async function fetchServerCiclo(id: string): Promise<CorreoCicloAnalisis> {
   const res = await fetch(`${BASE}/ciclos/${id}`);
   const body = await parseRes<{ data: CorreoCicloAnalisis }>(res);
+  return body.data;
+}
+
+export async function fetchDeviceAlertConfigMap(): Promise<Record<string, DeviceAlertConfig>> {
+  const res = await fetch(`${BASE}/alert-config`);
+  const body = await parseRes<{ data: Record<string, DeviceAlertConfig> }>(res);
+  return body.data ?? {};
+}
+
+export async function fetchDeviceAlertState(): Promise<DeviceAlertStateView> {
+  const res = await fetch(`${BASE}/alert-config/state`);
+  const body = await parseRes<{ data: DeviceAlertStateView }>(res);
+  return body.data;
+}
+
+export async function saveDeviceAlertConfigApi(
+  rowKey: string,
+  config: {
+    mode: 'standard' | 'custom';
+    umbralesHoras?: number[];
+    useReferenciaManual?: boolean;
+    referenciaManual?: string;
+  }
+): Promise<DeviceAlertConfig | null> {
+  const res = await fetch(`${BASE}/alert-config/${encodeURIComponent(rowKey)}`, {
+    method: 'PUT',
+    headers: headers(),
+    body: JSON.stringify(config),
+  });
+  const body = await parseRes<{ data: DeviceAlertConfig | null }>(res);
+  return body.data;
+}
+
+export async function updateDeviceReferencia(
+  rowKey: string,
+  payload:
+    | { action: 'historial' }
+    | { action: 'manual'; since: string; resetSentUmbrales?: boolean }
+): Promise<ReferenciaUpdateResult> {
+  const res = await fetch(`${BASE}/alert-config/${encodeURIComponent(rowKey)}/referencia`, {
+    method: 'POST',
+    headers: headers(),
+    body: JSON.stringify(payload),
+  });
+  const body = await parseRes<{ data: ReferenciaUpdateResult }>(res);
   return body.data;
 }
 

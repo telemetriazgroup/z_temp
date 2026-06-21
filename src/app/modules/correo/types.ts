@@ -10,7 +10,59 @@ export const UMBRALES_HORAS_DISPONIBLES = Array.from({ length: 23 }, (_, i) => i
 
 export const DEFAULT_UMBRALES_HORAS: number[] = [...UMBRALES_HORAS_DISPONIBLES];
 
-export type CorreoTipoEvento = 'operaciones' | 'mantenimiento';
+export type DeviceAlertConfigMode = 'standard' | 'custom';
+
+/** Configuración de alerta por equipo (override del estándar del grupo). */
+export interface DeviceAlertConfig {
+  rowKey: string;
+  mode: DeviceAlertConfigMode;
+  umbralesHoras?: number[];
+  referenciaManual?: string;
+  useReferenciaManual?: boolean;
+  updatedAt?: string;
+}
+
+/** Episodio activo en servidor (referencia fuera de rango). */
+export interface DeviceAlertEpisode {
+  since: string;
+  sentUmbrales: number[];
+  referenceLocked?: boolean;
+  referenciaManual?: boolean;
+  historialConsultadoAt?: string;
+  establishedAt?: string;
+  fromHistorial?: boolean;
+}
+
+export interface DeviceAlertStateEntry {
+  rowKey: string;
+  imei: string;
+  codigo: string;
+  descripcionEquipo?: string;
+  nombrePlataforma?: string;
+  grupoNombre: string;
+  config: DeviceAlertConfig | null;
+  episode: DeviceAlertEpisode | null;
+  lastRecovered?: {
+    since: string;
+    endedAt: string;
+    durationHours: number;
+  } | null;
+}
+
+export interface DeviceAlertStateView {
+  entries: DeviceAlertStateEntry[];
+  updatedAt: string;
+}
+
+export interface ReferenciaUpdateResult {
+  rowKey: string;
+  episode: DeviceAlertEpisode | null;
+  since?: string | null;
+  recovered?: { since: string; endedAt: string; durationHours: number } | null;
+  consultaHistorial?: boolean;
+  criterio: string;
+}
+
 
 export type CorreoIncidenteEstado = 'pendiente' | 'atendida';
 
@@ -152,6 +204,8 @@ export interface CicloEvaluacionDispositivo {
   grupoNombre: string;
   descripcionEquipo: string;
   assignmentEnabled?: boolean;
+  /** estándar (grupo) o personalizada (deviceAlertConfig). */
+  configAlerta?: 'estándar' | 'personalizada';
   estado: CicloEvaluacionEstado;
   accion: 'ninguna' | 'envio' | 'error';
   criterio: string;

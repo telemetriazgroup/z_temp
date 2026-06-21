@@ -11,6 +11,7 @@ import { buildFueraDeRangoEmail } from './emailBuilder.js';
 import { fetchAllDispositivos, deviceRowKey } from './telemetry.js';
 import { getSmtpConfig } from './smtpRepository.js';
 import { getDeviceNameByImei } from './deviceNamesRepository.js';
+import { resolveUmbralesForDevice, getDeviceAlertConfig, getDeviceAlertConfigMap, saveDeviceAlertConfig } from './deviceAlertConfigRepository.js';
 import {
   fetchHistorialUltimasHoras,
   resolveOutOfRangeSince,
@@ -58,10 +59,22 @@ function startEpisode(state, rowKey, since, meta = {}) {
   state.episodes[rowKey] = {
     since,
     sentUmbrales: [],
+    referenceLocked: true,
+    historialConsultadoAt: new Date().toISOString(),
     establishedAt: new Date().toISOString(),
     ...meta,
   };
   return state.episodes[rowKey];
+}
+
+function ensureSentUmbrales(episode) {
+  if (!Array.isArray(episode.sentUmbrales)) episode.sentUmbrales = [];
+  return episode.sentUmbrales;
+}
+
+/** ¿Ya se envió este umbral en el episodio actual? */
+function umbralYaEnviado(episode, umbralHoras) {
+  return ensureSentUmbrales(episode).includes(umbralHoras);
 }
 
 function formatRef(iso) {
@@ -136,6 +149,35 @@ function pickUmbralPendiente(umbrales, horasEnteras, sentUmbrales) {
 }
 
 async function ensureOutOfRangeReference(state, assignment, dispositivo, now) {
+  const cfg = getDeviceAlertConfig(assignment.rowKey);
+  let episode = getEpisode(state, assignment.rowKey);
+
+  if (cfg?.mode === 'custom' && cfg.useReferenciaManual && cfg.referenciaManual) {
+    if (!episode) {
+      episode = startEpisode(state, assignment.rowKey, cfg.referenciaManual, {
+        referenciaManual: true,
+        referenceLocked: true,
+      });
+    } else {
+      episode.since = cfg.referenciaManual;
+      episode.referenceLocked = true;
+      episode.referenciaManual = true;
+    }
+    return {
+      episode,
+      consultaHistorial: false,
+      criterioRef: `Referencia manual: ${formatRef(cfg.referenciaManual)}. Sin consulta 12 h.`,
+    };
+  }
+
+  if (episode?.referenceLocked && episode.since) {
+    return {
+      episode,
+      consultaHistorial: false,
+      criterioRef: `Referencia fija ${formatRef(episode.since)}. Enviados: ${ensureSentUmbrales(episode).join(', ') || 'ninguno'}.`,
+    };
+  }
+
   const codigo = dispositivo.codigo ?? assignment.codigo;
   const hist = await fetchHistorialUltimasHoras(
     codigo,
@@ -146,35 +188,23 @@ async function ensureOutOfRangeReference(state, assignment, dispositivo, now) {
   const since = resolveOutOfRangeSince(hist.datos, now);
 
   if (since == null) {
-    const had = getEpisode(state, assignment.rowKey);
-    if (had) clearEpisode(state, assignment.rowKey, now);
+    if (episode) clearEpisode(state, assignment.rowKey, now);
     return {
       episode: null,
       recovered: true,
       consultaHistorial: true,
-      criterioRef:
-        'Historial 12 h: EN RANGO efectivo (suministro en banda / entre ciclos defrost). Episodio cerrado; contador en 0.',
+      criterioRef: 'Consulta 12 h: EN RANGO efectivo. Episodio cerrado; contador en 0.',
     };
   }
 
-  let episode = getEpisode(state, assignment.rowKey);
   if (episode) {
-    const prev = new Date(episode.since).getTime();
-    const next = new Date(since).getTime();
-    if (!Number.isNaN(prev) && Math.abs(next - prev) > 60_000) {
-      episode.since = since;
-      episode.sentUmbrales = [];
-      episode.reconciledAt = now.toISOString();
-      return {
-        episode,
-        consultaHistorial: true,
-        criterioRef: `Tras recuperación intermedia, referencia ${formatRef(since)}. Umbrales reiniciados.`,
-      };
-    }
+    episode.since = since;
+    episode.referenceLocked = true;
+    episode.historialConsultadoAt = now.toISOString();
     return {
       episode,
       consultaHistorial: true,
-      criterioRef: `Episodio continuo fuera de rango efectivo desde ${formatRef(since)}.`,
+      criterioRef: `Referencia fijada ${formatRef(since)}. Umbrales enviados conservados: ${ensureSentUmbrales(episode).join(', ') || 'ninguno'}.`,
     };
   }
 
@@ -185,7 +215,7 @@ async function ensureOutOfRangeReference(state, assignment, dispositivo, now) {
   return {
     episode,
     consultaHistorial: true,
-    criterioRef: `Nuevo episodio continuo desde ${formatRef(since)} (consulta 12 h).`,
+    criterioRef: `Referencia fijada ${formatRef(since)} (consulta 12 h única hasta recuperación EN RANGO).`,
   };
 }
 
@@ -199,6 +229,7 @@ function baseEval(grupo, assignment, dispositivo) {
     grupoNombre: grupo.nombre,
     descripcionEquipo: dispositivoReeferId,
     assignmentEnabled: assignment.enabled,
+    configAlerta: alertConfigLabel(assignment.rowKey),
   };
 }
 
@@ -340,7 +371,7 @@ export async function runAlertCycle(options = {}) {
 
       const enRangoRaw = dispositivo.en_rango;
       const enRangoEfectivo = effectiveEnRangoFromDispositivo(dispositivo);
-      const umbrales = normalizeUmbrales(assignment.umbralesHoras);
+      const umbrales = resolveUmbralesForDevice(assignment.rowKey, assignment.umbralesHoras);
       const telem = {
         setPoint: dispositivo.ultimo_dato?.set_point ?? null,
         tempSupply: dispositivo.ultimo_dato?.temp_supply_1 ?? null,
@@ -445,11 +476,11 @@ export async function runAlertCycle(options = {}) {
       const nextUmbral = umbrales.find((u) => horasEnteras < u && !sentUmbrales.includes(u));
       const horasTexto = `${Math.round(horasFuera * 10) / 10} h`;
 
-      if (umbralHoras == null) {
+      if (umbralHoras == null || umbralYaEnviado(episode, umbralHoras)) {
         let criterio;
         if (sentUmbrales.length > 0) {
           const ultimo = sentUmbrales[sentUmbrales.length - 1];
-          criterio = `FUERA DE RANGO ${horasTexto} desde ${formatRef(episode.since)} (GMT-5). Último aviso: ${ultimo} h. ${nextUmbral != null ? `Próximo: ${nextUmbral} h.` : 'Sin más umbrales.'} ${criterioRef}`;
+          criterio = `FUERA DE RANGO ${horasTexto} desde ${formatRef(episode.since)} (GMT-5). Último aviso: ${ultimo} h. ${nextUmbral != null ? `Esperando ${nextUmbral} h (${(nextUmbral - horasFuera).toFixed(1)} h restantes).` : 'Sin más umbrales.'} ${criterioRef}`;
         } else if (nextUmbral != null) {
           criterio = `FUERA DE RANGO ${horasTexto} desde ${formatRef(episode.since)} (GMT-5). Próximo aviso al alcanzar ${nextUmbral} h (faltan ~${Math.max(0, nextUmbral - horasFuera).toFixed(1)} h). ${criterioRef}`;
         } else {
@@ -493,7 +524,26 @@ export async function runAlertCycle(options = {}) {
         });
 
         const envioId = uid('envio');
-        const criterioEnvio = `FUERA DE RANGO ${horasTexto} desde ${formatRef(episode.since)} (GMT-5). Se envía solo umbral ${umbralHoras} h (tipo ${tipoEvento}). ${consultaHistorial ? 'Referencia por consulta 12 h.' : 'Referencia persistida.'} Destino: ${grupo.emails.join(', ')}.`;
+        const criterioEnvio = `FUERA DE RANGO ${horasTexto} desde ${formatRef(episode.since)} (GMT-5). Se envía solo umbral ${umbralHoras} h (tipo ${tipoEvento}). ${consultaHistorial ? 'Referencia obtenida por consulta 12 h (fijada).' : 'Referencia persistida.'} Destino: ${grupo.emails.join(', ')}.`;
+
+        if (umbralYaEnviado(episode, umbralHoras)) {
+          pushEval(evaluaciones, {
+            ...base,
+            estado: 'fuera_rango_sin_envio',
+            accion: 'ninguna',
+            enRango: false,
+            diaCalendario: hoy,
+            horasFueraHoy: horasEnteras,
+            referenciaDesde: episode.since,
+            consultaHistorial,
+            umbralesEnviadosHoy: [...sentUmbrales],
+            proximoUmbralHoras: nextUmbral ?? null,
+            telemetria: telem,
+            criterio: `Umbral ${umbralHoras} h ya enviado en este episodio. No se repite. ${criterioRef}`,
+          });
+          result.resumen.fueraRangoSinEnvio++;
+          continue;
+        }
 
         try {
           const messageId = await sendMail(smtp, grupo.emails, content);
@@ -627,6 +677,149 @@ export function getCicloById(id) {
 
 export function listCiclos(limit = 30) {
   return getCiclos().slice(0, Math.min(limit, MAX_CICLOS));
+}
+
+function findAssignmentByRowKey(rowKey) {
+  for (const grupo of getGrupos()) {
+    for (const assignment of grupo.devices ?? []) {
+      if (assignment.rowKey === rowKey) return { grupo, assignment };
+    }
+  }
+  return null;
+}
+
+function alertConfigLabel(rowKey) {
+  const cfg = getDeviceAlertConfig(rowKey);
+  return cfg?.mode === 'custom' ? 'personalizada' : 'estándar';
+}
+
+async function resolveDispositivoForRowKey(rowKey) {
+  const dispositivos = await fetchAllDispositivos();
+  return dispositivos.find((d) => deviceRowKey(d) === rowKey) ?? null;
+}
+
+/**
+ * Re-analiza historial 12 h y actualiza referencia sin reiniciar umbrales enviados.
+ */
+export async function refreshDeviceReferenceFromHistorial(rowKey) {
+  const found = findAssignmentByRowKey(rowKey);
+  if (!found) throw new Error('Equipo no encontrado en grupos de correo');
+
+  const dispositivo = await resolveDispositivoForRowKey(rowKey);
+  if (!dispositivo) throw new Error('Equipo sin telemetría actual');
+
+  const now = new Date();
+  const codigo = dispositivo.codigo ?? found.assignment.codigo;
+  const hist = await fetchHistorialUltimasHoras(
+    codigo,
+    dispositivo.imei,
+    HISTORICAL_WINDOW_HOURS,
+    now
+  );
+  const since = resolveOutOfRangeSince(hist.datos, now);
+  const state = getState();
+
+  if (since == null) {
+    const recovered = clearEpisode(state, rowKey, now);
+    saveState(state);
+    return {
+      rowKey,
+      episode: null,
+      recovered,
+      since: null,
+      consultaHistorial: true,
+      criterio: 'Re-análisis 12 h: EN RANGO efectivo. Episodio cerrado.',
+    };
+  }
+
+  let episode = getEpisode(state, rowKey);
+  const prevSent = episode ? [...ensureSentUmbrales(episode)] : [];
+  if (episode) {
+    episode.since = since;
+    episode.referenceLocked = true;
+    episode.historialConsultadoAt = now.toISOString();
+    episode.sentUmbrales = prevSent;
+  } else {
+    episode = startEpisode(state, rowKey, since, {
+      fromHistorial: true,
+      historialPuntos: hist.datos?.length ?? 0,
+    });
+    episode.sentUmbrales = prevSent;
+  }
+
+  saveState(state);
+  return {
+    rowKey,
+    episode,
+    since,
+    consultaHistorial: true,
+    criterio: `Referencia actualizada ${formatRef(since)} (re-análisis 12 h). Umbrales conservados: ${prevSent.join(', ') || 'ninguno'}.`,
+  };
+}
+
+/** Fija referencia manual; opcionalmente reinicia umbrales enviados. */
+export function applyManualDeviceReference(rowKey, sinceIso, resetSentUmbrales = false) {
+  const since = new Date(sinceIso);
+  if (Number.isNaN(since.getTime())) throw new Error('Fecha de referencia inválida');
+
+  const state = getState();
+  let episode = getEpisode(state, rowKey);
+  const prevSent = resetSentUmbrales ? [] : episode ? [...ensureSentUmbrales(episode)] : [];
+
+  if (episode) {
+    episode.since = since.toISOString();
+    episode.referenceLocked = true;
+    episode.referenciaManual = true;
+    episode.sentUmbrales = prevSent;
+  } else {
+    episode = startEpisode(state, rowKey, since.toISOString(), {
+      referenciaManual: true,
+      referenceLocked: true,
+    });
+    episode.sentUmbrales = prevSent;
+  }
+
+  saveDeviceAlertConfig(rowKey, {
+    mode: 'custom',
+    useReferenciaManual: true,
+    referenciaManual: since.toISOString(),
+  });
+
+  saveState(state);
+  return {
+    rowKey,
+    episode,
+    since: since.toISOString(),
+    criterio: `Referencia manual ${formatRef(since.toISOString())}. Umbrales: ${prevSent.join(', ') || 'ninguno'}.`,
+  };
+}
+
+export function getAlertStateView() {
+  const state = getState();
+  const configs = getDeviceAlertConfigMap();
+  const seen = new Set();
+  const entries = [];
+
+  for (const grupo of getGrupos()) {
+    for (const assignment of grupo.devices ?? []) {
+      if (seen.has(assignment.rowKey)) continue;
+      seen.add(assignment.rowKey);
+      const episode = state.episodes?.[assignment.rowKey] ?? null;
+      entries.push({
+        rowKey: assignment.rowKey,
+        imei: assignment.imei,
+        codigo: assignment.codigo,
+        descripcionEquipo: assignment.descripcionEquipo,
+        nombrePlataforma: assignment.nombrePlataforma,
+        grupoNombre: grupo.nombre,
+        config: configs[assignment.rowKey] ?? null,
+        episode,
+        lastRecovered: state.lastRecovered?.[assignment.rowKey] ?? null,
+      });
+    }
+  }
+
+  return { entries, updatedAt: new Date().toISOString() };
 }
 
 export {

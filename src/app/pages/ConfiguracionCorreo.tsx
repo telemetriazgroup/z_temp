@@ -34,6 +34,9 @@ import {
   sendTestEmailViaServer,
   clearCorreoHistorial,
   syncDeviceNamesToServer,
+  fetchDeviceAlertState,
+  saveDeviceAlertConfigApi,
+  updateDeviceReferencia,
 } from '../modules/correo/correoServerApi';
 import {
   buildDeviceNamesForServer,
@@ -46,6 +49,7 @@ import type {
   CorreoCicloAnalisis,
   CicloEvaluacionDispositivo,
   SmtpConfigSaveInput,
+  DeviceAlertStateEntry,
 } from '../modules/correo/types';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -103,6 +107,8 @@ import {
   Trash2,
   Play,
   ClipboardList,
+  Settings2,
+  Target,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -181,6 +187,14 @@ export default function ConfiguracionCorreo() {
     incidentes: true,
     episodios: false,
   });
+  const [alertState, setAlertState] = useState<DeviceAlertStateEntry[]>([]);
+  const [alertEdit, setAlertEdit] = useState<DeviceAlertStateEntry | null>(null);
+  const [alertMode, setAlertMode] = useState<'standard' | 'custom'>('standard');
+  const [alertUmbrales, setAlertUmbrales] = useState<number[]>([...DEFAULT_UMBRALES_HORAS]);
+  const [alertUseManualRef, setAlertUseManualRef] = useState(false);
+  const [alertManualRef, setAlertManualRef] = useState('');
+  const [alertSaving, setAlertSaving] = useState(false);
+  const [traceRowKey, setTraceRowKey] = useState<string | null>(null);
 
   const localNames = useMemo(() => readDeviceLocalNames(), []);
 
@@ -216,6 +230,8 @@ export default function ConfiguracionCorreo() {
       setEnvioLogs(await fetchServerEnvios(80));
       setCiclos(await fetchServerCiclos(40));
       setServerStatus(await fetchCorreoStatus());
+      const st = await fetchDeviceAlertState();
+      setAlertState(st.entries);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Error al cargar config del servidor');
     }
@@ -255,8 +271,108 @@ export default function ConfiguracionCorreo() {
     setEnvioLogs(await fetchServerEnvios(80));
     setCiclos(await fetchServerCiclos(40));
     setServerStatus(await fetchCorreoStatus());
+    const st = await fetchDeviceAlertState();
+    setAlertState(st.entries);
   };
   const refreshGrupos = async () => setGrupos(await fetchServerGrupos());
+
+  const openAlertEdit = (entry: DeviceAlertStateEntry) => {
+    const cfg = entry.config;
+    setAlertEdit(entry);
+    setAlertMode(cfg?.mode === 'custom' ? 'custom' : 'standard');
+    setAlertUmbrales(
+      cfg?.mode === 'custom' && cfg.umbralesHoras?.length
+        ? normalizeUmbrales(cfg.umbralesHoras)
+        : [...DEFAULT_UMBRALES_HORAS]
+    );
+    setAlertUseManualRef(Boolean(cfg?.useReferenciaManual));
+    if (cfg?.referenciaManual) {
+      const d = new Date(cfg.referenciaManual);
+      setAlertManualRef(
+        Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 16)
+      );
+    } else if (entry.episode?.since) {
+      setAlertManualRef(new Date(entry.episode.since).toISOString().slice(0, 16));
+    } else {
+      setAlertManualRef('');
+    }
+  };
+
+  const closeAlertEdit = () => {
+    setAlertEdit(null);
+    setAlertSaving(false);
+  };
+
+  const toggleAlertUmbral = (h: number, on: boolean) => {
+    setAlertUmbrales((prev) => {
+      const next = on ? [...prev, h] : prev.filter((x) => x !== h);
+      return normalizeUmbrales(next.length ? next : [2]);
+    });
+  };
+
+  const handleSaveAlertConfig = async () => {
+    if (alertEdit == null) return;
+    setAlertSaving(true);
+    try {
+      if (alertMode === 'standard') {
+        await saveDeviceAlertConfigApi(alertEdit.rowKey, { mode: 'standard' });
+      } else {
+        await saveDeviceAlertConfigApi(alertEdit.rowKey, {
+          mode: 'custom',
+          umbralesHoras: alertUmbrales,
+          useReferenciaManual: alertUseManualRef,
+          referenciaManual: alertUseManualRef && alertManualRef
+            ? new Date(alertManualRef).toISOString()
+            : undefined,
+        });
+        if (alertUseManualRef && alertManualRef) {
+          await updateDeviceReferencia(alertEdit.rowKey, {
+            action: 'manual',
+            since: new Date(alertManualRef).toISOString(),
+          });
+        }
+      }
+      const st = await fetchDeviceAlertState();
+      setAlertState(st.entries);
+      toast.success('Configuración de alerta guardada');
+      closeAlertEdit();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Error al guardar configuración');
+      setAlertSaving(false);
+    }
+  };
+
+  const handleRefreshReferenciaHistorial = async () => {
+    if (alertEdit == null) return;
+    setAlertSaving(true);
+    try {
+      const result = await updateDeviceReferencia(alertEdit.rowKey, { action: 'historial' });
+      const st = await fetchDeviceAlertState();
+      setAlertState(st.entries);
+      const updated = st.entries.find((e) => e.rowKey === alertEdit.rowKey);
+      if (updated) openAlertEdit(updated);
+      toast.success(result.criterio);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Error al re-analizar referencia');
+    } finally {
+      setAlertSaving(false);
+    }
+  };
+
+  const traceEvaluaciones = useMemo(() => {
+    if (traceRowKey == null) return [];
+    const rows: Array<CicloEvaluacionDispositivo & { cicloAt: string; cicloId: string }> = [];
+    for (const ciclo of ciclos) {
+      for (const ev of ciclo.evaluaciones) {
+        if (ev.rowKey === traceRowKey) {
+          rows.push({ ...ev, cicloAt: ciclo.checkedAt, cicloId: ciclo.id });
+        }
+      }
+    }
+    return rows.slice(0, 80);
+  }, [ciclos, traceRowKey]);
+
+  const traceEntry = alertState.find((e) => e.rowKey === traceRowKey);
 
   const smtpReadyOnServer = (): boolean =>
     Boolean(smtpUser.trim() && (smtpPasswordSaved || smtpPass.replace(/\s/g, '')));
@@ -587,6 +703,7 @@ export default function ConfiguracionCorreo() {
           <TabsTrigger value="remitente">Remitente</TabsTrigger>
           <TabsTrigger value="grupos">Grupos de correo</TabsTrigger>
           <TabsTrigger value="log">Registro de envíos</TabsTrigger>
+          <TabsTrigger value="alertas">Alertas por equipo</TabsTrigger>
           <TabsTrigger value="ciclos">Ciclos de análisis</TabsTrigger>
         </TabsList>
 
@@ -850,6 +967,95 @@ export default function ConfiguracionCorreo() {
           </Card>
         </TabsContent>
 
+        <TabsContent value="alertas" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Settings2 className="h-5 w-5" />
+                Alertas por equipo
+              </CardTitle>
+              <CardDescription>
+                Modo estándar: usa umbrales del grupo y referencia automática (consulta 12 h una
+                sola vez por episodio). Modo personalizado: umbrales y/o referencia manual tienen
+                prioridad. Un solo correo por umbral; al volver EN RANGO se reinicia el contador.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Equipo</TableHead>
+                    <TableHead>Modo</TableHead>
+                    <TableHead>Referencia activa</TableHead>
+                    <TableHead>Umbrales enviados</TableHead>
+                    <TableHead className="w-[200px]" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {alertState.map((entry) => {
+                    const nombre =
+                      entry.descripcionEquipo ||
+                      entry.nombrePlataforma ||
+                      entry.codigo ||
+                      entry.imei;
+                    const mode = entry.config?.mode === 'custom' ? 'personalizada' : 'estándar';
+                    return (
+                      <TableRow key={entry.rowKey}>
+                        <TableCell className="text-xs">
+                          <div className="font-medium">{nombre}</div>
+                          <div className="text-muted-foreground">{entry.imei}</div>
+                          <div className="text-muted-foreground">{entry.grupoNombre}</div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={mode === 'personalizada' ? 'default' : 'secondary'}>
+                            {mode}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-xs">
+                          {entry.episode?.since ? (
+                            <>
+                              {new Date(entry.episode.since).toLocaleString('es-ES')}
+                              {entry.episode.referenceLocked && (
+                                <div className="text-muted-foreground">Referencia fija</div>
+                              )}
+                            </>
+                          ) : (
+                            <span className="text-muted-foreground">Sin episodio activo</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-xs">
+                          {entry.episode?.sentUmbrales?.length
+                            ? `${entry.episode.sentUmbrales.join(', ')} h`
+                            : '—'}
+                        </TableCell>
+                        <TableCell className="space-x-1">
+                          <Button variant="outline" size="sm" onClick={() => openAlertEdit(entry)}>
+                            Configurar
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setTraceRowKey(entry.rowKey)}
+                          >
+                            Trazabilidad
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                  {alertState.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center text-muted-foreground">
+                        No hay equipos en grupos de correo.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         <TabsContent value="ciclos" className="mt-4">
           <Card>
             <CardHeader>
@@ -996,8 +1202,11 @@ export default function ConfiguracionCorreo() {
                         {ev.referenciaDesde != null && (
                           <div className="text-muted-foreground">
                             Ref. desde {new Date(ev.referenciaDesde).toLocaleString('es-ES')}
-                            {ev.consultaHistorial ? ' (historial 12 h)' : ''}
+                            {ev.consultaHistorial ? ' (historial 12 h)' : ' (referencia fija)'}
                           </div>
+                        )}
+                        {ev.configAlerta != null && (
+                          <div className="text-muted-foreground">Config: {ev.configAlerta}</div>
                         )}
                         {ev.horasFueraHoy != null && ev.referenciaDesde != null && (
                           <div className="text-muted-foreground">
@@ -1029,6 +1238,190 @@ export default function ConfiguracionCorreo() {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setCicloDetalle(null)}>
+              Cerrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={alertEdit != null} onOpenChange={(open) => !open && closeAlertEdit()}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Target className="h-5 w-5" />
+              Configuración de alerta
+            </DialogTitle>
+            <DialogDescription>
+              {alertEdit != null && (
+                <>
+                  {alertEdit.descripcionEquipo || alertEdit.nombrePlataforma || alertEdit.codigo} ·{' '}
+                  {alertEdit.imei}
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          {alertEdit != null && (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>Modo de alerta</Label>
+                <Select
+                  value={alertMode}
+                  onValueChange={(v) => setAlertMode(v as 'standard' | 'custom')}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="standard">
+                      Estándar (umbrales del grupo + referencia automática)
+                    </SelectItem>
+                    <SelectItem value="custom">Personalizada (override por equipo)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {alertMode === 'custom' && (
+                <>
+                  <div className="space-y-2">
+                    <Label className="text-xs">Umbrales personalizados (horas)</Label>
+                    <div className="flex flex-wrap gap-2">
+                      {UMBRALES_HORAS_DISPONIBLES.map((h) => (
+                        <label
+                          key={h}
+                          className="flex items-center gap-1.5 text-xs border rounded px-2 py-1 cursor-pointer"
+                        >
+                          <Checkbox
+                            checked={alertUmbrales.includes(h)}
+                            onCheckedChange={(v) => toggleAlertUmbral(h, v === true)}
+                          />
+                          {h}h
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      checked={alertUseManualRef}
+                      onCheckedChange={setAlertUseManualRef}
+                      id="use-manual-ref"
+                    />
+                    <Label htmlFor="use-manual-ref">Usar referencia manual fija</Label>
+                  </div>
+
+                  {alertUseManualRef && (
+                    <div className="space-y-2">
+                      <Label htmlFor="manual-ref">Inicio fuera de rango (GMT-5, local)</Label>
+                      <Input
+                        id="manual-ref"
+                        type="datetime-local"
+                        value={alertManualRef}
+                        onChange={(e) => setAlertManualRef(e.target.value)}
+                      />
+                    </div>
+                  )}
+                </>
+              )}
+
+              <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm space-y-1">
+                <div className="font-medium">Estado actual del episodio</div>
+                {alertEdit.episode?.since ? (
+                  <>
+                    <div>
+                      Referencia: {new Date(alertEdit.episode.since).toLocaleString('es-ES')}
+                      {alertEdit.episode.referenceLocked ? ' (fija)' : ''}
+                    </div>
+                    <div>
+                      Umbrales ya enviados:{' '}
+                      {alertEdit.episode.sentUmbrales?.length
+                        ? `${alertEdit.episode.sentUmbrales.join(', ')} h`
+                        : 'ninguno'}
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-muted-foreground">Sin episodio fuera de rango activo.</div>
+                )}
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={alertSaving}
+                  onClick={() => void handleRefreshReferenciaHistorial()}
+                >
+                  {alertSaving ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4 mr-1" />
+                  )}
+                  Re-analizar referencia (12 h)
+                </Button>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={closeAlertEdit}>
+              Cancelar
+            </Button>
+            <Button disabled={alertSaving} onClick={() => void handleSaveAlertConfig()}>
+              {alertSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Guardar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={traceRowKey != null} onOpenChange={(open) => !open && setTraceRowKey(null)}>
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Trazabilidad por ciclo</DialogTitle>
+            <DialogDescription>
+              {traceEntry != null && (
+                <>
+                  {traceEntry.descripcionEquipo || traceEntry.imei} — decisiones en los últimos
+                  ciclos de análisis
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Ciclo</TableHead>
+                <TableHead>Estado</TableHead>
+                <TableHead>Config</TableHead>
+                <TableHead>Criterio / decisión</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {traceEvaluaciones.map((ev) => (
+                <TableRow key={`${ev.cicloId}-${ev.grupoId}-${ev.estado}-${ev.cicloAt}`}>
+                  <TableCell className="text-xs whitespace-nowrap">
+                    {new Date(ev.cicloAt).toLocaleString('es-ES')}
+                  </TableCell>
+                  <TableCell>
+                    <Badge className={estadoCicloBadgeClass(ev.estado)}>
+                      {estadoCicloLabel(ev.estado)}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-xs">{ev.configAlerta ?? '—'}</TableCell>
+                  <TableCell className="text-xs max-w-[420px] whitespace-normal">
+                    {ev.criterio}
+                  </TableCell>
+                </TableRow>
+              ))}
+              {traceEvaluaciones.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={4} className="text-center text-muted-foreground">
+                    Sin evaluaciones registradas para este equipo.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTraceRowKey(null)}>
               Cerrar
             </Button>
           </DialogFooter>
