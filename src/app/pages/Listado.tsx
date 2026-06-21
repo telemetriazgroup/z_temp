@@ -13,8 +13,8 @@ import {
 } from '../lib/deviceLocalNames';
 import { syncDeviceNamesToServer, fetchDeviceAlertConfigMap } from '../modules/correo/correoServerApi';
 import {
-  effectiveEnRangoWithConfig,
   usaRangoPersonalizado,
+  evaluarEstadoRangoListado,
 } from '../modules/correo/rangoTemperatura';
 import type { DeviceAlertConfig } from '../modules/correo/types';
 import { Input } from '../components/ui/input';
@@ -143,7 +143,7 @@ function mapDeviceToDisplay(
   const returnAir = d.ultimo_dato?.return_air ?? null;
   const tempSupply1 = d.ultimo_dato?.temp_supply_1 ?? null;
   const codigo = d.codigo ?? '—';
-  const enRango = effectiveEnRangoWithConfig(d, alertCfg);
+  const estadoRango = evaluarEstadoRangoListado(d, alertCfg);
   const enRangoPersonalizado = usaRangoPersonalizado(alertCfg);
   return {
     rowKey: deviceRowKey(d),
@@ -163,7 +163,9 @@ function mapDeviceToDisplay(
     setPoint,
     returnAir,
     tempSupply1,
-    enRango,
+    estadoRango,
+    enRango:
+      estadoRango === 'normal' ? true : estadoRango === 'fuera' ? false : null,
     enRangoPersonalizado,
   };
 }
@@ -514,27 +516,32 @@ export default function Listado() {
                   </TableCell>
                   <TableCell
                     className={cn(
-                      device.enRango === false &&
+                      (device.estadoRango === 'fuera' || device.estadoRango === 'apagado') &&
                         'bg-red-600/15 text-red-900 dark:text-red-100 border-l-4 border-red-600 font-medium'
                     )}
                     title={
-                      device.enRangoPersonalizado
-                        ? 'Evaluado con rango EN RANGO personalizado (Alertas por equipo)'
-                        : undefined
+                      device.enRangoPersonalizado && device.estadoRango !== 'apagado'
+                        ? 'Evaluado con rango EN RANGO personalizado (return_air, equipo ON)'
+                        : device.estadoRango === 'apagado'
+                          ? 'Equipo apagado (power_state 0). Prioridad sobre fuera de rango.'
+                          : undefined
                     }
                   >
-                    {device.enRango === true && (
+                    {device.estadoRango === 'normal' && (
                       <Badge className="bg-emerald-600 hover:bg-emerald-600">
                         NORMAL
                       </Badge>
                     )}
-                    {device.enRango === false && (
+                    {device.estadoRango === 'fuera' && (
                       <Badge className="bg-red-600 hover:bg-red-600">FUERA DE RANGO</Badge>
                     )}
-                    {device.enRango !== true && device.enRango !== false && (
+                    {device.estadoRango === 'apagado' && (
+                      <Badge className="bg-gray-700 hover:bg-gray-700">APAGADO</Badge>
+                    )}
+                    {device.estadoRango === 'indeterminado' && (
                       <span className="text-muted-foreground">—</span>
                     )}
-                    {device.enRangoPersonalizado && (
+                    {device.enRangoPersonalizado && device.estadoRango !== 'apagado' && (
                       <div className="text-[10px] text-muted-foreground mt-0.5">Rango pers.</div>
                     )}
                   </TableCell>

@@ -47,7 +47,7 @@ import {
   computeRangoLimites,
   formatRangoTemperatura,
   toleranciaSetpointDefault,
-  effectiveEnRangoWithConfig,
+  evaluarEstadoRangoListado,
 } from '../modules/correo/rangoTemperatura';
 import type {
   CorreoEnvioLog,
@@ -125,6 +125,8 @@ function estadoCicloLabel(estado: CicloEvaluacionDispositivo['estado']): string 
     normal: 'Normal',
     fuera_rango_sin_envio: 'Fuera de rango (sin envío)',
     correo_enviado: 'Correo enviado',
+    equipo_apagado: 'Apagado (sin envío)',
+    correo_apagado_enviado: 'Correo APAGADO enviado',
     error_envio: 'Error de envío',
     sin_telemetria: 'Sin telemetría',
     sin_dato_rango: 'Sin dato en_rango',
@@ -141,6 +143,10 @@ function estadoCicloBadgeClass(estado: CicloEvaluacionDispositivo['estado']): st
       return 'bg-emerald-600';
     case 'correo_enviado':
       return 'bg-blue-600';
+    case 'correo_apagado_enviado':
+      return 'bg-slate-700';
+    case 'equipo_apagado':
+      return 'bg-gray-600';
     case 'fuera_rango_sin_envio':
       return 'bg-amber-600';
     case 'error_envio':
@@ -889,7 +895,16 @@ export default function ConfiguracionCorreo() {
                         const live = dispositivos.find((d) => deviceRowKey(d) === dev.rowKey);
                         const enRangoLive =
                           live != null
-                            ? effectiveEnRangoWithConfig(live, alertConfigByRowKey[dev.rowKey])
+                            ? (() => {
+                                const st = evaluarEstadoRangoListado(
+                                  live,
+                                  alertConfigByRowKey[dev.rowKey]
+                                );
+                                if (st === 'apagado') return 'apagado' as const;
+                                if (st === 'normal') return true;
+                                if (st === 'fuera') return false;
+                                return null;
+                              })()
                             : null;
                         return (
                           <TableRow key={dev.rowKey}>
@@ -914,13 +929,19 @@ export default function ConfiguracionCorreo() {
                             </TableCell>
                             <TableCell>
                               {!dev.enabled && <Badge variant="secondary">Off</Badge>}
+                              {dev.enabled && enRangoLive === 'apagado' && (
+                                <Badge className="bg-gray-700">APAGADO</Badge>
+                              )}
                               {dev.enabled && enRangoLive === false && (
                                 <Badge className="bg-red-600">FUERA DE RANGO</Badge>
                               )}
                               {dev.enabled && enRangoLive === true && (
                                 <Badge className="bg-emerald-600">EN RANGO</Badge>
                               )}
-                              {dev.enabled && enRangoLive !== true && enRangoLive !== false && (
+                              {dev.enabled &&
+                                enRangoLive !== true &&
+                                enRangoLive !== false &&
+                                enRangoLive !== 'apagado' && (
                                 <span className="text-muted-foreground">—</span>
                               )}
                             </TableCell>

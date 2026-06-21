@@ -3,6 +3,7 @@ const STARCOOL_BASE = process.env.STARCOOL_API_BASE ?? 'http://161.132.206.104:9
 
 import { formatoFechaQueryApi } from './timezone.js';
 import { getMargenesSetpoint, toleranciaSetpointDefault } from './rangoTemperatura.js';
+import { defrostActivoEfectivo, filaDefrostEfectivo, isEquipoEncendido } from './powerState.js';
 
 const MS_HORA = 60 * 60 * 1000;
 export const HISTORICAL_WINDOW_HOURS = 12;
@@ -50,7 +51,7 @@ function enBandaSetpoint(valor, setPoint, rangoOpts) {
  */
 export function rowEnRangoEffective(row, rangoOpts = null) {
   if (row == null) return null;
-  if (row.en_defrost === true) return true;
+  if (filaDefrostEfectivo(row)) return true;
 
   if (rangoOpts?.useRangoPersonalizado) {
     const retOk = enBandaSetpoint(row.return_air, row.set_point, rangoOpts);
@@ -91,7 +92,7 @@ export function rowEnRango(row) {
  */
 export function effectiveEnRangoFromDispositivo(dispositivo, rangoOpts = null) {
   if (dispositivo == null) return null;
-  if (dispositivo.en_defrost === true) return true;
+  if (defrostActivoEfectivo(dispositivo)) return true;
 
   const d = dispositivo.ultimo_dato ?? {};
 

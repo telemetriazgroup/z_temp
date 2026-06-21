@@ -1,6 +1,28 @@
 import type { DeviceAlertConfig } from './types';
 import type { DispositivoUltimoEstado } from '../../types';
 
+export function isEquipoApagado(dispositivo: DispositivoUltimoEstado): boolean | null {
+  const ps = dispositivo.ultimo_dato?.power_state;
+  if (ps === 0) return true;
+  if (ps === 1) return false;
+  if (dispositivo.power_state_texto === 'off') return true;
+  if (dispositivo.power_state_texto === 'on') return false;
+  return null;
+}
+
+export function isEquipoEncendido(dispositivo: DispositivoUltimoEstado): boolean | null {
+  const apagado = isEquipoApagado(dispositivo);
+  if (apagado === true) return false;
+  if (apagado === false) return true;
+  return null;
+}
+
+export function defrostActivoEfectivo(dispositivo: DispositivoUltimoEstado): boolean {
+  return isEquipoEncendido(dispositivo) === true && dispositivo.en_defrost === true;
+}
+
+export type EstadoRangoListado = 'apagado' | 'normal' | 'fuera' | 'indeterminado';
+
 export function toleranciaSetpointDefault(setPoint: number): number {
   if (setPoint === 0 || Number.isNaN(setPoint)) return 0.5;
   return Math.abs(setPoint) * 0.1;
@@ -81,7 +103,7 @@ export function effectiveEnRangoWithConfig(
     return dispositivo.en_rango;
   }
 
-  if (dispositivo.en_defrost === true) return true;
+  if (defrostActivoEfectivo(dispositivo)) return true;
 
   const setPoint = dispositivo.ultimo_dato?.set_point ?? null;
   const ret = dispositivo.ultimo_dato?.return_air ?? null;
@@ -93,4 +115,17 @@ export function effectiveEnRangoWithConfig(
 
 export function usaRangoPersonalizado(cfg: DeviceAlertConfig | null | undefined): boolean {
   return Boolean(cfg?.useRangoPersonalizado);
+}
+
+/** Estado para columna En rango del listado (OFF tiene prioridad sobre fuera de rango). */
+export function evaluarEstadoRangoListado(
+  dispositivo: DispositivoUltimoEstado,
+  cfg: DeviceAlertConfig | null | undefined
+): EstadoRangoListado {
+  if (isEquipoApagado(dispositivo) === true) return 'apagado';
+  if (isEquipoEncendido(dispositivo) !== true) return 'indeterminado';
+  const enRango = effectiveEnRangoWithConfig(dispositivo, cfg);
+  if (enRango === true) return 'normal';
+  if (enRango === false) return 'fuera';
+  return 'indeterminado';
 }

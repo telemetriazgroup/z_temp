@@ -7,11 +7,12 @@ import {
   todayKey,
 } from './store.js';
 import { formatDateTimeTz } from './timezone.js';
-import { buildFueraDeRangoEmail } from './emailBuilder.js';
+import { buildFueraDeRangoEmail, buildApagadoEmail } from './emailBuilder.js';
 import { fetchAllDispositivos, deviceRowKey } from './telemetry.js';
 import { getSmtpConfig } from './smtpRepository.js';
 import { getDeviceNameByImei } from './deviceNamesRepository.js';
 import { resolveUmbralesForDevice, getDeviceAlertConfig, getDeviceAlertConfigMap, saveDeviceAlertConfig, resolveRangoOptsForDevice } from './deviceAlertConfigRepository.js';
+import { isEquipoApagado, isEquipoEncendido, defrostActivoEfectivo } from './powerState.js';
 import {
   fetchHistorialUltimasHoras,
   resolveOutOfRangeSince,
@@ -54,11 +55,32 @@ function clearEpisode(state, rowKey, now) {
   return state.lastRecovered[rowKey];
 }
 
+function episodeKind(episode) {
+  return episode?.kind ?? 'fuera_rango';
+}
+
+function clearEpisodeIfKind(state, rowKey, kind, now) {
+  const ep = getEpisode(state, rowKey);
+  if (!ep || episodeKind(ep) !== kind) return null;
+  return clearEpisode(state, rowKey, now);
+}
+
+function ensureApagadoEpisode(state, rowKey, now) {
+  let episode = getEpisode(state, rowKey);
+  if (episode && episodeKind(episode) === 'apagado') return episode;
+  if (episode) clearEpisode(state, rowKey, now);
+  return startEpisode(state, rowKey, now.toISOString(), {
+    kind: 'apagado',
+    referenceLocked: true,
+  });
+}
+
 function startEpisode(state, rowKey, since, meta = {}) {
   if (!state.episodes) state.episodes = {};
   state.episodes[rowKey] = {
     since,
     sentUmbrales: [],
+    kind: 'fuera_rango',
     referenceLocked: true,
     historialConsultadoAt: new Date().toISOString(),
     establishedAt: new Date().toISOString(),
@@ -381,16 +403,154 @@ export async function runAlertCycle(options = {}) {
         ultimaActualizacion: dispositivo.ultima_actualizacion ?? null,
         estadoConexion: dispositivo.estado_conexion ?? null,
         enDefrost: dispositivo.en_defrost ?? null,
+        powerState: dispositivo.ultimo_dato?.power_state ?? null,
       };
+
+      if (isEquipoApagado(dispositivo) === true) {
+        clearEpisodeIfKind(state, assignment.rowKey, 'fuera_rango', now);
+        const episode = ensureApagadoEpisode(state, assignment.rowKey, now);
+        const horasApagado = horasDesdeReferencia(episode.since, now);
+        const horasEnteras = horasEnterasDesdeReferencia(episode.since, now);
+        const sentUmbrales = episode.sentUmbrales ?? [];
+        const umbralHoras = pickUmbralPendiente(umbrales, horasEnteras, sentUmbrales);
+        const nextUmbral = umbrales.find((u) => horasEnteras < u && !sentUmbrales.includes(u));
+        const horasTexto = `${Math.round(horasApagado * 10) / 10} h`;
+        const { dispositivoReeferId, nombrePlataforma } = resolveLabels(assignment, dispositivo);
+        const tipoEvento =
+          assignment.tipoEvento === 'mantenimiento' ? 'mantenimiento' : 'operaciones';
+
+        if (umbralHoras == null || umbralYaEnviado(episode, umbralHoras)) {
+          const criterio =
+            sentUmbrales.length > 0
+              ? `APAGADO (power_state 0) ${horasTexto} desde ${formatRef(episode.since)}. Último aviso apagado: ${sentUmbrales[sentUmbrales.length - 1]} h. ${nextUmbral != null ? `Esperando ${nextUmbral} h.` : 'Sin más umbrales.'} No se evalúa fuera de rango mientras esté OFF.`
+              : `APAGADO (power_state 0) ${horasTexto} desde ${formatRef(episode.since)}. ${nextUmbral != null ? `Próximo aviso al alcanzar ${nextUmbral} h.` : 'Sin umbrales pendientes.'} Fuera de rango solo con equipo ON.`;
+          pushEval(evaluaciones, {
+            ...base,
+            estado: 'equipo_apagado',
+            accion: 'ninguna',
+            enRango: null,
+            diaCalendario: hoy,
+            horasFueraHoy: horasEnteras,
+            referenciaDesde: episode.since,
+            umbralesConfigurados: umbrales,
+            umbralesEnviadosHoy: [...sentUmbrales],
+            proximoUmbralHoras: nextUmbral ?? null,
+            telemetria: telem,
+            criterio,
+          });
+          result.resumen.fueraRangoSinEnvio++;
+          continue;
+        }
+
+        const content = buildApagadoEmail({
+          dispositivo,
+          dispositivoReeferId,
+          nombrePlataforma,
+          cliente: grupo.cliente?.trim() || 'Cliente',
+          umbralHoras,
+          horasApagado: horasEnteras,
+          diaCalendario: hoy,
+          hoy,
+          referenciaDesde: episode.since,
+          tipoEvento,
+        });
+        const envioId = uid('envio');
+        const criterioEnvio = `APAGADO ${horasTexto} desde ${formatRef(episode.since)} (GMT-5). Se envía alerta APAGADO umbral ${umbralHoras} h. No se envía fuera de rango. Destino: ${grupo.emails.join(', ')}.`;
+
+        try {
+          const messageId = await sendMail(smtp, grupo.emails, content);
+          markUmbralEnviado(episode, umbralHoras, umbrales);
+          addEnvio({
+            id: envioId,
+            alertKind: 'apagado',
+            grupoId: grupo.id,
+            grupoNombre: grupo.nombre,
+            rowKey: assignment.rowKey,
+            imei: dispositivo.imei,
+            codigo: dispositivo.codigo ?? '—',
+            descripcionEquipo: dispositivoReeferId,
+            nombrePlataforma,
+            umbralHoras,
+            horasFueraRango: horasEnteras,
+            referenciaDesde: episode.since,
+            diaCalendario: hoy,
+            tipoEvento,
+            destinatarios: [...grupo.emails],
+            subject: content.subject,
+            sentAt: new Date().toISOString(),
+            messageId,
+            success: true,
+          });
+          const incidenteId = uid('inc');
+          addIncidente({
+            id: incidenteId,
+            envioId,
+            alertKind: 'apagado',
+            grupoId: grupo.id,
+            grupoNombre: grupo.nombre,
+            rowKey: assignment.rowKey,
+            imei: dispositivo.imei,
+            codigo: dispositivo.codigo ?? '—',
+            descripcionEquipo: dispositivoReeferId,
+            nombrePlataforma,
+            diaCalendario: hoy,
+            umbralHoras,
+            horasFueraRango: horasEnteras,
+            referenciaDesde: episode.since,
+            tipoEvento,
+            estado: 'pendiente',
+            subject: content.subject,
+            destinatarios: [...grupo.emails],
+            enviadoAt: new Date().toISOString(),
+            comentarios: [],
+          });
+          pushEval(evaluaciones, {
+            ...base,
+            estado: 'correo_apagado_enviado',
+            accion: 'envio',
+            enRango: null,
+            diaCalendario: hoy,
+            horasFueraHoy: horasEnteras,
+            referenciaDesde: episode.since,
+            umbralDisparado: umbralHoras,
+            umbralesConfigurados: umbrales,
+            umbralesEnviadosHoy: [...episode.sentUmbrales],
+            tipoEvento,
+            envioId,
+            incidenteId,
+            telemetria: telem,
+            criterio: criterioEnvio,
+          });
+          result.emailsSent++;
+          result.resumen.correoEnviado++;
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          result.errors.push(`${dispositivoReeferId} APAGADO ${umbralHoras}h: ${msg}`);
+          pushEval(evaluaciones, {
+            ...base,
+            estado: 'error_envio',
+            accion: 'error',
+            diaCalendario: hoy,
+            telemetria: telem,
+            criterio: `${criterioEnvio} Error SMTP: ${msg}`,
+          });
+          result.resumen.errores++;
+        }
+        continue;
+      }
+
+      if (isEquipoEncendido(dispositivo) === true) {
+        clearEpisodeIfKind(state, assignment.rowKey, 'apagado', now);
+      }
 
       if (enRangoEfectivo === true) {
         const recovered = clearEpisode(state, assignment.rowKey, now);
         let criterio;
         if (recovered) {
           criterio = `EN RANGO efectivo. Episodio cerrado (estuvo fuera desde ${formatRef(recovered.since)} hasta ${formatRef(recovered.endedAt)}, ~${recovered.durationHours} h). Contador en 0.`;
-        } else if (enRangoRaw === false && dispositivo.en_defrost === true) {
+        } else if (defrostActivoEfectivo(dispositivo)) {
           criterio =
-            'EN RANGO efectivo (defrost activo / suministro en banda). No se alerta. No se consulta historial.';
+            'EN RANGO efectivo (defrost activo con equipo ON). No se alerta fuera de rango.';
         } else if (enRangoRaw === false) {
           criterio =
             'EN RANGO efectivo (suministro en banda pese a retorno elevado, p. ej. defrost). Contador en 0.';
@@ -553,6 +713,7 @@ export async function runAlertCycle(options = {}) {
 
           addEnvio({
             id: envioId,
+            alertKind: 'fuera_rango',
             grupoId: grupo.id,
             grupoNombre: grupo.nombre,
             rowKey: assignment.rowKey,
@@ -576,6 +737,7 @@ export async function runAlertCycle(options = {}) {
           addIncidente({
             id: incidenteId,
             envioId,
+            alertKind: 'fuera_rango',
             grupoId: grupo.id,
             grupoNombre: grupo.nombre,
             rowKey: assignment.rowKey,
@@ -621,6 +783,7 @@ export async function runAlertCycle(options = {}) {
           result.errors.push(`${dispositivoReeferId} ${umbralHoras}h: ${msg}`);
           addEnvio({
             id: envioId,
+            alertKind: 'fuera_rango',
             grupoId: grupo.id,
             grupoNombre: grupo.nombre,
             rowKey: assignment.rowKey,

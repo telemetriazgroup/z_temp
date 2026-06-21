@@ -187,6 +187,8 @@ export type CicloEvaluacionEstado =
   | 'normal'
   | 'fuera_rango_sin_envio'
   | 'correo_enviado'
+  | 'equipo_apagado'
+  | 'correo_apagado_enviado'
   | 'error_envio'
   | 'sin_telemetria'
   | 'sin_dato_rango'
