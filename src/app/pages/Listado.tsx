@@ -11,7 +11,12 @@ import {
   persistDeviceLocalNames,
   type DeviceLocalNameMap,
 } from '../lib/deviceLocalNames';
-import { syncDeviceNamesToServer } from '../modules/correo/correoServerApi';
+import { syncDeviceNamesToServer, fetchDeviceAlertConfigMap } from '../modules/correo/correoServerApi';
+import {
+  effectiveEnRangoWithConfig,
+  usaRangoPersonalizado,
+} from '../modules/correo/rangoTemperatura';
+import type { DeviceAlertConfig } from '../modules/correo/types';
 import { Input } from '../components/ui/input';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
@@ -117,7 +122,10 @@ const STATUS_FILTER_OPTIONS = [
   { id: 'OFFLINE' as const, label: 'Offline' },
 ] as const;
 
-function mapDeviceToDisplay(d: DispositivoUltimoEstado) {
+function mapDeviceToDisplay(
+  d: DispositivoUltimoEstado,
+  alertCfg?: DeviceAlertConfig | null
+) {
   const status = apiStatusOf(d);
   const power =
     d.power_state_texto != null
@@ -135,7 +143,8 @@ function mapDeviceToDisplay(d: DispositivoUltimoEstado) {
   const returnAir = d.ultimo_dato?.return_air ?? null;
   const tempSupply1 = d.ultimo_dato?.temp_supply_1 ?? null;
   const codigo = d.codigo ?? '—';
-  const enRango = d.en_rango;
+  const enRango = effectiveEnRangoWithConfig(d, alertCfg);
+  const enRangoPersonalizado = usaRangoPersonalizado(alertCfg);
   return {
     rowKey: deviceRowKey(d),
     id: d.imei,
@@ -155,6 +164,7 @@ function mapDeviceToDisplay(d: DispositivoUltimoEstado) {
     returnAir,
     tempSupply1,
     enRango,
+    enRangoPersonalizado,
   };
 }
 
@@ -175,6 +185,7 @@ export default function Listado() {
     draft: string;
   } | null>(null);
   const [data, setData] = useState<UltimoEstadoDispositivosResponse | null>(null);
+  const [alertConfigMap, setAlertConfigMap] = useState<Record<string, DeviceAlertConfig>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
@@ -185,10 +196,14 @@ export default function Listado() {
     setError(null);
     setLoading(true);
     try {
-      const response = await fetchUltimoEstadoDispositivos();
+      const [response, alertCfg] = await Promise.all([
+        fetchUltimoEstadoDispositivos(),
+        fetchDeviceAlertConfigMap().catch(() => ({} as Record<string, DeviceAlertConfig>)),
+      ]);
       ensureAlarmCatalog();
       syncDeviceAlarmsFromTelemetry(response.data.dispositivos);
       setData(response);
+      setAlertConfigMap(alertCfg);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error al cargar dispositivos');
     } finally {
@@ -236,7 +251,8 @@ export default function Listado() {
       );
     })
     .map((d) => {
-      const base = mapDeviceToDisplay(d);
+      const rk = deviceRowKey(d);
+      const base = mapDeviceToDisplay(d, alertConfigMap[rk] ?? null);
       const nombreAsignado = displayNameForDevice(
         user,
         d.imei,
@@ -501,6 +517,11 @@ export default function Listado() {
                       device.enRango === false &&
                         'bg-red-600/15 text-red-900 dark:text-red-100 border-l-4 border-red-600 font-medium'
                     )}
+                    title={
+                      device.enRangoPersonalizado
+                        ? 'Evaluado con rango EN RANGO personalizado (Alertas por equipo)'
+                        : undefined
+                    }
                   >
                     {device.enRango === true && (
                       <Badge className="bg-emerald-600 hover:bg-emerald-600">
@@ -512,6 +533,9 @@ export default function Listado() {
                     )}
                     {device.enRango !== true && device.enRango !== false && (
                       <span className="text-muted-foreground">—</span>
+                    )}
+                    {device.enRangoPersonalizado && (
+                      <div className="text-[10px] text-muted-foreground mt-0.5">Rango pers.</div>
                     )}
                   </TableCell>
                   <TableCell>
