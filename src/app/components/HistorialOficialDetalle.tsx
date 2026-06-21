@@ -40,16 +40,7 @@ import {
   exportHistorialJson,
 } from '../lib/exportHistorial';
 import { useAuth } from '../AuthContext';
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  ResponsiveContainer,
-} from 'recharts';
+import { HistorialReeferChart } from './HistorialReeferChart';
 import {
   RefreshCw,
   FileSpreadsheet,
@@ -188,30 +179,6 @@ export function HistorialOficialDetalle({
   const filasPagina = filasTabla.slice(inicioSlice, inicioSlice + pageSize);
 
   const chartData = useMemo(() => datosAGrafica(datosCompletos), [datosCompletos]);
-  const rangoChartMs = useMemo(() => {
-    if (chartData.length < 2) return 0;
-    const ts = chartData.map((r) => r.ts);
-    return Math.max(...ts) - Math.min(...ts);
-  }, [chartData]);
-
-  const tickFormateador = useCallback(
-    (ts: number) => {
-      const d = new Date(ts);
-      if (rangoChartMs > 48 * 3600000) {
-        return d.toLocaleString('es-ES', {
-          day: '2-digit',
-          month: 'short',
-          hour: '2-digit',
-          minute: '2-digit',
-        });
-      }
-      return d.toLocaleTimeString('es-ES', {
-        hour: '2-digit',
-        minute: '2-digit',
-      });
-    },
-    [rangoChartMs]
-  );
 
   const sinRegistrosApi =
     !cargando && respuesta != null && datosCompletos.length === 0;
@@ -235,6 +202,17 @@ export function HistorialOficialDetalle({
     }
     return null;
   }, [desdeStr, hastaStr, respuesta]);
+
+  const rangoGraficaLabel = useMemo(() => {
+    if (rangoExport == null) return null;
+    const fmt = (d: Date) =>
+      d.toLocaleDateString('es-ES', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+      });
+    return `${fmt(rangoExport.desde)} - ${fmt(rangoExport.hasta)}`;
+  }, [rangoExport]);
 
   const exportacionDeshabilitada =
     cargando || datosCompletos.length === 0 || rangoExport == null;
@@ -555,81 +533,12 @@ export function HistorialOficialDetalle({
                 </TabsContent>
 
                 <TabsContent value="grafica" className="mt-4">
-                  <div className="h-[360px] w-full">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart
-                        data={chartData}
-                        margin={{ top: 8, right: 8, left: 0, bottom: 8 }}
-                      >
-                        <CartesianGrid
-                          strokeDasharray="3 3"
-                          className="stroke-muted"
-                        />
-                        <XAxis
-                          dataKey="ts"
-                          type="number"
-                          domain={['dataMin', 'dataMax']}
-                          tickFormatter={tickFormateador}
-                          className="text-xs"
-                        />
-                        <YAxis
-                          className="text-xs"
-                          label={{
-                            value: '°C',
-                            angle: -90,
-                            position: 'insideLeft',
-                          }}
-                        />
-                        <Tooltip
-                          labelFormatter={(ts) =>
-                            new Date(ts as number).toLocaleString('es-ES')
-                          }
-                          formatter={(value: number | null) =>
-                            value == null || Number.isNaN(value)
-                              ? ['—', '']
-                              : [`${value} °C`, '']
-                          }
-                        />
-                        <Legend />
-                        <Line
-                          type="monotone"
-                          dataKey="setTemperatura"
-                          name="Set temperatura"
-                          stroke="#0ea5e9"
-                          strokeWidth={2}
-                          dot={false}
-                          connectNulls
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="suministro"
-                          name="Suministro"
-                          stroke="#2563eb"
-                          strokeWidth={2}
-                          dot={false}
-                          connectNulls
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="retorno"
-                          name="Retorno"
-                          stroke="#059669"
-                          strokeWidth={2}
-                          dot={false}
-                          connectNulls
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="evaporador"
-                          name="Evaporador"
-                          stroke="#7c3aed"
-                          strokeWidth={2}
-                          dot={false}
-                          connectNulls
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
+                  <HistorialReeferChart
+                    data={chartData}
+                    imei={imei}
+                    nombreContenedor={nombreContenedor}
+                    rangoLabel={rangoGraficaLabel}
+                  />
                 </TabsContent>
               </Tabs>
             )}

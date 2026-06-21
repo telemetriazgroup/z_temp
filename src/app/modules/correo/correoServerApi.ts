@@ -210,6 +210,10 @@ export async function saveDeviceAlertConfigApi(
     umbralesHoras?: number[];
     useReferenciaManual?: boolean;
     referenciaManual?: string;
+    alerta1Hora?: boolean;
+    useRangoPersonalizado?: boolean;
+    margenInferior?: number;
+    margenSuperior?: number;
   }
 ): Promise<DeviceAlertConfig | null> {
   const res = await fetch(`${BASE}/alert-config/${encodeURIComponent(rowKey)}`, {

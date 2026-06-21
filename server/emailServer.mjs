@@ -24,7 +24,6 @@ import { mergeDeviceNames, getDeviceNameByImei } from './lib/deviceNamesReposito
 import {
   getDeviceAlertConfigMap,
   saveDeviceAlertConfig,
-  deleteDeviceAlertConfig,
 } from './lib/deviceAlertConfigRepository.js';
 import { buildFueraDeRangoEmail } from './lib/emailBuilder.js';
 
@@ -225,17 +224,26 @@ app.get('/reefer/api/correo/alert-config/state', (_req, res) => {
 
 app.put('/reefer/api/correo/alert-config/:rowKey', (req, res) => {
   const rowKey = decodeURIComponent(req.params.rowKey);
-  const { mode, umbralesHoras, useReferenciaManual, referenciaManual } = req.body ?? {};
+  const {
+    mode,
+    umbralesHoras,
+    useReferenciaManual,
+    referenciaManual,
+    alerta1Hora,
+    useRangoPersonalizado,
+    margenInferior,
+    margenSuperior,
+  } = req.body ?? {};
   try {
-    if (mode === 'standard') {
-      deleteDeviceAlertConfig(rowKey);
-      return res.json({ ok: true, data: null });
-    }
     const entry = saveDeviceAlertConfig(rowKey, {
-      mode: 'custom',
+      mode: mode === 'custom' ? 'custom' : 'standard',
       umbralesHoras,
       useReferenciaManual: Boolean(useReferenciaManual),
       referenciaManual: referenciaManual ?? undefined,
+      alerta1Hora: Boolean(alerta1Hora),
+      useRangoPersonalizado: Boolean(useRangoPersonalizado),
+      margenInferior: margenInferior != null ? Number(margenInferior) : undefined,
+      margenSuperior: margenSuperior != null ? Number(margenSuperior) : undefined,
     });
     res.json({ ok: true, data: entry });
   } catch (e) {

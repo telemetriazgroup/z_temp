@@ -11,7 +11,7 @@ import { buildFueraDeRangoEmail } from './emailBuilder.js';
 import { fetchAllDispositivos, deviceRowKey } from './telemetry.js';
 import { getSmtpConfig } from './smtpRepository.js';
 import { getDeviceNameByImei } from './deviceNamesRepository.js';
-import { resolveUmbralesForDevice, getDeviceAlertConfig, getDeviceAlertConfigMap, saveDeviceAlertConfig } from './deviceAlertConfigRepository.js';
+import { resolveUmbralesForDevice, getDeviceAlertConfig, getDeviceAlertConfigMap, saveDeviceAlertConfig, resolveRangoOptsForDevice } from './deviceAlertConfigRepository.js';
 import {
   fetchHistorialUltimasHoras,
   resolveOutOfRangeSince,
@@ -150,6 +150,7 @@ function pickUmbralPendiente(umbrales, horasEnteras, sentUmbrales) {
 
 async function ensureOutOfRangeReference(state, assignment, dispositivo, now) {
   const cfg = getDeviceAlertConfig(assignment.rowKey);
+  const rangoOpts = resolveRangoOptsForDevice(assignment.rowKey);
   let episode = getEpisode(state, assignment.rowKey);
 
   if (cfg?.mode === 'custom' && cfg.useReferenciaManual && cfg.referenciaManual) {
@@ -185,7 +186,7 @@ async function ensureOutOfRangeReference(state, assignment, dispositivo, now) {
     HISTORICAL_WINDOW_HOURS,
     now
   );
-  const since = resolveOutOfRangeSince(hist.datos, now);
+  const since = resolveOutOfRangeSince(hist.datos, now, rangoOpts);
 
   if (since == null) {
     if (episode) clearEpisode(state, assignment.rowKey, now);
@@ -369,8 +370,9 @@ export async function runAlertCycle(options = {}) {
         continue;
       }
 
+      const rangoOpts = resolveRangoOptsForDevice(assignment.rowKey);
       const enRangoRaw = dispositivo.en_rango;
-      const enRangoEfectivo = effectiveEnRangoFromDispositivo(dispositivo);
+      const enRangoEfectivo = effectiveEnRangoFromDispositivo(dispositivo, rangoOpts);
       const umbrales = resolveUmbralesForDevice(assignment.rowKey, assignment.umbralesHoras);
       const telem = {
         setPoint: dispositivo.ultimo_dato?.set_point ?? null,
@@ -709,6 +711,7 @@ export async function refreshDeviceReferenceFromHistorial(rowKey) {
   if (!dispositivo) throw new Error('Equipo sin telemetría actual');
 
   const now = new Date();
+  const rangoOpts = resolveRangoOptsForDevice(rowKey);
   const codigo = dispositivo.codigo ?? found.assignment.codigo;
   const hist = await fetchHistorialUltimasHoras(
     codigo,
@@ -716,7 +719,7 @@ export async function refreshDeviceReferenceFromHistorial(rowKey) {
     HISTORICAL_WINDOW_HOURS,
     now
   );
-  const since = resolveOutOfRangeSince(hist.datos, now);
+  const since = resolveOutOfRangeSince(hist.datos, now, rangoOpts);
   const state = getState();
 
   if (since == null) {

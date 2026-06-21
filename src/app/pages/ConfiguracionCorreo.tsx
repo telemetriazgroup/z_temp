@@ -43,6 +43,11 @@ import {
   enrichGrupoDevicesWithNames,
   nombrePlataformaForDevice,
 } from '../modules/correo/deviceNamesSync';
+import {
+  computeRangoLimites,
+  formatRangoTemperatura,
+  toleranciaSetpointDefault,
+} from '../modules/correo/rangoTemperatura';
 import type {
   CorreoEnvioLog,
   CorreoServerStatus,
@@ -193,6 +198,10 @@ export default function ConfiguracionCorreo() {
   const [alertUmbrales, setAlertUmbrales] = useState<number[]>([...DEFAULT_UMBRALES_HORAS]);
   const [alertUseManualRef, setAlertUseManualRef] = useState(false);
   const [alertManualRef, setAlertManualRef] = useState('');
+  const [alerta1Hora, setAlerta1Hora] = useState(false);
+  const [useRangoPersonalizado, setUseRangoPersonalizado] = useState(false);
+  const [margenInferior, setMargenInferior] = useState('0.5');
+  const [margenSuperior, setMargenSuperior] = useState('0.5');
   const [alertSaving, setAlertSaving] = useState(false);
   const [traceRowKey, setTraceRowKey] = useState<string | null>(null);
 
@@ -276,16 +285,30 @@ export default function ConfiguracionCorreo() {
   };
   const refreshGrupos = async () => setGrupos(await fetchServerGrupos());
 
+  const liveDeviceForRowKey = useCallback(
+    (rowKey: string) => dispositivos.find((d) => deviceRowKey(d) === rowKey) ?? null,
+    [dispositivos]
+  );
+
   const openAlertEdit = (entry: DeviceAlertStateEntry) => {
     const cfg = entry.config;
+    const live = liveDeviceForRowKey(entry.rowKey);
+    const setPoint = live?.ultimo_dato?.set_point ?? null;
+    const defaultMargen =
+      setPoint != null && !Number.isNaN(setPoint) ? toleranciaSetpointDefault(setPoint) : 0.5;
+
     setAlertEdit(entry);
     setAlertMode(cfg?.mode === 'custom' ? 'custom' : 'standard');
+    setAlerta1Hora(Boolean(cfg?.alerta1Hora));
     setAlertUmbrales(
       cfg?.mode === 'custom' && cfg.umbralesHoras?.length
         ? normalizeUmbrales(cfg.umbralesHoras)
         : [...DEFAULT_UMBRALES_HORAS]
     );
     setAlertUseManualRef(Boolean(cfg?.useReferenciaManual));
+    setUseRangoPersonalizado(Boolean(cfg?.useRangoPersonalizado));
+    setMargenInferior(String(cfg?.margenInferior ?? defaultMargen));
+    setMargenSuperior(String(cfg?.margenSuperior ?? defaultMargen));
     if (cfg?.referenciaManual) {
       const d = new Date(cfg.referenciaManual);
       setAlertManualRef(
@@ -314,24 +337,40 @@ export default function ConfiguracionCorreo() {
     if (alertEdit == null) return;
     setAlertSaving(true);
     try {
-      if (alertMode === 'standard') {
-        await saveDeviceAlertConfigApi(alertEdit.rowKey, { mode: 'standard' });
-      } else {
-        await saveDeviceAlertConfigApi(alertEdit.rowKey, {
-          mode: 'custom',
-          umbralesHoras: alertUmbrales,
-          useReferenciaManual: alertUseManualRef,
-          referenciaManual: alertUseManualRef && alertManualRef
-            ? new Date(alertManualRef).toISOString()
-            : undefined,
-        });
-        if (alertUseManualRef && alertManualRef) {
-          await updateDeviceReferencia(alertEdit.rowKey, {
-            action: 'manual',
-            since: new Date(alertManualRef).toISOString(),
-          });
-        }
+      const margenInf = Number(margenInferior);
+      const margenSup = Number(margenSuperior);
+      if (useRangoPersonalizado && (Number.isNaN(margenInf) || Number.isNaN(margenSup))) {
+        toast.error('Indique márgenes de temperatura válidos');
+        setAlertSaving(false);
+        return;
       }
+      const payload = {
+        mode: alertMode,
+        alerta1Hora,
+        useRangoPersonalizado,
+        margenInferior: useRangoPersonalizado ? margenInf : undefined,
+        margenSuperior: useRangoPersonalizado ? margenSup : undefined,
+        ...(alertMode === 'custom'
+          ? {
+              umbralesHoras: alertUmbrales,
+              useReferenciaManual: alertUseManualRef,
+              referenciaManual:
+                alertUseManualRef && alertManualRef
+                  ? new Date(alertManualRef).toISOString()
+                  : undefined,
+            }
+          : {}),
+      } as const;
+
+      await saveDeviceAlertConfigApi(alertEdit.rowKey, payload);
+
+      if (alertMode === 'custom' && alertUseManualRef && alertManualRef) {
+        await updateDeviceReferencia(alertEdit.rowKey, {
+          action: 'manual',
+          since: new Date(alertManualRef).toISOString(),
+        });
+      }
+
       const st = await fetchDeviceAlertState();
       setAlertState(st.entries);
       toast.success('Configuración de alerta guardada');
@@ -975,9 +1014,9 @@ export default function ConfiguracionCorreo() {
                 Alertas por equipo
               </CardTitle>
               <CardDescription>
-                Modo estándar: usa umbrales del grupo y referencia automática (consulta 12 h una
-                sola vez por episodio). Modo personalizado: umbrales y/o referencia manual tienen
-                prioridad. Un solo correo por umbral; al volver EN RANGO se reinicia el contador.
+                Modo estándar: umbrales del grupo y referencia automática. Puede activar alerta a
+                1 h y personalizar el rango de temperatura EN RANGO por equipo. Modo personalizado:
+                override de umbrales y/o referencia manual. Un solo correo por umbral.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -986,6 +1025,8 @@ export default function ConfiguracionCorreo() {
                   <TableRow>
                     <TableHead>Equipo</TableHead>
                     <TableHead>Modo</TableHead>
+                    <TableHead>Rango EN RANGO</TableHead>
+                    <TableHead>Alerta 1 h</TableHead>
                     <TableHead>Referencia activa</TableHead>
                     <TableHead>Umbrales enviados</TableHead>
                     <TableHead className="w-[200px]" />
@@ -999,6 +1040,9 @@ export default function ConfiguracionCorreo() {
                       entry.codigo ||
                       entry.imei;
                     const mode = entry.config?.mode === 'custom' ? 'personalizada' : 'estándar';
+                    const live = liveDeviceForRowKey(entry.rowKey);
+                    const setPoint = live?.ultimo_dato?.set_point ?? null;
+                    const rangoTexto = formatRangoTemperatura(setPoint, entry.config);
                     return (
                       <TableRow key={entry.rowKey}>
                         <TableCell className="text-xs">
@@ -1010,6 +1054,16 @@ export default function ConfiguracionCorreo() {
                           <Badge variant={mode === 'personalizada' ? 'default' : 'secondary'}>
                             {mode}
                           </Badge>
+                        </TableCell>
+                        <TableCell className="text-xs max-w-[180px]" title={rangoTexto}>
+                          {rangoTexto}
+                        </TableCell>
+                        <TableCell className="text-xs">
+                          {entry.config?.alerta1Hora ? (
+                            <Badge className="bg-blue-600">Activa</Badge>
+                          ) : (
+                            <span className="text-muted-foreground">No</span>
+                          )}
                         </TableCell>
                         <TableCell className="text-xs">
                           {entry.episode?.since ? (
@@ -1045,7 +1099,7 @@ export default function ConfiguracionCorreo() {
                   })}
                   {alertState.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={5} className="text-center text-muted-foreground">
+                      <TableCell colSpan={7} className="text-center text-muted-foreground">
                         No hay equipos en grupos de correo.
                       </TableCell>
                     </TableRow>
@@ -1278,6 +1332,103 @@ export default function ConfiguracionCorreo() {
                     <SelectItem value="custom">Personalizada (override por equipo)</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+
+              <div className="flex items-center gap-2 rounded-md border px-3 py-2">
+                <Switch checked={alerta1Hora} onCheckedChange={setAlerta1Hora} id="alerta-1h" />
+                <Label htmlFor="alerta-1h" className="cursor-pointer">
+                  Activar alerta a 1 hora fuera de rango
+                </Label>
+              </div>
+
+              <div className="space-y-3 rounded-md border px-3 py-3">
+                <div className="font-medium text-sm">Rango de temperatura EN RANGO</div>
+                {(() => {
+                  const live = liveDeviceForRowKey(alertEdit.rowKey);
+                  const setPoint = live?.ultimo_dato?.set_point ?? null;
+                  const draftCfg = {
+                    mode: alertMode,
+                    rowKey: alertEdit.rowKey,
+                    useRangoPersonalizado,
+                    margenInferior: Number(margenInferior) || 0.5,
+                    margenSuperior: Number(margenSuperior) || 0.5,
+                    alerta1Hora,
+                  };
+                  const rango = computeRangoLimites(setPoint, draftCfg);
+                  const defaultMargen =
+                    setPoint != null && !Number.isNaN(setPoint)
+                      ? toleranciaSetpointDefault(setPoint)
+                      : 0.5;
+                  return (
+                    <>
+                      <p className="text-xs text-muted-foreground">
+                        Setpoint actual:{' '}
+                        {setPoint != null && !Number.isNaN(setPoint)
+                          ? `${setPoint.toFixed(1)} °C`
+                          : '— (sin telemetría)'}
+                        {rango != null && (
+                          <>
+                            {' '}
+                            · Banda efectiva: {rango.min.toFixed(1)} … {rango.max.toFixed(1)} °C
+                            {rango.personalizado ? ' (personalizada)' : ' (±10 % del setpoint)'}
+                          </>
+                        )}
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          checked={useRangoPersonalizado}
+                          onCheckedChange={(v) => {
+                            setUseRangoPersonalizado(v);
+                            if (v && setPoint != null && !Number.isNaN(setPoint)) {
+                              const m = toleranciaSetpointDefault(setPoint);
+                              setMargenInferior(String(m));
+                              setMargenSuperior(String(m));
+                            }
+                          }}
+                          id="rango-personalizado"
+                        />
+                        <Label htmlFor="rango-personalizado" className="cursor-pointer text-sm">
+                          Personalizar márgenes (°C respecto al setpoint)
+                        </Label>
+                      </div>
+                      {useRangoPersonalizado ? (
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div className="space-y-1">
+                            <Label htmlFor="margen-inf" className="text-xs">
+                              Margen inferior (°C bajo SP)
+                            </Label>
+                            <Input
+                              id="margen-inf"
+                              type="number"
+                              min={0}
+                              step={0.1}
+                              value={margenInferior}
+                              onChange={(e) => setMargenInferior(e.target.value)}
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label htmlFor="margen-sup" className="text-xs">
+                              Margen superior (°C sobre SP)
+                            </Label>
+                            <Input
+                              id="margen-sup"
+                              type="number"
+                              min={0}
+                              step={0.1}
+                              value={margenSuperior}
+                              onChange={(e) => setMargenSuperior(e.target.value)}
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">
+                          Por defecto: ±{defaultMargen.toFixed(2)} °C
+                          {setPoint != null && !Number.isNaN(setPoint) ? ' (10 % del setpoint)' : ''}.
+                        </p>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
 
               {alertMode === 'custom' && (

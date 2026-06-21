@@ -19,6 +19,14 @@ export interface DeviceAlertConfig {
   umbralesHoras?: number[];
   referenciaManual?: string;
   useReferenciaManual?: boolean;
+  /** Incluir aviso a la 1.ª hora fuera de rango (además de umbrales del grupo/custom). */
+  alerta1Hora?: boolean;
+  /** Usar márgenes °C personalizados en lugar de ±10 % del setpoint. */
+  useRangoPersonalizado?: boolean;
+  /** Grados bajo el setpoint considerados EN RANGO. */
+  margenInferior?: number;
+  /** Grados sobre el setpoint considerados EN RANGO. */
+  margenSuperior?: number;
   updatedAt?: string;
 }
 

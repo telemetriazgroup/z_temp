@@ -2,6 +2,7 @@ const TUNEL_BASE = process.env.TUNEL_API_BASE ?? 'http://161.132.53.51:9051';
 const STARCOOL_BASE = process.env.STARCOOL_API_BASE ?? 'http://161.132.206.104:9112';
 
 import { formatoFechaQueryApi } from './timezone.js';
+import { getMargenesSetpoint, toleranciaSetpointDefault } from './rangoTemperatura.js';
 
 const MS_HORA = 60 * 60 * 1000;
 export const HISTORICAL_WINDOW_HOURS = 12;
@@ -28,25 +29,26 @@ function timestampRegistro(row) {
 }
 
 function toleranciaSetpoint(setPoint) {
-  if (setPoint === 0 || Number.isNaN(setPoint)) return 0.5;
-  return Math.abs(setPoint) * 0.1;
+  return toleranciaSetpointDefault(setPoint);
 }
 
-function enBandaSetpoint(valor, setPoint) {
+function enBandaSetpoint(valor, setPoint, rangoOpts) {
   if (valor == null || Number.isNaN(valor) || setPoint == null || Number.isNaN(setPoint)) {
     return null;
   }
-  const t = toleranciaSetpoint(setPoint);
-  return valor >= setPoint - t && valor <= setPoint + t;
+  const { inferior, superior } = getMargenesSetpoint(setPoint, rangoOpts);
+  return valor >= setPoint - inferior && valor <= setPoint + superior;
 }
 
 /**
  * Evalúa si el registro está en rango operativo.
  * Durante defrost el retorno sube pero el suministro suele mantenerse en banda:
  * eso NO debe contarse como fuera de rango ni generar alertas.
+ * @param {object} row
+ * @param {{ useRangoPersonalizado?: boolean, margenInferior?: number, margenSuperior?: number } | null} [rangoOpts]
  * @returns {boolean | null}
  */
-export function rowEnRangoEffective(row) {
+export function rowEnRangoEffective(row, rangoOpts = null) {
   if (row == null) return null;
   if (row.en_defrost === true) return true;
   if (row.en_rango === true) return true;
@@ -55,14 +57,14 @@ export function rowEnRangoEffective(row) {
   const sup = row.temp_supply_1;
   const ret = row.return_air;
 
-  if (setPoint != null && sup != null && enBandaSetpoint(sup, setPoint) === true) {
+  if (setPoint != null && sup != null && enBandaSetpoint(sup, setPoint, rangoOpts) === true) {
     return true;
   }
 
   if (row.en_rango === false) return false;
 
-  const supOk = enBandaSetpoint(sup, setPoint);
-  const retOk = enBandaSetpoint(ret, setPoint);
+  const supOk = enBandaSetpoint(sup, setPoint, rangoOpts);
+  const retOk = enBandaSetpoint(ret, setPoint, rangoOpts);
   if (supOk === false || retOk === false) return false;
   if (supOk === true && retOk === true) return true;
   return null;
@@ -75,9 +77,11 @@ export function rowEnRango(row) {
 
 /**
  * Misma lógica que historial, aplicada al último estado del dispositivo.
+ * @param {object} dispositivo
+ * @param {{ useRangoPersonalizado?: boolean, margenInferior?: number, margenSuperior?: number } | null} [rangoOpts]
  * @returns {boolean | null}
  */
-export function effectiveEnRangoFromDispositivo(dispositivo) {
+export function effectiveEnRangoFromDispositivo(dispositivo, rangoOpts = null) {
   if (dispositivo == null) return null;
   if (dispositivo.en_defrost === true) return true;
   if (dispositivo.en_rango === true) return true;
@@ -91,7 +95,7 @@ export function effectiveEnRangoFromDispositivo(dispositivo) {
     return_air: d.return_air,
   };
 
-  const fromRow = rowEnRangoEffective(row);
+  const fromRow = rowEnRangoEffective(row, rangoOpts);
   if (fromRow === true) return true;
   if (dispositivo.en_rango === false) return false;
   return fromRow;
@@ -101,12 +105,12 @@ export function effectiveEnRangoFromDispositivo(dispositivo) {
  * Inicio del episodio **continuo actual** fuera de rango efectivo (hacia atrás desde ahora).
  * Se detiene en el primer punto en rango o dato nulo (no une episodios separados por defrost).
  */
-export function resolveOutOfRangeSince(datos, referencia = new Date()) {
+export function resolveOutOfRangeSince(datos, referencia = new Date(), rangoOpts = null) {
   const sorted = [...(datos ?? [])]
     .map((row) => ({
       row,
       ts: timestampRegistro(row),
-      effective: rowEnRangoEffective(row),
+      effective: rowEnRangoEffective(row, rangoOpts),
     }))
     .filter((x) => !Number.isNaN(x.ts))
     .sort((a, b) => a.ts - b.ts);
@@ -135,8 +139,8 @@ export function resolveOutOfRangeSince(datos, referencia = new Date()) {
  * Ajusta o invalida la referencia persistida según historial reciente.
  * @returns {{ since: string, resetUmbrales: boolean } | null} null = equipo recuperado (en rango)
  */
-export function reconcileEpisodeReference(episode, datos, now = new Date()) {
-  const resolved = resolveOutOfRangeSince(datos, now);
+export function reconcileEpisodeReference(episode, datos, now = new Date(), rangoOpts = null) {
+  const resolved = resolveOutOfRangeSince(datos, now, rangoOpts);
   if (resolved == null) return null;
 
   const prev = new Date(episode.since).getTime();

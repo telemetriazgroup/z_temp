@@ -62,6 +62,8 @@ export interface HistorialChartRow {
   suministro: number | null;
   retorno: number | null;
   evaporador: number | null;
+  ambiente: number | null;
+  humedad: number | null;
 }
 
 export function datosAGrafica(datos: DatoOficialHistorial[]): HistorialChartRow[] {
@@ -75,16 +77,20 @@ export function datosAGrafica(datos: DatoOficialHistorial[]): HistorialChartRow[
       if (Number.isNaN(ts)) return null;
       return {
         label: d.toLocaleString('es-ES', {
-          month: '2-digit',
           day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
           hour: '2-digit',
           minute: '2-digit',
+          second: '2-digit',
         }),
         ts,
         setTemperatura: num(row.set_point),
         suministro: num(row.temp_supply_1),
         retorno: num(row.return_air),
         evaporador: num(row.evaporation_coil),
+        ambiente: num(row.ambient_air),
+        humedad: num(row.relative_humidity),
       };
     })
     .filter((r): r is HistorialChartRow => r != null);
