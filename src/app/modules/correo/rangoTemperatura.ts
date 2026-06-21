@@ -70,8 +70,8 @@ function enBandaSetpoint(
 }
 
 /**
- * Misma lógica que el servidor (`historicalTelemetry.effectiveEnRangoFromDispositivo`).
- * Si `cfg.useRangoPersonalizado`, usa márgenes del equipo; si no, delega en `en_rango` de telemetría.
+ * Con rango personalizado: solo return_air vs banda (defrost → en rango).
+ * Sin personalización: delega en en_rango de telemetría.
  */
 export function effectiveEnRangoWithConfig(
   dispositivo: DispositivoUltimoEstado,
@@ -82,23 +82,12 @@ export function effectiveEnRangoWithConfig(
   }
 
   if (dispositivo.en_defrost === true) return true;
-  if (dispositivo.en_rango === true) return true;
 
-  const d = dispositivo.ultimo_dato ?? {};
-  const setPoint = d.set_point ?? null;
-  const sup = d.temp_supply_1 ?? null;
-  const ret = d.return_air ?? null;
-
-  if (setPoint != null && sup != null && enBandaSetpoint(sup, setPoint, cfg) === true) {
-    return true;
-  }
-
-  if (dispositivo.en_rango === false) return false;
-
-  const supOk = enBandaSetpoint(sup, setPoint, cfg);
+  const setPoint = dispositivo.ultimo_dato?.set_point ?? null;
+  const ret = dispositivo.ultimo_dato?.return_air ?? null;
   const retOk = enBandaSetpoint(ret, setPoint, cfg);
-  if (supOk === false || retOk === false) return false;
-  if (supOk === true && retOk === true) return true;
+  if (retOk === true) return true;
+  if (retOk === false) return false;
   return null;
 }
 

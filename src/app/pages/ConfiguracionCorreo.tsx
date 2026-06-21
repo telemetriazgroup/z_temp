@@ -47,6 +47,7 @@ import {
   computeRangoLimites,
   formatRangoTemperatura,
   toleranciaSetpointDefault,
+  effectiveEnRangoWithConfig,
 } from '../modules/correo/rangoTemperatura';
 import type {
   CorreoEnvioLog,
@@ -412,6 +413,12 @@ export default function ConfiguracionCorreo() {
   }, [ciclos, traceRowKey]);
 
   const traceEntry = alertState.find((e) => e.rowKey === traceRowKey);
+
+  const alertConfigByRowKey = useMemo(() => {
+    const map: Record<string, DeviceAlertStateEntry['config']> = {};
+    for (const e of alertState) map[e.rowKey] = e.config;
+    return map;
+  }, [alertState]);
 
   const smtpReadyOnServer = (): boolean =>
     Boolean(smtpUser.trim() && (smtpPasswordSaved || smtpPass.replace(/\s/g, '')));
@@ -880,6 +887,10 @@ export default function ConfiguracionCorreo() {
                       )}
                       {g.devices.map((dev) => {
                         const live = dispositivos.find((d) => deviceRowKey(d) === dev.rowKey);
+                        const enRangoLive =
+                          live != null
+                            ? effectiveEnRangoWithConfig(live, alertConfigByRowKey[dev.rowKey])
+                            : null;
                         return (
                           <TableRow key={dev.rowKey}>
                             <TableCell className="text-xs">
@@ -903,13 +914,13 @@ export default function ConfiguracionCorreo() {
                             </TableCell>
                             <TableCell>
                               {!dev.enabled && <Badge variant="secondary">Off</Badge>}
-                              {dev.enabled && live?.en_rango === false && (
+                              {dev.enabled && enRangoLive === false && (
                                 <Badge className="bg-red-600">FUERA DE RANGO</Badge>
                               )}
-                              {dev.enabled && live?.en_rango === true && (
+                              {dev.enabled && enRangoLive === true && (
                                 <Badge className="bg-emerald-600">EN RANGO</Badge>
                               )}
-                              {dev.enabled && live?.en_rango == null && (
+                              {dev.enabled && enRangoLive !== true && enRangoLive !== false && (
                                 <span className="text-muted-foreground">—</span>
                               )}
                             </TableCell>

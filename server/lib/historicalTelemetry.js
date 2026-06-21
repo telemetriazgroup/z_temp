@@ -51,6 +51,14 @@ function enBandaSetpoint(valor, setPoint, rangoOpts) {
 export function rowEnRangoEffective(row, rangoOpts = null) {
   if (row == null) return null;
   if (row.en_defrost === true) return true;
+
+  if (rangoOpts?.useRangoPersonalizado) {
+    const retOk = enBandaSetpoint(row.return_air, row.set_point, rangoOpts);
+    if (retOk === true) return true;
+    if (retOk === false) return false;
+    return null;
+  }
+
   if (row.en_rango === true) return true;
 
   const setPoint = row.set_point;
@@ -84,9 +92,18 @@ export function rowEnRango(row) {
 export function effectiveEnRangoFromDispositivo(dispositivo, rangoOpts = null) {
   if (dispositivo == null) return null;
   if (dispositivo.en_defrost === true) return true;
-  if (dispositivo.en_rango === true) return true;
 
   const d = dispositivo.ultimo_dato ?? {};
+
+  if (rangoOpts?.useRangoPersonalizado) {
+    const retOk = enBandaSetpoint(d.return_air, d.set_point, rangoOpts);
+    if (retOk === true) return true;
+    if (retOk === false) return false;
+    return null;
+  }
+
+  if (dispositivo.en_rango === true) return true;
+
   const row = {
     en_rango: dispositivo.en_rango,
     en_defrost: dispositivo.en_defrost,
