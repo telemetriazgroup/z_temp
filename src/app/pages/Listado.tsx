@@ -5,11 +5,15 @@ import type {
   UltimoEstadoDispositivosResponse,
   DispositivoUltimoEstado,
   ResumenDispositivos,
+  DispositivoOrigenCodigo,
 } from '../types';
 import {
   readDeviceLocalNames,
   persistDeviceLocalNames,
+  recordDeviceLocalNameChange,
+  getDeviceLocalNameHistoryForRow,
   type DeviceLocalNameMap,
+  type DeviceLocalNameHistoryEntry,
 } from '../lib/deviceLocalNames';
 import { syncDeviceNamesToServer, fetchDeviceAlertConfigMap } from '../modules/correo/correoServerApi';
 import {
@@ -67,6 +71,14 @@ const API_POWER_MAP = {
 const SIN_ASIGNAR = 'SIN ASIGNAR';
 
 type StatusFilter = 'ALL' | 'ONLINE' | 'WAIT' | 'OFFLINE';
+type CodigoFilter = 'ALL' | DispositivoOrigenCodigo;
+
+const CODIGO_FILTER_OPTIONS: { id: CodigoFilter; label: string }[] = [
+  { id: 'ALL', label: 'Todos' },
+  { id: 'TUNEL', label: 'TUNEL' },
+  { id: 'STARCOOL', label: 'STARCOOL' },
+  { id: 'TERMOKING', label: 'TERMOKING' },
+];
 
 function deviceRowKey(d: DispositivoUltimoEstado): string {
   return d.codigo != null ? `${d.codigo}-${d.imei}` : d.imei;
@@ -178,12 +190,16 @@ function formatTemp(value: number | null): string {
 export default function Listado() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
+  const [codigoFilter, setCodigoFilter] = useState<CodigoFilter>('ALL');
   const [localNames, setLocalNames] = useState<DeviceLocalNameMap>(() =>
     readDeviceLocalNames()
   );
+  const [nameHistory, setNameHistory] = useState<DeviceLocalNameHistoryEntry[]>([]);
   const [nameEdit, setNameEdit] = useState<{
     rowKey: string;
     containerId: string;
+    codigo: string;
+    nombreAnterior: string;
     draft: string;
   } | null>(null);
   const [data, setData] = useState<UltimoEstadoDispositivosResponse | null>(null);
@@ -231,8 +247,23 @@ export default function Listado() {
     return resumenFromDispositivos(visibleDispositivos, resumenApi.zona_horaria ?? 'GMT-5');
   }, [resumenApi, user, visibleDispositivos]);
 
+  const codigoCounts = useMemo(() => {
+    const counts: Record<DispositivoOrigenCodigo, number> = {
+      TUNEL: 0,
+      STARCOOL: 0,
+      TERMOKING: 0,
+    };
+    for (const d of visibleDispositivos) {
+      if (d.codigo != null && d.codigo in counts) counts[d.codigo]++;
+    }
+    return counts;
+  }, [visibleDispositivos]);
+
   const filteredDevices = visibleDispositivos
     .filter((device) => {
+      if (codigoFilter !== 'ALL' && device.codigo !== codigoFilter) {
+        return false;
+      }
       if (statusFilter !== 'ALL' && apiStatusOf(device) !== statusFilter) {
         return false;
       }
@@ -277,6 +308,8 @@ export default function Listado() {
   const saveLocalName = () => {
     if (nameEdit == null) return;
     const trimmed = nameEdit.draft.trim();
+    const nombreNuevo = trimmed === '' ? SIN_ASIGNAR : trimmed;
+
     setLocalNames((prev) => {
       const next = { ...prev };
       if (trimmed === '') delete next[nameEdit.rowKey];
@@ -287,7 +320,36 @@ export default function Listado() {
       }
       return next;
     });
+
+    recordDeviceLocalNameChange({
+      rowKey: nameEdit.rowKey,
+      imei: nameEdit.containerId,
+      codigo: nameEdit.codigo !== '—' ? nameEdit.codigo : undefined,
+      nombreAnterior: nameEdit.nombreAnterior,
+      nombreNuevo,
+      usuario: user?.username,
+    });
+
     setNameEdit(null);
+  };
+
+  const openNameEdit = (device: {
+    rowKey: string;
+    containerId: string;
+    codigo: string;
+    nombreAsignado: string;
+  }) => {
+    const historial = getDeviceLocalNameHistoryForRow(device.rowKey, 15);
+    setNameHistory(historial);
+    setNameEdit({
+      rowKey: device.rowKey,
+      containerId: device.containerId,
+      codigo: device.codigo,
+      nombreAnterior: device.nombreAsignado,
+      draft:
+        localNames[device.rowKey] ??
+        (device.nombreAsignado !== SIN_ASIGNAR ? device.nombreAsignado : ''),
+    });
   };
 
   const handleDeviceClick = (deviceId: string) => {
@@ -349,8 +411,15 @@ export default function Listado() {
           <div className="text-right">
             <div className="text-sm text-gray-500">Total de Dispositivos</div>
             <div className="text-3xl font-bold">
-              {resumen?.total_dispositivos ?? filteredDevices.length}
+              {codigoFilter !== 'ALL' || statusFilter !== 'ALL' || searchTerm.trim()
+                ? filteredDevices.length
+                : (resumen?.total_dispositivos ?? filteredDevices.length)}
             </div>
+            {(codigoFilter !== 'ALL' || statusFilter !== 'ALL' || searchTerm.trim()) && (
+              <div className="text-xs text-muted-foreground">
+                de {visibleDispositivos.length} visibles
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -388,27 +457,52 @@ export default function Listado() {
         </div>
       )}
 
-      <div className="flex flex-col sm:flex-row gap-4 items-stretch sm:items-center flex-wrap">
-        <Input
-          type="text"
-          placeholder="Buscar por IMEI, nombre asignado, código (TUNEL, STARCOOL, TERMOKING)..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="max-w-md"
-        />
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-col sm:flex-row gap-4 items-stretch sm:items-center flex-wrap">
+          <Input
+            type="text"
+            placeholder="Buscar por IMEI, nombre asignado..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="max-w-md"
+          />
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm text-muted-foreground">Estado:</span>
+            {STATUS_FILTER_OPTIONS.map(({ id, label }) => (
+              <Button
+                key={id}
+                type="button"
+                variant={statusFilter === id ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setStatusFilter(id)}
+              >
+                {label}
+              </Button>
+            ))}
+          </div>
+        </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm text-muted-foreground">Estado:</span>
-          {STATUS_FILTER_OPTIONS.map(({ id, label }) => (
-            <Button
-              key={id}
-              type="button"
-              variant={statusFilter === id ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setStatusFilter(id)}
-            >
-              {label}
-            </Button>
-          ))}
+          <span className="text-sm text-muted-foreground">Código:</span>
+          {CODIGO_FILTER_OPTIONS.map(({ id, label }) => {
+            const count =
+              id === 'ALL'
+                ? visibleDispositivos.length
+                : codigoCounts[id as DispositivoOrigenCodigo] ?? 0;
+            return (
+              <Button
+                key={id}
+                type="button"
+                variant={codigoFilter === id ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setCodigoFilter(id)}
+              >
+                {label}
+                {id !== 'ALL' && (
+                  <span className="ml-1.5 text-xs opacity-80">({count})</span>
+                )}
+              </Button>
+            );
+          })}
         </div>
       </div>
 
@@ -491,11 +585,7 @@ export default function Listado() {
                         disabled={device.nameLockedByProfile}
                         onClick={(e) => {
                           e.stopPropagation();
-                          setNameEdit({
-                            rowKey: device.rowKey,
-                            containerId: device.containerId,
-                            draft: localNames[device.rowKey] ?? '',
-                          });
+                          openNameEdit(device);
                         }}
                       >
                         <Pencil className="h-4 w-4" />
@@ -620,22 +710,54 @@ export default function Listado() {
           <DialogHeader>
             <DialogTitle>Nombre del equipo</DialogTitle>
             <DialogDescription>
-              Equipo {nameEdit?.containerId}. Se guarda solo en este navegador
-              (local). Vacío restaura «{SIN_ASIGNAR}».
+              Equipo {nameEdit?.containerId}
+              {nameEdit?.codigo != null && nameEdit.codigo !== '—' && (
+                <> · {nameEdit.codigo}</>
+              )}
+              . Se guarda en este navegador y se registra en el historial de cambios.
             </DialogDescription>
           </DialogHeader>
-          <Input
-            value={nameEdit?.draft ?? ''}
-            onChange={(e) =>
-              nameEdit &&
-              setNameEdit({ ...nameEdit, draft: e.target.value })
-            }
-            placeholder={SIN_ASIGNAR}
-            autoFocus
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') saveLocalName();
-            }}
-          />
+          <div className="space-y-3">
+            <Input
+              value={nameEdit?.draft ?? ''}
+              onChange={(e) =>
+                nameEdit &&
+                setNameEdit({ ...nameEdit, draft: e.target.value })
+              }
+              placeholder={SIN_ASIGNAR}
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') saveLocalName();
+              }}
+            />
+            {nameEdit != null && nameEdit.nombreAnterior !== SIN_ASIGNAR && (
+              <p className="text-xs text-muted-foreground">
+                Nombre actual: <span className="font-medium">{nameEdit.nombreAnterior}</span>
+              </p>
+            )}
+            {nameHistory.length > 0 && (
+              <div className="rounded-md border max-h-[180px] overflow-y-auto">
+                <div className="px-3 py-2 text-xs font-medium border-b bg-muted/40">
+                  Historial de nombres
+                </div>
+                <ul className="divide-y text-xs">
+                  {nameHistory.map((h) => (
+                    <li key={h.id} className="px-3 py-2">
+                      <div className="text-muted-foreground">
+                        {new Date(h.changedAt).toLocaleString('es-ES')}
+                        {h.usuario != null && <> · {h.usuario}</>}
+                      </div>
+                      <div>
+                        <span className="line-through text-muted-foreground">{h.nombreAnterior}</span>
+                        {' → '}
+                        <span className="font-medium">{h.nombreNuevo}</span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setNameEdit(null)}>
               Cancelar
