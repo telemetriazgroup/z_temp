@@ -50,16 +50,16 @@ import {
   toleranciaSetpointDefault,
   evaluarEstadoRangoListado,
 } from '../modules/correo/rangoTemperatura';
-import type {
-  CorreoEnvioLog,
-  CorreoServerStatus,
-  CorreoCicloAnalisis,
-  CicloEvaluacionDispositivo,
-  SmtpConfigSaveInput,
-  DeviceAlertStateEntry,
-  DeviceEventosView,
-  AlertEventoIntervalo,
+import {
   formatUmbralAlerta,
+  type CorreoEnvioLog,
+  type CorreoServerStatus,
+  type CorreoCicloAnalisis,
+  type CicloEvaluacionDispositivo,
+  type SmtpConfigSaveInput,
+  type DeviceAlertStateEntry,
+  type DeviceEventosView,
+  type AlertEventoIntervalo,
 } from '../modules/correo/types';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
