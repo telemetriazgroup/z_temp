@@ -1171,7 +1171,4 @@ export {
   getIncidentes,
   addIncidente,
   getCiclos,
-  archiveIncidente,
-  archiveAllIncidentes,
-  getDeviceEventosView,
 };
