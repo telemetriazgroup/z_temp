@@ -16,6 +16,7 @@ import type {
   DeviceAlertConfig,
   DeviceAlertStateView,
   ReferenciaUpdateResult,
+  DeviceEventosView,
 } from './types';
 
 const BASE = import.meta.env.VITE_CORREO_API_BASE ?? '/reefer/api/correo';
@@ -125,8 +126,9 @@ export async function fetchServerEnvios(limit = 100): Promise<CorreoEnvioLog[]> 
 export async function fetchServerIncidentes(params?: {
   imeis?: string[];
   rowKeys?: string[];
-  estado?: 'pendiente' | 'atendida';
+  estado?: 'pendiente' | 'atendida' | 'cerrado';
   todos?: boolean;
+  incluirArchivados?: boolean;
 }): Promise<{ data: CorreoIncidente[]; meta: { hoy: string; ayer: string } }> {
   const q = new URLSearchParams();
   if (!params?.todos) {
@@ -134,16 +136,33 @@ export async function fetchServerIncidentes(params?: {
     else if (params?.imeis?.length) q.set('imei', params.imeis.join(','));
   }
   if (params?.estado) q.set('estado', params.estado);
+  if (params?.incluirArchivados) q.set('incluirArchivados', 'true');
   const res = await fetch(`${BASE}/incidentes?${q.toString()}`);
   return parseRes(res);
 }
 
-export async function deleteIncidente(id: string, usuario: string): Promise<void> {
+/** Archiva un incidente (permanece en base de datos). */
+export async function archiveIncidente(id: string, usuario: string): Promise<CorreoIncidente> {
   const res = await fetch(`${BASE}/incidentes/${id}`, {
     method: 'DELETE',
     headers: headers(usuario, true),
   });
-  await parseRes(res);
+  const body = await parseRes<{ data: CorreoIncidente }>(res);
+  return body.data;
+}
+
+/** @deprecated usar archiveIncidente */
+export async function deleteIncidente(id: string, usuario: string): Promise<void> {
+  await archiveIncidente(id, usuario);
+}
+
+export async function archiveAllIncidentes(usuario: string): Promise<{ count: number }> {
+  const res = await fetch(`${BASE}/incidentes/archivar-todos`, {
+    method: 'POST',
+    headers: headers(usuario, true),
+  });
+  const body = await parseRes<{ count: number }>(res);
+  return { count: body.count };
 }
 
 export async function comentarIncidente(
@@ -203,6 +222,12 @@ export async function fetchDeviceAlertState(): Promise<DeviceAlertStateView> {
   return body.data;
 }
 
+export async function fetchDeviceEventos(rowKey: string): Promise<DeviceEventosView> {
+  const res = await fetch(`${BASE}/alert-config/${encodeURIComponent(rowKey)}/eventos`);
+  const body = await parseRes<{ data: DeviceEventosView }>(res);
+  return body.data;
+}
+
 export async function saveDeviceAlertConfigApi(
   rowKey: string,
   config: {
@@ -211,6 +236,7 @@ export async function saveDeviceAlertConfigApi(
     useReferenciaManual?: boolean;
     referenciaManual?: string;
     alerta1Hora?: boolean;
+    alerta30Minutos?: boolean;
     useRangoPersonalizado?: boolean;
     margenInferior?: number;
     margenSuperior?: number;

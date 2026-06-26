@@ -5,10 +5,17 @@ export interface SmtpConfig {
   fromName: string;
 }
 
-/** Horas de aviso disponibles (2 … 24). */
+/** Horas de aviso disponibles (2 … 24). Umbral 0.5 = 30 min (alerta temprana). */
+export const UMBRAL_ALERTA_30_MIN = 0.5;
+
 export const UMBRALES_HORAS_DISPONIBLES = Array.from({ length: 23 }, (_, i) => i + 2);
 
 export const DEFAULT_UMBRALES_HORAS: number[] = [...UMBRALES_HORAS_DISPONIBLES];
+
+export function formatUmbralAlerta(h: number): string {
+  if (h === UMBRAL_ALERTA_30_MIN) return '30 min';
+  return `${h} h`;
+}
 
 export type DeviceAlertConfigMode = 'standard' | 'custom';
 
@@ -21,6 +28,8 @@ export interface DeviceAlertConfig {
   useReferenciaManual?: boolean;
   /** Incluir aviso a la 1.ª hora fuera de rango (además de umbrales del grupo/custom). */
   alerta1Hora?: boolean;
+  /** Incluir aviso a los 30 minutos fuera de rango / apagado. */
+  alerta30Minutos?: boolean;
   /** Usar márgenes °C personalizados en lugar de ±10 % del setpoint. */
   useRangoPersonalizado?: boolean;
   /** Grados bajo el setpoint considerados EN RANGO. */
@@ -34,6 +43,7 @@ export interface DeviceAlertConfig {
 export interface DeviceAlertEpisode {
   since: string;
   sentUmbrales: number[];
+  kind?: 'fuera_rango' | 'apagado';
   referenceLocked?: boolean;
   referenciaManual?: boolean;
   historialConsultadoAt?: string;
@@ -66,13 +76,38 @@ export interface ReferenciaUpdateResult {
   rowKey: string;
   episode: DeviceAlertEpisode | null;
   since?: string | null;
-  recovered?: { since: string; endedAt: string; durationHours: number } | null;
+  recovered?: {
+    since: string;
+    endedAt: string;
+    durationHours: number;
+    kind?: string;
+    sentUmbrales?: number[];
+  } | null;
   consultaHistorial?: boolean;
   criterio: string;
 }
 
+export interface AlertEventoIntervalo {
+  since: string;
+  until: string | null;
+  durationHours: number;
+}
 
-export type CorreoIncidenteEstado = 'pendiente' | 'atendida';
+export interface DeviceEventosView {
+  rowKey: string;
+  imei: string;
+  codigo: string;
+  episode: DeviceAlertEpisode | null;
+  lastRecovered?: DeviceAlertStateEntry['lastRecovered'];
+  intervalosFueraRango: AlertEventoIntervalo[];
+  intervalosApagado: AlertEventoIntervalo[];
+  incidentes: CorreoIncidente[];
+  historialPuntos: number;
+  consultadoAt: string;
+}
+
+
+export type CorreoIncidenteEstado = 'pendiente' | 'atendida' | 'cerrado';
 
 /** Equipo asignado a un grupo de correo. */
 export interface GrupoCorreoDevice {
@@ -266,26 +301,36 @@ export interface CorreoIncidenteComentario {
   createdAt: string;
 }
 
-/** Incidente generado por cada correo de alerta enviado (gestión operaciones/mantenimiento). */
+/** Incidente generado por correo enviado o episodio cerrado (gestión operaciones/mantenimiento). */
 export interface CorreoIncidente {
   id: string;
-  envioId: string;
-  grupoId: string;
-  grupoNombre: string;
+  tipo?: 'correo_enviado' | 'episodio_cerrado';
+  alertKind?: 'fuera_rango' | 'apagado';
+  envioId?: string;
+  grupoId?: string;
+  grupoNombre?: string;
   rowKey: string;
   imei: string;
   codigo: string;
   descripcionEquipo: string;
   nombrePlataforma: string;
   /** YYYY-MM-DD */
-  diaCalendario: string;
-  umbralHoras: number;
-  horasFueraRango: number;
-  tipoEvento: CorreoTipoEvento;
+  diaCalendario?: string;
+  umbralHoras?: number;
+  horasFueraRango?: number;
+  tipoEvento?: CorreoTipoEvento;
   estado: CorreoIncidenteEstado;
-  subject: string;
-  destinatarios: string[];
+  subject?: string;
+  destinatarios?: string[];
   enviadoAt: string;
+  since?: string;
+  endedAt?: string;
+  durationHours?: number;
+  umbralesEnviados?: number[];
+  referenciaDesde?: string;
+  archivado?: boolean;
+  archivadoAt?: string;
+  archivadoPor?: string;
   comentarios: CorreoIncidenteComentario[];
   atendidaAt?: string;
   atendidaPor?: string;

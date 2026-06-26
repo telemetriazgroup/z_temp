@@ -37,6 +37,7 @@ import {
   fetchDeviceAlertState,
   saveDeviceAlertConfigApi,
   updateDeviceReferencia,
+  fetchDeviceEventos,
 } from '../modules/correo/correoServerApi';
 import {
   buildDeviceNamesForServer,
@@ -56,6 +57,9 @@ import type {
   CicloEvaluacionDispositivo,
   SmtpConfigSaveInput,
   DeviceAlertStateEntry,
+  DeviceEventosView,
+  AlertEventoIntervalo,
+  formatUmbralAlerta,
 } from '../modules/correo/types';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -156,6 +160,12 @@ function estadoCicloBadgeClass(estado: CicloEvaluacionDispositivo['estado']): st
   }
 }
 
+function formatIntervaloEvento(iv: AlertEventoIntervalo): string {
+  const desde = new Date(iv.since).toLocaleString('es-ES');
+  const hasta = iv.until ? new Date(iv.until).toLocaleString('es-ES') : 'En curso';
+  return `${desde} → ${hasta} (${iv.durationHours} h)`;
+}
+
 function emptyGrupo(): Omit<GrupoCorreo, 'createdAt' | 'updatedAt'> {
   return {
     id: generateGrupoCorreoId(),
@@ -206,11 +216,13 @@ export default function ConfiguracionCorreo() {
   const [alertUseManualRef, setAlertUseManualRef] = useState(false);
   const [alertManualRef, setAlertManualRef] = useState('');
   const [alerta1Hora, setAlerta1Hora] = useState(false);
+  const [alerta30Minutos, setAlerta30Minutos] = useState(false);
   const [useRangoPersonalizado, setUseRangoPersonalizado] = useState(false);
   const [margenInferior, setMargenInferior] = useState('0.5');
   const [margenSuperior, setMargenSuperior] = useState('0.5');
   const [alertSaving, setAlertSaving] = useState(false);
-  const [traceRowKey, setTraceRowKey] = useState<string | null>(null);
+  const [alertEventos, setAlertEventos] = useState<DeviceEventosView | null>(null);
+  const [alertEventosLoading, setAlertEventosLoading] = useState(false);
 
   const localNames = useMemo(() => readDeviceLocalNames(), []);
 
@@ -307,6 +319,15 @@ export default function ConfiguracionCorreo() {
     setAlertEdit(entry);
     setAlertMode(cfg?.mode === 'custom' ? 'custom' : 'standard');
     setAlerta1Hora(Boolean(cfg?.alerta1Hora));
+    setAlerta30Minutos(Boolean(cfg?.alerta30Minutos));
+    setAlertEventos(null);
+    setAlertEventosLoading(true);
+    void fetchDeviceEventos(entry.rowKey)
+      .then(setAlertEventos)
+      .catch((e) => {
+        toast.error(e instanceof Error ? e.message : 'Error al cargar eventos del equipo');
+      })
+      .finally(() => setAlertEventosLoading(false));
     setAlertUmbrales(
       cfg?.mode === 'custom' && cfg.umbralesHoras?.length
         ? normalizeUmbrales(cfg.umbralesHoras)
@@ -331,6 +352,8 @@ export default function ConfiguracionCorreo() {
   const closeAlertEdit = () => {
     setAlertEdit(null);
     setAlertSaving(false);
+    setAlertEventos(null);
+    setAlertEventosLoading(false);
   };
 
   const toggleAlertUmbral = (h: number, on: boolean) => {
@@ -354,6 +377,7 @@ export default function ConfiguracionCorreo() {
       const payload = {
         mode: alertMode,
         alerta1Hora,
+        alerta30Minutos,
         useRangoPersonalizado,
         margenInferior: useRangoPersonalizado ? margenInf : undefined,
         margenSuperior: useRangoPersonalizado ? margenSup : undefined,
@@ -405,20 +429,18 @@ export default function ConfiguracionCorreo() {
     }
   };
 
-  const traceEvaluaciones = useMemo(() => {
-    if (traceRowKey == null) return [];
+  const alertTraceEvaluaciones = useMemo(() => {
+    if (alertEdit == null) return [];
     const rows: Array<CicloEvaluacionDispositivo & { cicloAt: string; cicloId: string }> = [];
     for (const ciclo of ciclos) {
       for (const ev of ciclo.evaluaciones) {
-        if (ev.rowKey === traceRowKey) {
+        if (ev.rowKey === alertEdit.rowKey) {
           rows.push({ ...ev, cicloAt: ciclo.checkedAt, cicloId: ciclo.id });
         }
       }
     }
     return rows.slice(0, 80);
-  }, [ciclos, traceRowKey]);
-
-  const traceEntry = alertState.find((e) => e.rowKey === traceRowKey);
+  }, [ciclos, alertEdit?.rowKey]);
 
   const alertConfigByRowKey = useMemo(() => {
     const map: Record<string, DeviceAlertStateEntry['config']> = {};
@@ -1046,8 +1068,8 @@ export default function ConfiguracionCorreo() {
                 Alertas por equipo
               </CardTitle>
               <CardDescription>
-                Modo estándar: umbrales del grupo y referencia automática. Puede activar alerta a
-                1 h y personalizar el rango de temperatura EN RANGO por equipo. Modo personalizado:
+                Modo estándar: umbrales del grupo y referencia automática. Puede activar alertas a
+                30 min / 1 h y personalizar el rango EN RANGO por equipo. Modo personalizado:
                 override de umbrales y/o referencia manual. Un solo correo por umbral.
               </CardDescription>
             </CardHeader>
@@ -1058,10 +1080,10 @@ export default function ConfiguracionCorreo() {
                     <TableHead>Equipo</TableHead>
                     <TableHead>Modo</TableHead>
                     <TableHead>Rango EN RANGO</TableHead>
-                    <TableHead>Alerta 1 h</TableHead>
-                    <TableHead>Referencia activa</TableHead>
+                    <TableHead>Alertas tempranas</TableHead>
+                    <TableHead>Episodio activo</TableHead>
                     <TableHead>Umbrales enviados</TableHead>
-                    <TableHead className="w-[200px]" />
+                    <TableHead className="w-[120px]" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1091,16 +1113,30 @@ export default function ConfiguracionCorreo() {
                           {rangoTexto}
                         </TableCell>
                         <TableCell className="text-xs">
-                          {entry.config?.alerta1Hora ? (
-                            <Badge className="bg-blue-600">Activa</Badge>
-                          ) : (
-                            <span className="text-muted-foreground">No</span>
-                          )}
+                          <div className="flex flex-wrap gap-1">
+                            {entry.config?.alerta30Minutos && (
+                              <Badge className="bg-violet-600">30 min</Badge>
+                            )}
+                            {entry.config?.alerta1Hora && (
+                              <Badge className="bg-blue-600">1 h</Badge>
+                            )}
+                            {!entry.config?.alerta30Minutos && !entry.config?.alerta1Hora && (
+                              <span className="text-muted-foreground">No</span>
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell className="text-xs">
                           {entry.episode?.since ? (
                             <>
-                              {new Date(entry.episode.since).toLocaleString('es-ES')}
+                              <Badge
+                                variant={
+                                  entry.episode.kind === 'apagado' ? 'secondary' : 'destructive'
+                                }
+                                className="mb-1"
+                              >
+                                {entry.episode.kind === 'apagado' ? 'Apagado' : 'Fuera de rango'}
+                              </Badge>
+                              <div>{new Date(entry.episode.since).toLocaleString('es-ES')}</div>
                               {entry.episode.referenceLocked && (
                                 <div className="text-muted-foreground">Referencia fija</div>
                               )}
@@ -1111,19 +1147,12 @@ export default function ConfiguracionCorreo() {
                         </TableCell>
                         <TableCell className="text-xs">
                           {entry.episode?.sentUmbrales?.length
-                            ? `${entry.episode.sentUmbrales.join(', ')} h`
+                            ? entry.episode.sentUmbrales.map(formatUmbralAlerta).join(', ')
                             : '—'}
                         </TableCell>
-                        <TableCell className="space-x-1">
+                        <TableCell>
                           <Button variant="outline" size="sm" onClick={() => openAlertEdit(entry)}>
                             Configurar
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setTraceRowKey(entry.rowKey)}
-                          >
-                            Trazabilidad
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -1331,7 +1360,7 @@ export default function ConfiguracionCorreo() {
       </Dialog>
 
       <Dialog open={alertEdit != null} onOpenChange={(open) => !open && closeAlertEdit()}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Target className="h-5 w-5" />
@@ -1367,9 +1396,20 @@ export default function ConfiguracionCorreo() {
               </div>
 
               <div className="flex items-center gap-2 rounded-md border px-3 py-2">
+                <Switch
+                  checked={alerta30Minutos}
+                  onCheckedChange={setAlerta30Minutos}
+                  id="alerta-30m"
+                />
+                <Label htmlFor="alerta-30m" className="cursor-pointer">
+                  Activar alerta a 30 minutos fuera de rango / apagado
+                </Label>
+              </div>
+
+              <div className="flex items-center gap-2 rounded-md border px-3 py-2">
                 <Switch checked={alerta1Hora} onCheckedChange={setAlerta1Hora} id="alerta-1h" />
                 <Label htmlFor="alerta-1h" className="cursor-pointer">
-                  Activar alerta a 1 hora fuera de rango
+                  Activar alerta a 1 hora fuera de rango / apagado
                 </Label>
               </div>
 
@@ -1385,6 +1425,7 @@ export default function ConfiguracionCorreo() {
                     margenInferior: Number(margenInferior) || 0.5,
                     margenSuperior: Number(margenSuperior) || 0.5,
                     alerta1Hora,
+                    alerta30Minutos,
                   };
                   const rango = computeRangoLimites(setPoint, draftCfg);
                   const defaultMargen =
@@ -1511,19 +1552,113 @@ export default function ConfiguracionCorreo() {
                 {alertEdit.episode?.since ? (
                   <>
                     <div>
+                      Tipo:{' '}
+                      {alertEdit.episode.kind === 'apagado' ? 'Apagado' : 'Fuera de rango'} ·
                       Referencia: {new Date(alertEdit.episode.since).toLocaleString('es-ES')}
                       {alertEdit.episode.referenceLocked ? ' (fija)' : ''}
                     </div>
                     <div>
                       Umbrales ya enviados:{' '}
                       {alertEdit.episode.sentUmbrales?.length
-                        ? `${alertEdit.episode.sentUmbrales.join(', ')} h`
+                        ? alertEdit.episode.sentUmbrales.map(formatUmbralAlerta).join(', ')
                         : 'ninguno'}
                     </div>
                   </>
                 ) : (
-                  <div className="text-muted-foreground">Sin episodio fuera de rango activo.</div>
+                  <div className="text-muted-foreground">Sin episodio activo.</div>
                 )}
+              </div>
+
+              <div className="space-y-3 rounded-md border p-3">
+                <div className="font-medium text-sm">Rangos de evento (historial 12 h)</div>
+                {alertEventosLoading ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Analizando telemetría…
+                  </div>
+                ) : alertEventos != null ? (
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div>
+                      <div className="text-xs font-medium mb-2 text-red-700">
+                        Fuera de rango (return_air)
+                      </div>
+                      {alertEventos.intervalosFueraRango.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">Sin intervalos en 12 h.</p>
+                      ) : (
+                        <ul className="text-xs space-y-1 max-h-[140px] overflow-y-auto">
+                          {alertEventos.intervalosFueraRango.map((iv, i) => (
+                            <li key={`fdr-${i}`} className="border-l-2 border-red-300 pl-2">
+                              {formatIntervaloEvento(iv)}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                    <div>
+                      <div className="text-xs font-medium mb-2 text-slate-700">
+                        Apagado (power_state 0)
+                      </div>
+                      {alertEventos.intervalosApagado.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">Sin intervalos en 12 h.</p>
+                      ) : (
+                        <ul className="text-xs space-y-1 max-h-[140px] overflow-y-auto">
+                          {alertEventos.intervalosApagado.map((iv, i) => (
+                            <li key={`off-${i}`} className="border-l-2 border-slate-400 pl-2">
+                              {formatIntervaloEvento(iv)}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">No se pudieron cargar los eventos.</p>
+                )}
+                {alertEventos != null && (
+                  <p className="text-xs text-muted-foreground">
+                    {alertEventos.historialPuntos} puntos · consultado{' '}
+                    {new Date(alertEventos.consultadoAt).toLocaleString('es-ES')}
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2 rounded-md border p-3">
+                <div className="font-medium text-sm">Trazabilidad por ciclo</div>
+                <div className="max-h-[220px] overflow-y-auto border rounded-md">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Ciclo</TableHead>
+                        <TableHead>Estado</TableHead>
+                        <TableHead>Criterio</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {alertTraceEvaluaciones.map((ev) => (
+                        <TableRow key={`${ev.cicloId}-${ev.estado}-${ev.cicloAt}`}>
+                          <TableCell className="text-xs whitespace-nowrap">
+                            {new Date(ev.cicloAt).toLocaleString('es-ES')}
+                          </TableCell>
+                          <TableCell>
+                            <Badge className={estadoCicloBadgeClass(ev.estado)}>
+                              {estadoCicloLabel(ev.estado)}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-xs whitespace-normal max-w-[360px]">
+                            {ev.criterio}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      {alertTraceEvaluaciones.length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={3} className="text-center text-muted-foreground text-xs">
+                            Sin evaluaciones registradas.
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
               </div>
 
               <div className="flex flex-wrap gap-2">
@@ -1550,62 +1685,6 @@ export default function ConfiguracionCorreo() {
             </Button>
             <Button disabled={alertSaving} onClick={() => void handleSaveAlertConfig()}>
               {alertSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Guardar'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={traceRowKey != null} onOpenChange={(open) => !open && setTraceRowKey(null)}>
-        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Trazabilidad por ciclo</DialogTitle>
-            <DialogDescription>
-              {traceEntry != null && (
-                <>
-                  {traceEntry.descripcionEquipo || traceEntry.imei} — decisiones en los últimos
-                  ciclos de análisis
-                </>
-              )}
-            </DialogDescription>
-          </DialogHeader>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Ciclo</TableHead>
-                <TableHead>Estado</TableHead>
-                <TableHead>Config</TableHead>
-                <TableHead>Criterio / decisión</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {traceEvaluaciones.map((ev) => (
-                <TableRow key={`${ev.cicloId}-${ev.grupoId}-${ev.estado}-${ev.cicloAt}`}>
-                  <TableCell className="text-xs whitespace-nowrap">
-                    {new Date(ev.cicloAt).toLocaleString('es-ES')}
-                  </TableCell>
-                  <TableCell>
-                    <Badge className={estadoCicloBadgeClass(ev.estado)}>
-                      {estadoCicloLabel(ev.estado)}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-xs">{ev.configAlerta ?? '—'}</TableCell>
-                  <TableCell className="text-xs max-w-[420px] whitespace-normal">
-                    {ev.criterio}
-                  </TableCell>
-                </TableRow>
-              ))}
-              {traceEvaluaciones.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={4} className="text-center text-muted-foreground">
-                    Sin evaluaciones registradas para este equipo.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setTraceRowKey(null)}>
-              Cerrar
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1840,7 +1919,7 @@ export default function ConfiguracionCorreo() {
                   setLimpiarOpts((o) => ({ ...o, incidentes: v === true }))
                 }
               />
-              Incidentes de correo
+              Incidentes de correo (archivar, no eliminar)
             </label>
             <label className="flex items-center gap-2 text-sm">
               <Checkbox

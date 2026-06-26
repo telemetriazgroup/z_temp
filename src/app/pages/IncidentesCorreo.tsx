@@ -5,7 +5,8 @@ import {
   fetchServerIncidentes,
   comentarIncidente,
   atenderIncidente,
-  deleteIncidente,
+  archiveIncidente,
+  archiveAllIncidentes,
 } from '../modules/correo/correoServerApi';
 import {
   rowKeysCorreoActivosForUser,
@@ -14,10 +15,13 @@ import {
   diaRelativoLabel,
   tipoEventoLabel,
 } from '../modules/correo/incidentAccess';
+import { formatUmbralAlerta } from '../modules/correo/types';
 import type { CorreoIncidente, GrupoCorreo } from '../modules/correo/types';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
+import { Checkbox } from '../components/ui/checkbox';
+import { Label } from '../components/ui/label';
 import { Textarea } from '../components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import {
@@ -37,9 +41,31 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '../components/ui/alert-dialog';
-import { Mail, RefreshCw, Loader2, MessageSquare, CheckCircle2, Trash2 } from 'lucide-react';
+import {
+  Mail,
+  RefreshCw,
+  Loader2,
+  MessageSquare,
+  CheckCircle2,
+  Archive,
+  ArchiveRestore,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '../components/ui/utils';
+
+function incidenteDiaKey(inc: CorreoIncidente): string {
+  if (inc.diaCalendario) return inc.diaCalendario;
+  const ref = inc.endedAt ?? inc.enviadoAt;
+  return ref.slice(0, 10);
+}
+
+function incidenteTitulo(inc: CorreoIncidente): string {
+  if (inc.subject) return inc.subject;
+  if (inc.tipo === 'episodio_cerrado') {
+    return `Episodio ${inc.alertKind === 'apagado' ? 'apagado' : 'fuera de rango'} cerrado`;
+  }
+  return `Alerta ${inc.alertKind ?? 'correo'}`;
+}
 
 export default function IncidentesCorreo() {
   const { user } = useAuth();
@@ -49,10 +75,12 @@ export default function IncidentesCorreo() {
   const [meta, setMeta] = useState({ hoy: '', ayer: '' });
   const [loading, setLoading] = useState(true);
   const [filtro, setFiltro] = useState<'pendiente' | 'atendida' | 'todos'>('pendiente');
+  const [incluirArchivados, setIncluirArchivados] = useState(false);
   const [detalle, setDetalle] = useState<CorreoIncidente | null>(null);
   const [comentario, setComentario] = useState('');
   const [accionando, setAccionando] = useState(false);
-  const [eliminarOpen, setEliminarOpen] = useState(false);
+  const [archivarOpen, setArchivarOpen] = useState(false);
+  const [archivarTodosOpen, setArchivarTodosOpen] = useState(false);
 
   const rowKeysUsuario = useMemo(() => rowKeysCorreoActivosForUser(user, grupos), [user, grupos]);
   const tieneAcceso = userHasCorreoIncidentAccess(user, grupos);
@@ -73,6 +101,7 @@ export default function IncidentesCorreo() {
         todos: esSuperUser,
         rowKeys: esSuperUser ? undefined : rowKeys,
         estado: filtro === 'todos' ? undefined : filtro,
+        incluirArchivados,
       });
 
       const visibles = esSuperUser
@@ -86,7 +115,7 @@ export default function IncidentesCorreo() {
     } finally {
       setLoading(false);
     }
-  }, [user, filtro, esSuperUser]);
+  }, [user, filtro, esSuperUser, incluirArchivados]);
 
   useEffect(() => {
     void load();
@@ -95,7 +124,7 @@ export default function IncidentesCorreo() {
   const agrupados = useMemo(() => {
     const map = new Map<string, CorreoIncidente[]>();
     for (const inc of incidentes) {
-      const key = inc.diaCalendario;
+      const key = incidenteDiaKey(inc);
       const list = map.get(key) ?? [];
       list.push(inc);
       map.set(key, list);
@@ -135,18 +164,33 @@ export default function IncidentesCorreo() {
     }
   };
 
-  const handleEliminar = async () => {
+  const handleArchivar = async () => {
     if (detalle == null || !user || !esSuperUser) return;
     setAccionando(true);
     try {
-      await deleteIncidente(detalle.id, user.username);
-      setEliminarOpen(false);
+      await archiveIncidente(detalle.id, user.username);
+      setArchivarOpen(false);
       setDetalle(null);
       setComentario('');
       await load();
-      toast.success('Incidente eliminado');
+      toast.success('Incidente archivado');
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Error al eliminar');
+      toast.error(e instanceof Error ? e.message : 'Error al archivar');
+    } finally {
+      setAccionando(false);
+    }
+  };
+
+  const handleArchivarTodos = async () => {
+    if (!user || !esSuperUser) return;
+    setAccionando(true);
+    try {
+      const { count } = await archiveAllIncidentes(user.username);
+      setArchivarTodosOpen(false);
+      await load();
+      toast.success(`${count} incidente(s) archivado(s)`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Error al archivar');
     } finally {
       setAccionando(false);
     }
@@ -172,7 +216,7 @@ export default function IncidentesCorreo() {
           </h1>
           <p className="text-muted-foreground mt-1">
             {esSuperUser
-              ? 'Todos los incidentes. Puede eliminar registros.'
+              ? 'Gestión de incidentes. Archivar oculta registros sin borrarlos de la base.'
               : 'Incidentes de sus equipos activos en grupos de correo. Comente y cierre alarmas pendientes.'}
           </p>
           {!esSuperUser && rowKeysUsuario.length > 0 && (
@@ -181,19 +225,43 @@ export default function IncidentesCorreo() {
             </p>
           )}
         </div>
-        <Button variant="outline" onClick={() => void load()} disabled={loading}>
-          <RefreshCw className={cn('h-4 w-4 mr-2', loading && 'animate-spin')} />
-          Actualizar
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {esSuperUser && (
+            <Button
+              variant="outline"
+              onClick={() => setArchivarTodosOpen(true)}
+              disabled={loading || accionando}
+            >
+              <Archive className="h-4 w-4 mr-2" />
+              Archivar todos
+            </Button>
+          )}
+          <Button variant="outline" onClick={() => void load()} disabled={loading}>
+            <RefreshCw className={cn('h-4 w-4 mr-2', loading && 'animate-spin')} />
+            Actualizar
+          </Button>
+        </div>
       </div>
 
-      <Tabs value={filtro} onValueChange={(v) => setFiltro(v as typeof filtro)}>
-        <TabsList>
-          <TabsTrigger value="pendiente">Pendientes</TabsTrigger>
-          <TabsTrigger value="atendida">Atendidas</TabsTrigger>
-          <TabsTrigger value="todos">Todas</TabsTrigger>
-        </TabsList>
-      </Tabs>
+      <div className="flex flex-wrap items-center gap-4">
+        <Tabs value={filtro} onValueChange={(v) => setFiltro(v as typeof filtro)}>
+          <TabsList>
+            <TabsTrigger value="pendiente">Pendientes</TabsTrigger>
+            <TabsTrigger value="atendida">Atendidas</TabsTrigger>
+            <TabsTrigger value="todos">Todas</TabsTrigger>
+          </TabsList>
+        </Tabs>
+        <div className="flex items-center gap-2">
+          <Checkbox
+            id="ver-archivados"
+            checked={incluirArchivados}
+            onCheckedChange={(v) => setIncluirArchivados(v === true)}
+          />
+          <Label htmlFor="ver-archivados" className="text-sm cursor-pointer">
+            Ver archivados
+          </Label>
+        </div>
+      </div>
 
       {loading ? (
         <div className="flex justify-center py-16 text-muted-foreground gap-2">
@@ -203,7 +271,8 @@ export default function IncidentesCorreo() {
       ) : incidentes.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center text-muted-foreground">
-            No hay incidentes {filtro !== 'todos' ? filtro + 's' : ''} para sus equipos.
+            No hay incidentes {filtro !== 'todos' ? filtro + 's' : ''}{' '}
+            {incluirArchivados ? '(incl. archivados)' : 'activos'} para sus equipos.
           </CardContent>
         </Card>
       ) : (
@@ -225,26 +294,58 @@ export default function IncidentesCorreo() {
                       setDetalle(inc);
                       setComentario('');
                     }}
-                    className="w-full text-left border rounded-lg p-3 hover:bg-muted/40 transition-colors"
+                    className={cn(
+                      'w-full text-left border rounded-lg p-3 hover:bg-muted/40 transition-colors',
+                      inc.archivado && 'opacity-70 bg-muted/20'
+                    )}
                   >
                     <div className="flex flex-wrap items-center gap-2 mb-1">
+                      {inc.tipoEvento != null && (
+                        <Badge
+                          className={
+                            inc.tipoEvento === 'mantenimiento' ? 'bg-amber-600' : 'bg-blue-600'
+                          }
+                        >
+                          {tipoEventoLabel(inc.tipoEvento)}
+                        </Badge>
+                      )}
+                      {inc.tipo === 'episodio_cerrado' && (
+                        <Badge variant="outline">Episodio cerrado</Badge>
+                      )}
                       <Badge
-                        className={
-                          inc.tipoEvento === 'mantenimiento' ? 'bg-amber-600' : 'bg-blue-600'
+                        variant={
+                          inc.estado === 'pendiente'
+                            ? 'destructive'
+                            : inc.estado === 'cerrado'
+                              ? 'secondary'
+                              : 'secondary'
                         }
                       >
-                        {tipoEventoLabel(inc.tipoEvento)}
+                        {inc.estado === 'pendiente'
+                          ? 'Pendiente'
+                          : inc.estado === 'cerrado'
+                            ? 'Cerrado'
+                            : 'Atendida'}
                       </Badge>
-                      <Badge variant={inc.estado === 'pendiente' ? 'destructive' : 'secondary'}>
-                        {inc.estado === 'pendiente' ? 'Pendiente' : 'Atendida'}
-                      </Badge>
-                      <Badge variant="outline">{inc.umbralHoras} h fuera de rango</Badge>
+                      {inc.umbralHoras != null && (
+                        <Badge variant="outline">
+                          {formatUmbralAlerta(inc.umbralHoras)} fuera de rango
+                        </Badge>
+                      )}
+                      {inc.archivado && (
+                        <Badge variant="outline" className="gap-1">
+                          <ArchiveRestore className="h-3 w-3" />
+                          Archivado
+                        </Badge>
+                      )}
                     </div>
-                    <p className="font-medium text-sm">
+                    <p className="font-medium text-sm">{incidenteTitulo(inc)}</p>
+                    <p className="text-sm text-muted-foreground">
                       {inc.descripcionEquipo} · {inc.nombrePlataforma}
                     </p>
                     <p className="text-xs text-muted-foreground mt-1">
-                      {inc.grupoNombre} · IMEI {inc.imei} ·{' '}
+                      {inc.grupoNombre != null && <>{inc.grupoNombre} · </>}
+                      IMEI {inc.imei} ·{' '}
                       {new Date(inc.enviadoAt).toLocaleString('es-PE', {
                         timeZone: 'America/Lima',
                       })}
@@ -262,39 +363,80 @@ export default function IncidentesCorreo() {
           {detalle != null && (
             <>
               <DialogHeader>
-                <DialogTitle className="text-base">{detalle.subject}</DialogTitle>
+                <DialogTitle className="text-base">{incidenteTitulo(detalle)}</DialogTitle>
               </DialogHeader>
               <div className="space-y-3 text-sm">
                 <div className="flex flex-wrap gap-2">
+                  {detalle.tipoEvento != null && (
+                    <Badge
+                      className={
+                        detalle.tipoEvento === 'mantenimiento' ? 'bg-amber-600' : 'bg-blue-600'
+                      }
+                    >
+                      {tipoEventoLabel(detalle.tipoEvento)}
+                    </Badge>
+                  )}
                   <Badge
-                    className={
-                      detalle.tipoEvento === 'mantenimiento' ? 'bg-amber-600' : 'bg-blue-600'
-                    }
+                    variant={detalle.estado === 'pendiente' ? 'destructive' : 'secondary'}
                   >
-                    {tipoEventoLabel(detalle.tipoEvento)}
+                    {detalle.estado === 'pendiente'
+                      ? 'Pendiente'
+                      : detalle.estado === 'cerrado'
+                        ? 'Cerrado'
+                        : 'Atendida'}
                   </Badge>
-                  <Badge variant={detalle.estado === 'pendiente' ? 'destructive' : 'secondary'}>
-                    {detalle.estado === 'pendiente' ? 'Pendiente' : 'Atendida'}
-                  </Badge>
+                  {detalle.archivado && <Badge variant="outline">Archivado</Badge>}
                 </div>
-                <p>
-                  <strong>Día:</strong> {diaRelativoLabel(detalle.diaCalendario, meta.hoy, meta.ayer)}{' '}
-                  ({detalle.diaCalendario})
-                </p>
-                <p>
-                  <strong>Umbral:</strong> más de {detalle.umbralHoras} h (~{detalle.horasFueraRango}{' '}
-                  h acumuladas)
-                </p>
+                {detalle.diaCalendario != null && (
+                  <p>
+                    <strong>Día:</strong>{' '}
+                    {diaRelativoLabel(detalle.diaCalendario, meta.hoy, meta.ayer)} (
+                    {detalle.diaCalendario})
+                  </p>
+                )}
+                {detalle.umbralHoras != null && (
+                  <p>
+                    <strong>Umbral:</strong> más de {formatUmbralAlerta(detalle.umbralHoras)}
+                    {detalle.horasFueraRango != null && (
+                      <> (~{detalle.horasFueraRango} h acumuladas)</>
+                    )}
+                  </p>
+                )}
+                {detalle.durationHours != null && detalle.since != null && (
+                  <p>
+                    <strong>Intervalo:</strong>{' '}
+                    {new Date(detalle.since).toLocaleString('es-PE', {
+                      timeZone: 'America/Lima',
+                    })}{' '}
+                    →{' '}
+                    {detalle.endedAt
+                      ? new Date(detalle.endedAt).toLocaleString('es-PE', {
+                          timeZone: 'America/Lima',
+                        })
+                      : '—'}{' '}
+                    (~{detalle.durationHours} h)
+                  </p>
+                )}
                 <p>
                   <strong>Equipo:</strong> {detalle.descripcionEquipo} / {detalle.nombrePlataforma}
                 </p>
-                <p>
-                  <strong>Destinatarios:</strong> {detalle.destinatarios.join(', ')}
-                </p>
+                {(detalle.destinatarios?.length ?? 0) > 0 && (
+                  <p>
+                    <strong>Destinatarios:</strong> {detalle.destinatarios!.join(', ')}
+                  </p>
+                )}
                 {detalle.atendidaAt != null && (
                   <p className="text-emerald-700">
                     Atendida por {detalle.atendidaPor} el{' '}
                     {new Date(detalle.atendidaAt).toLocaleString('es-PE', {
+                      timeZone: 'America/Lima',
+                    })}
+                  </p>
+                )}
+                {detalle.archivadoAt != null && (
+                  <p className="text-muted-foreground">
+                    Archivado por {detalle.archivadoPor ?? '—'} el{' '}
+                    {new Date(detalle.archivadoAt).toLocaleString('es-PE', {
                       timeZone: 'America/Lima',
                     })}
                   </p>
@@ -326,15 +468,15 @@ export default function IncidentesCorreo() {
                 )}
               </div>
               <DialogFooter className="flex-col sm:flex-row gap-2">
-                {esSuperUser && (
+                {esSuperUser && !detalle.archivado && (
                   <Button
-                    variant="destructive"
+                    variant="outline"
                     disabled={accionando}
-                    onClick={() => setEliminarOpen(true)}
+                    onClick={() => setArchivarOpen(true)}
                     className="sm:mr-auto"
                   >
-                    <Trash2 className="h-4 w-4 mr-2" />
-                    Eliminar
+                    <Archive className="h-4 w-4 mr-2" />
+                    Archivar
                   </Button>
                 )}
                 {detalle.estado === 'pendiente' && (
@@ -359,12 +501,12 @@ export default function IncidentesCorreo() {
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={eliminarOpen} onOpenChange={setEliminarOpen}>
+      <AlertDialog open={archivarOpen} onOpenChange={setArchivarOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>¿Eliminar incidente?</AlertDialogTitle>
+            <AlertDialogTitle>¿Archivar incidente?</AlertDialogTitle>
             <AlertDialogDescription>
-              Se borrará permanentemente del servidor. Solo superusuario puede hacer esto.
+              El registro permanece en la base de datos. Puede verlo activando «Ver archivados».
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -373,11 +515,34 @@ export default function IncidentesCorreo() {
               disabled={accionando}
               onClick={(e) => {
                 e.preventDefault();
-                void handleEliminar();
+                void handleArchivar();
               }}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {accionando ? 'Eliminando…' : 'Eliminar'}
+              {accionando ? 'Archivando…' : 'Archivar'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={archivarTodosOpen} onOpenChange={setArchivarTodosOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Archivar todos los incidentes?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Se ocultarán de la lista principal pero no se eliminarán. Use «Ver archivados» para
+              consultarlos después.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={accionando}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={accionando}
+              onClick={(e) => {
+                e.preventDefault();
+                void handleArchivarTodos();
+              }}
+            >
+              {accionando ? 'Archivando…' : 'Archivar todos'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

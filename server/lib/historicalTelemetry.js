@@ -3,7 +3,7 @@ const STARCOOL_BASE = process.env.STARCOOL_API_BASE ?? 'http://161.132.206.104:9
 
 import { formatoFechaQueryApi } from './timezone.js';
 import { getMargenesSetpoint, toleranciaSetpointDefault } from './rangoTemperatura.js';
-import { defrostActivoEfectivo, filaDefrostEfectivo, isEquipoEncendido } from './powerState.js';
+import { defrostActivoEfectivo, filaDefrostEfectivo } from './powerState.js';
 
 const MS_HORA = 60 * 60 * 1000;
 export const HISTORICAL_WINDOW_HOURS = 12;
@@ -120,19 +120,96 @@ export function effectiveEnRangoFromDispositivo(dispositivo, rangoOpts = null) {
 }
 
 /**
- * Inicio del episodio **continuo actual** fuera de rango efectivo (hacia atrás desde ahora).
- * Se detiene en el primer punto en rango o dato nulo (no une episodios separados por defrost).
+ * Evalúa en/fuera de rango para **alertas por correo**.
+ * `return_air` es la guía; el suministro en banda no anula un retorno fuera de banda.
+ * Defrost con equipo ON no cuenta como fuera de rango.
+ * @returns {boolean | null} null = sin dato o equipo OFF en fila
  */
-export function resolveOutOfRangeSince(datos, referencia = new Date(), rangoOpts = null) {
-  const sorted = [...(datos ?? [])]
+export function rowEnRangoParaAlerta(row, rangoOpts = null) {
+  if (row == null) return null;
+  if (row.power_state === 0) return null;
+  if (filaDefrostEfectivo(row)) return true;
+
+  const retOk = enBandaSetpoint(row.return_air, row.set_point, rangoOpts);
+  if (retOk === true) return true;
+  if (retOk === false) return false;
+  return null;
+}
+
+/**
+ * Último estado del dispositivo con la misma lógica que alertas (return_air guía).
+ */
+export function effectiveEnRangoAlertaFromDispositivo(dispositivo, rangoOpts = null) {
+  if (dispositivo == null) return null;
+  if (defrostActivoEfectivo(dispositivo)) return true;
+
+  const d = dispositivo.ultimo_dato ?? {};
+  if (d.power_state === 0) return null;
+
+  return rowEnRangoParaAlerta(
+    {
+      power_state: d.power_state,
+      en_defrost: dispositivo.en_defrost,
+      set_point: d.set_point,
+      return_air: d.return_air,
+    },
+    rangoOpts
+  );
+}
+
+function sortHistorialConEffective(datos, evalFn, rangoOpts) {
+  return [...(datos ?? [])]
     .map((row) => ({
       row,
       ts: timestampRegistro(row),
-      effective: rowEnRangoEffective(row, rangoOpts),
+      effective: evalFn(row, rangoOpts),
     }))
     .filter((x) => !Number.isNaN(x.ts))
     .sort((a, b) => a.ts - b.ts);
+}
 
+/**
+ * Intervalos fuera de rango (menor → mayor) para trazabilidad de incidentes.
+ * @returns {{ since: string, until: string | null, durationHours: number }[]}
+ */
+export function computeOutOfRangeIntervals(datos, rangoOpts = null, referencia = new Date()) {
+  const sorted = sortHistorialConEffective(datos, rowEnRangoParaAlerta, rangoOpts);
+  const intervals = [];
+  let open = null;
+
+  for (const { ts, effective, row } of sorted) {
+    if (effective === false) {
+      if (open == null) {
+        open = { sinceTs: ts, sinceIso: new Date(ts).toISOString() };
+      }
+      continue;
+    }
+    if (effective === true && open != null) {
+      intervals.push({
+        since: open.sinceIso,
+        until: new Date(ts).toISOString(),
+        durationHours:
+          Math.round(((ts - open.sinceTs) / MS_HORA) * 10) / 10,
+      });
+      open = null;
+    }
+  }
+
+  if (open != null) {
+    const untilTs = referencia.getTime();
+    intervals.push({
+      since: open.sinceIso,
+      until: null,
+      durationHours:
+        Math.round(((untilTs - open.sinceTs) / MS_HORA) * 10) / 10,
+    });
+  }
+
+  return intervals;
+}
+
+function resolveOutOfRangeSinceWithEval(datos, referencia, rangoOpts, evalFn) {
+  const sorted = sortHistorialConEffective(datos, evalFn, rangoOpts);
   if (sorted.length === 0) return null;
 
   const latest = sorted[sorted.length - 1];
@@ -154,11 +231,26 @@ export function resolveOutOfRangeSince(datos, referencia = new Date(), rangoOpts
 }
 
 /**
+ * Inicio del episodio continuo actual fuera de rango para alertas (return_air guía).
+ */
+export function resolveAlertOutOfRangeSince(datos, referencia = new Date(), rangoOpts = null) {
+  return resolveOutOfRangeSinceWithEval(datos, referencia, rangoOpts, rowEnRangoParaAlerta);
+}
+
+/**
+ * Inicio del episodio **continuo actual** fuera de rango efectivo (hacia atrás desde ahora).
+ * Se detiene en el primer punto en rango o dato nulo (no une episodios separados por defrost).
+ */
+export function resolveOutOfRangeSince(datos, referencia = new Date(), rangoOpts = null) {
+  return resolveOutOfRangeSinceWithEval(datos, referencia, rangoOpts, rowEnRangoEffective);
+}
+
+/**
  * Ajusta o invalida la referencia persistida según historial reciente.
  * @returns {{ since: string, resetUmbrales: boolean } | null} null = equipo recuperado (en rango)
  */
 export function reconcileEpisodeReference(episode, datos, now = new Date(), rangoOpts = null) {
-  const resolved = resolveOutOfRangeSince(datos, now, rangoOpts);
+  const resolved = resolveAlertOutOfRangeSince(datos, now, rangoOpts);
   if (resolved == null) return null;
 
   const prev = new Date(episode.since).getTime();
@@ -191,6 +283,51 @@ export async function fetchHistorialUltimasHoras(
     throw new Error(json?.message ?? 'Respuesta de historial inválida');
   }
   return json.data;
+}
+
+/**
+ * Intervalos con equipo apagado (power_state 0), ordenados cronológicamente.
+ * @returns {{ since: string, until: string | null, durationHours: number }[]}
+ */
+export function computeApagadoIntervals(datos, referencia = new Date()) {
+  const sorted = [...(datos ?? [])]
+    .map((row) => ({
+      ts: timestampRegistro(row),
+      apagado: row.power_state === 0,
+    }))
+    .filter((x) => !Number.isNaN(x.ts))
+    .sort((a, b) => a.ts - b.ts);
+
+  const intervals = [];
+  let open = null;
+
+  for (const { ts, apagado } of sorted) {
+    if (apagado) {
+      if (open == null) {
+        open = { sinceTs: ts, sinceIso: new Date(ts).toISOString() };
+      }
+      continue;
+    }
+    if (!apagado && open != null) {
+      intervals.push({
+        since: open.sinceIso,
+        until: new Date(ts).toISOString(),
+        durationHours: Math.round(((ts - open.sinceTs) / MS_HORA) * 10) / 10,
+      });
+      open = null;
+    }
+  }
+
+  if (open != null) {
+    const untilTs = referencia.getTime();
+    intervals.push({
+      since: open.sinceIso,
+      until: null,
+      durationHours: Math.round(((untilTs - open.sinceTs) / MS_HORA) * 10) / 10,
+    });
+  }
+
+  return intervals;
 }
 
 export function horasDesdeReferencia(sinceIso, now = new Date()) {

@@ -38,9 +38,17 @@ export function uid(prefix) {
 
 export const DEFAULT_UMBRALES = Array.from({ length: 23 }, (_, i) => i + 2);
 
+export const UMBRAL_ALERTA_30_MIN = 0.5;
+
 export function normalizeUmbrales(list) {
   const src = Array.isArray(list) && list.length ? list : DEFAULT_UMBRALES;
   return [...new Set(src.filter((h) => h >= 2 && h <= 24))].sort((a, b) => a - b);
+}
+
+/** Etiqueta legible para umbral (0.5 → 30 min). */
+export function formatUmbralHoras(h) {
+  if (h === UMBRAL_ALERTA_30_MIN) return '30 min';
+  return `${h} h`;
 }
 
 export { todayKey, yesterdayKey, formatoFechaQueryApi, formatDateTimeTz, formatDateSubjectTz, CORREO_TZ } from './timezone.js';

@@ -18,6 +18,9 @@ import {
   getAlertStateView,
   refreshDeviceReferenceFromHistorial,
   applyManualDeviceReference,
+  archiveIncidente,
+  archiveAllIncidentes,
+  getDeviceEventosView,
 } from './lib/alertEngine.js';
 import { getSmtpConfig, saveSmtpConfig, smtpPublicView } from './lib/smtpRepository.js';
 import { mergeDeviceNames, getDeviceNameByImei } from './lib/deviceNamesRepository.js';
@@ -58,7 +61,9 @@ app.get('/reefer/api/correo/status', (_req, res) => {
     smtpUpdatedAt: smtp?.updatedAt ?? null,
     gruposActivos: grupos.filter((g) => g.enabled).length,
     lastRun: getLastRun(),
-    incidentesPendientes: getIncidentes().filter((i) => i.estado === 'pendiente').length,
+    incidentesPendientes: getIncidentes().filter(
+      (i) => i.estado === 'pendiente' && i.archivado !== true
+    ).length,
   });
 });
 
@@ -128,13 +133,16 @@ app.get('/reefer/api/correo/envios', (req, res) => {
 });
 
 app.get('/reefer/api/correo/incidentes', (req, res) => {
-  const { imei, rowKey, estado, dia } = req.query;
+  const { imei, rowKey, estado, dia, incluirArchivados } = req.query;
   const imeis = typeof imei === 'string' && imei ? imei.split(',') : null;
   const rowKeys = typeof rowKey === 'string' && rowKey ? rowKey.split(',') : null;
   let list = getIncidentes();
+  if (incluirArchivados !== 'true') {
+    list = list.filter((i) => i.archivado !== true);
+  }
   if (rowKeys) list = list.filter((i) => rowKeys.includes(i.rowKey));
   else if (imeis) list = list.filter((i) => imeis.includes(i.imei));
-  if (estado === 'pendiente' || estado === 'atendida') {
+  if (estado === 'pendiente' || estado === 'atendida' || estado === 'cerrado') {
     list = list.filter((i) => i.estado === estado);
   }
   if (typeof dia === 'string' && dia) {
@@ -149,18 +157,31 @@ app.get('/reefer/api/correo/incidentes', (req, res) => {
   });
 });
 
+app.post('/reefer/api/correo/incidentes/archivar-todos', (req, res) => {
+  if (req.headers['x-ztrack-super-user'] !== 'true') {
+    return res.status(403).json({ ok: false, error: 'Solo superusuario puede archivar incidentes' });
+  }
+  try {
+    const result = archiveAllIncidentes(getUser(req));
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 app.delete('/reefer/api/correo/incidentes/:id', (req, res) => {
   if (req.headers['x-ztrack-super-user'] !== 'true') {
-    return res.status(403).json({ ok: false, error: 'Solo superusuario puede eliminar incidentes' });
+    return res.status(403).json({ ok: false, error: 'Solo superusuario puede archivar incidentes' });
   }
-  const all = getIncidentes();
-  const idx = all.findIndex((i) => i.id === req.params.id);
-  if (idx === -1) {
-    return res.status(404).json({ ok: false, error: 'Incidente no encontrado' });
+  try {
+    const archived = archiveIncidente(req.params.id, getUser(req));
+    res.json({ ok: true, data: archived });
+  } catch (e) {
+    res.status(e.message === 'Incidente no encontrado' ? 404 : 500).json({
+      ok: false,
+      error: e.message,
+    });
   }
-  all.splice(idx, 1);
-  writeJson('incidentes.json', all);
-  res.json({ ok: true, id: req.params.id });
 });
 
 app.patch('/reefer/api/correo/incidentes/:id', (req, res) => {
@@ -222,6 +243,16 @@ app.get('/reefer/api/correo/alert-config/state', (_req, res) => {
   res.json({ ok: true, data: getAlertStateView() });
 });
 
+app.get('/reefer/api/correo/alert-config/:rowKey/eventos', async (req, res) => {
+  try {
+    const rowKey = decodeURIComponent(req.params.rowKey);
+    const data = await getDeviceEventosView(rowKey);
+    res.json({ ok: true, data });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
 app.put('/reefer/api/correo/alert-config/:rowKey', (req, res) => {
   const rowKey = decodeURIComponent(req.params.rowKey);
   const {
@@ -230,6 +261,7 @@ app.put('/reefer/api/correo/alert-config/:rowKey', (req, res) => {
     useReferenciaManual,
     referenciaManual,
     alerta1Hora,
+    alerta30Minutos,
     useRangoPersonalizado,
     margenInferior,
     margenSuperior,
@@ -241,6 +273,7 @@ app.put('/reefer/api/correo/alert-config/:rowKey', (req, res) => {
       useReferenciaManual: Boolean(useReferenciaManual),
       referenciaManual: referenciaManual ?? undefined,
       alerta1Hora: Boolean(alerta1Hora),
+      alerta30Minutos: Boolean(alerta30Minutos),
       useRangoPersonalizado: Boolean(useRangoPersonalizado),
       margenInferior: margenInferior != null ? Number(margenInferior) : undefined,
       margenSuperior: margenSuperior != null ? Number(margenSuperior) : undefined,
@@ -288,8 +321,8 @@ app.post('/reefer/api/correo/historial/limpiar', (req, res) => {
       cleared.push('ciclos');
     }
     if (limpiarIncidentes) {
-      writeJson('incidentes.json', []);
-      cleared.push('incidentes');
+      const { count } = archiveAllIncidentes(getUser(req));
+      cleared.push(`incidentes (${count} archivados)`);
     }
     if (limpiarEpisodios) {
       writeJson('state.json', { episodes: {}, lastRecovered: {} });

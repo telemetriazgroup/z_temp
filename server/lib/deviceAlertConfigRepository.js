@@ -1,5 +1,4 @@
-import { readJson, writeJson } from './store.js';
-import { normalizeUmbrales } from './store.js';
+import { readJson, writeJson, normalizeUmbrales, UMBRAL_ALERTA_30_MIN } from './store.js';
 
 function readAll() {
   return readJson('deviceAlertConfig.json', {});
@@ -18,6 +17,7 @@ function normalizeMargen(value, fallback = 0.5) {
 function hasPersistedOverrides(entry) {
   if (entry.mode === 'custom') return true;
   if (entry.alerta1Hora) return true;
+  if (entry.alerta30Minutos) return true;
   if (entry.useRangoPersonalizado) return true;
   return false;
 }
@@ -51,6 +51,7 @@ export function saveDeviceAlertConfig(rowKey, patch) {
   }
 
   entry.alerta1Hora = Boolean(entry.alerta1Hora);
+  entry.alerta30Minutos = Boolean(entry.alerta30Minutos);
   entry.useRangoPersonalizado = Boolean(entry.useRangoPersonalizado);
 
   if (entry.useRangoPersonalizado) {
@@ -100,8 +101,13 @@ export function resolveUmbralesForDevice(rowKey, grupoUmbrales) {
   } else {
     base = normalizeUmbrales(grupoUmbrales);
   }
-  if (cfg?.alerta1Hora && !base.includes(1)) {
-    return [1, ...base];
+  const extras = [];
+  if (cfg?.alerta30Minutos && !base.includes(UMBRAL_ALERTA_30_MIN)) {
+    extras.push(UMBRAL_ALERTA_30_MIN);
   }
-  return base;
+  if (cfg?.alerta1Hora && !base.includes(1)) {
+    extras.push(1);
+  }
+  if (extras.length === 0) return base;
+  return [...extras, ...base].sort((a, b) => a - b);
 }

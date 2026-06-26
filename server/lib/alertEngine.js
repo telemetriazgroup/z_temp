@@ -5,6 +5,7 @@ import {
   uid,
   normalizeUmbrales,
   todayKey,
+  formatUmbralHoras,
 } from './store.js';
 import { formatDateTimeTz } from './timezone.js';
 import { buildFueraDeRangoEmail, buildApagadoEmail } from './emailBuilder.js';
@@ -15,8 +16,11 @@ import { resolveUmbralesForDevice, getDeviceAlertConfig, getDeviceAlertConfigMap
 import { isEquipoApagado, isEquipoEncendido, defrostActivoEfectivo } from './powerState.js';
 import {
   fetchHistorialUltimasHoras,
-  resolveOutOfRangeSince,
-  effectiveEnRangoFromDispositivo,
+  resolveAlertOutOfRangeSince,
+  effectiveEnRangoAlertaFromDispositivo,
+  reconcileEpisodeReference,
+  computeOutOfRangeIntervals,
+  computeApagadoIntervals,
   horasDesdeReferencia,
   horasEnterasDesdeReferencia,
   HISTORICAL_WINDOW_HOURS,
@@ -40,19 +44,49 @@ function getEpisode(state, rowKey) {
   return state.episodes?.[rowKey] ?? null;
 }
 
-function clearEpisode(state, rowKey, now) {
+function clearEpisode(state, rowKey, now, meta = {}) {
   const ep = state.episodes?.[rowKey];
   if (!ep) return null;
   const endedAt = now.toISOString();
   const durationHours = horasDesdeReferencia(ep.since, now);
+  const sentUmbrales = [...ensureSentUmbrales(ep)];
   if (!state.lastRecovered) state.lastRecovered = {};
-  state.lastRecovered[rowKey] = {
+  const recovered = {
     since: ep.since,
     endedAt,
     durationHours: Math.round(durationHours * 10) / 10,
+    kind: episodeKind(ep),
+    sentUmbrales,
+    ...meta,
   };
+  state.lastRecovered[rowKey] = recovered;
+
+  if (episodeKind(ep) === 'fuera_rango') {
+    addIncidente({
+      id: uid('inc'),
+      tipo: 'episodio_cerrado',
+      alertKind: 'fuera_rango',
+      rowKey,
+      imei: meta.imei ?? '—',
+      codigo: meta.codigo ?? '—',
+      descripcionEquipo: meta.descripcionEquipo ?? rowKey,
+      nombrePlataforma: meta.nombrePlataforma ?? '—',
+      grupoId: meta.grupoId ?? null,
+      grupoNombre: meta.grupoNombre ?? null,
+      diaCalendario: todayKey(now),
+      since: ep.since,
+      endedAt,
+      durationHours: recovered.durationHours,
+      umbralesEnviados: sentUmbrales,
+      referenciaDesde: ep.since,
+      estado: 'cerrado',
+      enviadoAt: endedAt,
+      comentarios: [],
+    });
+  }
+
   delete state.episodes[rowKey];
-  return state.lastRecovered[rowKey];
+  return recovered;
 }
 
 function episodeKind(episode) {
@@ -164,16 +198,21 @@ function markUmbralEnviado(episode, umbralHoras, umbrales) {
 }
 
 /** Solo el mayor umbral alcanzado y aún no notificado en el episodio. */
-function pickUmbralPendiente(umbrales, horasEnteras, sentUmbrales) {
-  const eligible = umbrales.filter((u) => horasEnteras >= u && !sentUmbrales.includes(u));
+function pickUmbralPendiente(umbrales, horasTranscurridas, sentUmbrales) {
+  const eligible = umbrales.filter((u) => horasTranscurridas >= u && !sentUmbrales.includes(u));
   if (eligible.length === 0) return null;
   return Math.max(...eligible);
+}
+
+function proximoUmbralPendiente(umbrales, horasTranscurridas, sentUmbrales) {
+  return umbrales.find((u) => horasTranscurridas < u && !sentUmbrales.includes(u)) ?? null;
 }
 
 async function ensureOutOfRangeReference(state, assignment, dispositivo, now) {
   const cfg = getDeviceAlertConfig(assignment.rowKey);
   const rangoOpts = resolveRangoOptsForDevice(assignment.rowKey);
   let episode = getEpisode(state, assignment.rowKey);
+  episode = episode && episodeKind(episode) === 'fuera_rango' ? episode : null;
 
   if (cfg?.mode === 'custom' && cfg.useReferenciaManual && cfg.referenciaManual) {
     if (!episode) {
@@ -193,14 +232,6 @@ async function ensureOutOfRangeReference(state, assignment, dispositivo, now) {
     };
   }
 
-  if (episode?.referenceLocked && episode.since) {
-    return {
-      episode,
-      consultaHistorial: false,
-      criterioRef: `Referencia fija ${formatRef(episode.since)}. Enviados: ${ensureSentUmbrales(episode).join(', ') || 'ninguno'}.`,
-    };
-  }
-
   const codigo = dispositivo.codigo ?? assignment.codigo;
   const hist = await fetchHistorialUltimasHoras(
     codigo,
@@ -208,26 +239,66 @@ async function ensureOutOfRangeReference(state, assignment, dispositivo, now) {
     HISTORICAL_WINDOW_HOURS,
     now
   );
-  const since = resolveOutOfRangeSince(hist.datos, now, rangoOpts);
+  const since = resolveAlertOutOfRangeSince(hist.datos, now, rangoOpts);
 
   if (since == null) {
-    if (episode) clearEpisode(state, assignment.rowKey, now);
+    if (episode) {
+      const { dispositivoReeferId, nombrePlataforma } = resolveLabels(assignment, dispositivo);
+      clearEpisode(state, assignment.rowKey, now, {
+        imei: dispositivo.imei,
+        codigo: dispositivo.codigo ?? '—',
+        descripcionEquipo: dispositivoReeferId,
+        nombrePlataforma,
+        grupoId: null,
+        grupoNombre: null,
+      });
+    }
     return {
       episode: null,
       recovered: true,
       consultaHistorial: true,
-      criterioRef: 'Consulta 12 h: EN RANGO efectivo. Episodio cerrado; contador en 0.',
+      criterioRef:
+        'Consulta 12 h (return_air): EN RANGO. Episodio cerrado; contador de umbrales en 0.',
     };
   }
 
   if (episode) {
-    episode.since = since;
+    const reconciled = reconcileEpisodeReference(episode, hist.datos, now, rangoOpts);
+    if (reconciled == null) {
+      const { dispositivoReeferId, nombrePlataforma } = resolveLabels(assignment, dispositivo);
+      clearEpisode(state, assignment.rowKey, now, {
+        imei: dispositivo.imei,
+        codigo: dispositivo.codigo ?? '—',
+        descripcionEquipo: dispositivoReeferId,
+        nombrePlataforma,
+      });
+      return {
+        episode: null,
+        recovered: true,
+        consultaHistorial: true,
+        criterioRef: 'Historial indica recuperación EN RANGO. Episodio cerrado.',
+      };
+    }
+
+    if (reconciled.resetUmbrales) {
+      episode.since = reconciled.since;
+      episode.sentUmbrales = [];
+      episode.referenceLocked = true;
+      episode.historialConsultadoAt = now.toISOString();
+      return {
+        episode,
+        consultaHistorial: true,
+        criterioRef: `Nuevo incidente fuera de rango desde ${formatRef(reconciled.since)}. Umbrales reiniciados (2 h, 3 h…).`,
+      };
+    }
+
+    episode.since = reconciled.since;
     episode.referenceLocked = true;
     episode.historialConsultadoAt = now.toISOString();
     return {
       episode,
       consultaHistorial: true,
-      criterioRef: `Referencia fijada ${formatRef(since)}. Umbrales enviados conservados: ${ensureSentUmbrales(episode).join(', ') || 'ninguno'}.`,
+      criterioRef: `Incidente activo desde ${formatRef(episode.since)}. Enviados: ${ensureSentUmbrales(episode).join(', ') || 'ninguno'}.`,
     };
   }
 
@@ -238,7 +309,7 @@ async function ensureOutOfRangeReference(state, assignment, dispositivo, now) {
   return {
     episode,
     consultaHistorial: true,
-    criterioRef: `Referencia fijada ${formatRef(since)} (consulta 12 h única hasta recuperación EN RANGO).`,
+    criterioRef: `Nuevo incidente desde ${formatRef(since)} (consulta 12 h, return_air guía).`,
   };
 }
 
@@ -394,7 +465,7 @@ export async function runAlertCycle(options = {}) {
 
       const rangoOpts = resolveRangoOptsForDevice(assignment.rowKey);
       const enRangoRaw = dispositivo.en_rango;
-      const enRangoEfectivo = effectiveEnRangoFromDispositivo(dispositivo, rangoOpts);
+      const enRangoEfectivo = effectiveEnRangoAlertaFromDispositivo(dispositivo, rangoOpts);
       const umbrales = resolveUmbralesForDevice(assignment.rowKey, assignment.umbralesHoras);
       const telem = {
         setPoint: dispositivo.ultimo_dato?.set_point ?? null,
@@ -409,12 +480,12 @@ export async function runAlertCycle(options = {}) {
       if (isEquipoApagado(dispositivo) === true) {
         clearEpisodeIfKind(state, assignment.rowKey, 'fuera_rango', now);
         const episode = ensureApagadoEpisode(state, assignment.rowKey, now);
-        const horasApagado = horasDesdeReferencia(episode.since, now);
+        const horasTranscurridas = horasDesdeReferencia(episode.since, now);
         const horasEnteras = horasEnterasDesdeReferencia(episode.since, now);
+        const horasTexto = `${Math.round(horasTranscurridas * 10) / 10} h`;
         const sentUmbrales = episode.sentUmbrales ?? [];
-        const umbralHoras = pickUmbralPendiente(umbrales, horasEnteras, sentUmbrales);
-        const nextUmbral = umbrales.find((u) => horasEnteras < u && !sentUmbrales.includes(u));
-        const horasTexto = `${Math.round(horasApagado * 10) / 10} h`;
+        const umbralHoras = pickUmbralPendiente(umbrales, horasTranscurridas, sentUmbrales);
+        const nextUmbral = proximoUmbralPendiente(umbrales, horasTranscurridas, sentUmbrales);
         const { dispositivoReeferId, nombrePlataforma } = resolveLabels(assignment, dispositivo);
         const tipoEvento =
           assignment.tipoEvento === 'mantenimiento' ? 'mantenimiento' : 'operaciones';
@@ -422,8 +493,8 @@ export async function runAlertCycle(options = {}) {
         if (umbralHoras == null || umbralYaEnviado(episode, umbralHoras)) {
           const criterio =
             sentUmbrales.length > 0
-              ? `APAGADO (power_state 0) ${horasTexto} desde ${formatRef(episode.since)}. Último aviso apagado: ${sentUmbrales[sentUmbrales.length - 1]} h. ${nextUmbral != null ? `Esperando ${nextUmbral} h.` : 'Sin más umbrales.'} No se evalúa fuera de rango mientras esté OFF.`
-              : `APAGADO (power_state 0) ${horasTexto} desde ${formatRef(episode.since)}. ${nextUmbral != null ? `Próximo aviso al alcanzar ${nextUmbral} h.` : 'Sin umbrales pendientes.'} Fuera de rango solo con equipo ON.`;
+              ? `APAGADO (power_state 0) ${horasTexto} desde ${formatRef(episode.since)}. Último aviso apagado: ${formatUmbralHoras(sentUmbrales[sentUmbrales.length - 1])}. ${nextUmbral != null ? `Esperando ${formatUmbralHoras(nextUmbral)}.` : 'Sin más umbrales.'} No se evalúa fuera de rango mientras esté OFF.`
+              : `APAGADO (power_state 0) ${horasTexto} desde ${formatRef(episode.since)}. ${nextUmbral != null ? `Próximo aviso al alcanzar ${formatUmbralHoras(nextUmbral)}.` : 'Sin umbrales pendientes.'} Fuera de rango solo con equipo ON.`;
           pushEval(evaluaciones, {
             ...base,
             estado: 'equipo_apagado',
@@ -455,7 +526,7 @@ export async function runAlertCycle(options = {}) {
           tipoEvento,
         });
         const envioId = uid('envio');
-        const criterioEnvio = `APAGADO ${horasTexto} desde ${formatRef(episode.since)} (GMT-5). Se envía alerta APAGADO umbral ${umbralHoras} h. No se envía fuera de rango. Destino: ${grupo.emails.join(', ')}.`;
+        const criterioEnvio = `APAGADO ${horasTexto} desde ${formatRef(episode.since)} (GMT-5). Se envía alerta APAGADO umbral ${formatUmbralHoras(umbralHoras)}. No se envía fuera de rango. Destino: ${grupo.emails.join(', ')}.`;
 
         try {
           const messageId = await sendMail(smtp, grupo.emails, content);
@@ -484,6 +555,7 @@ export async function runAlertCycle(options = {}) {
           const incidenteId = uid('inc');
           addIncidente({
             id: incidenteId,
+            tipo: 'correo_enviado',
             envioId,
             alertKind: 'apagado',
             grupoId: grupo.id,
@@ -544,18 +616,25 @@ export async function runAlertCycle(options = {}) {
       }
 
       if (enRangoEfectivo === true) {
-        const recovered = clearEpisode(state, assignment.rowKey, now);
+        const { dispositivoReeferId, nombrePlataforma } = resolveLabels(assignment, dispositivo);
+        const recovered = clearEpisode(state, assignment.rowKey, now, {
+          imei: dispositivo.imei,
+          codigo: dispositivo.codigo ?? '—',
+          descripcionEquipo: dispositivoReeferId,
+          nombrePlataforma,
+          grupoId: grupo.id,
+          grupoNombre: grupo.nombre,
+        });
         let criterio;
-        if (recovered) {
-          criterio = `EN RANGO efectivo. Episodio cerrado (estuvo fuera desde ${formatRef(recovered.since)} hasta ${formatRef(recovered.endedAt)}, ~${recovered.durationHours} h). Contador en 0.`;
+        if (recovered?.kind === 'fuera_rango') {
+          criterio = `EN RANGO (return_air). Incidente cerrado (fuera desde ${formatRef(recovered.since)} hasta ${formatRef(recovered.endedAt)}, ~${recovered.durationHours} h). Umbrales reiniciados.`;
+        } else if (recovered) {
+          criterio = `EN RANGO (return_air). Episodio ${recovered.kind} cerrado. Contador en 0.`;
         } else if (defrostActivoEfectivo(dispositivo)) {
           criterio =
-            'EN RANGO efectivo (defrost activo con equipo ON). No se alerta fuera de rango.';
-        } else if (enRangoRaw === false) {
-          criterio =
-            'EN RANGO efectivo (suministro en banda pese a retorno elevado, p. ej. defrost). Contador en 0.';
+            'EN RANGO (defrost activo con equipo ON). No se alerta fuera de rango.';
         } else {
-          criterio = 'EN RANGO. Temperatura dentro de parámetros. No se envía correo.';
+          criterio = 'EN RANGO (return_air). Temperatura dentro de parámetros. No se envía correo.';
         }
         pushEval(evaluaciones, {
           ...base,
@@ -632,17 +711,18 @@ export async function runAlertCycle(options = {}) {
       }
 
       const horasFuera = horasDesdeReferencia(episode.since, now);
+      const horasTranscurridas = horasFuera;
       const horasEnteras = horasEnterasDesdeReferencia(episode.since, now);
       const sentUmbrales = episode.sentUmbrales ?? [];
-      const umbralHoras = pickUmbralPendiente(umbrales, horasEnteras, sentUmbrales);
-      const nextUmbral = umbrales.find((u) => horasEnteras < u && !sentUmbrales.includes(u));
+      const umbralHoras = pickUmbralPendiente(umbrales, horasTranscurridas, sentUmbrales);
+      const nextUmbral = proximoUmbralPendiente(umbrales, horasTranscurridas, sentUmbrales);
       const horasTexto = `${Math.round(horasFuera * 10) / 10} h`;
 
       if (umbralHoras == null || umbralYaEnviado(episode, umbralHoras)) {
         let criterio;
         if (sentUmbrales.length > 0) {
           const ultimo = sentUmbrales[sentUmbrales.length - 1];
-          criterio = `FUERA DE RANGO ${horasTexto} desde ${formatRef(episode.since)} (GMT-5). Último aviso: ${ultimo} h. ${nextUmbral != null ? `Esperando ${nextUmbral} h (${(nextUmbral - horasFuera).toFixed(1)} h restantes).` : 'Sin más umbrales.'} ${criterioRef}`;
+          criterio = `FUERA DE RANGO ${horasTexto} desde ${formatRef(episode.since)} (GMT-5). Último aviso: ${formatUmbralHoras(ultimo)}. ${nextUmbral != null ? `Esperando ${formatUmbralHoras(nextUmbral)} (${Math.max(0, nextUmbral - horasFuera).toFixed(1)} h restantes).` : 'Sin más umbrales.'} ${criterioRef}`;
         } else if (nextUmbral != null) {
           criterio = `FUERA DE RANGO ${horasTexto} desde ${formatRef(episode.since)} (GMT-5). Próximo aviso al alcanzar ${nextUmbral} h (faltan ~${Math.max(0, nextUmbral - horasFuera).toFixed(1)} h). ${criterioRef}`;
         } else {
@@ -686,7 +766,7 @@ export async function runAlertCycle(options = {}) {
         });
 
         const envioId = uid('envio');
-        const criterioEnvio = `FUERA DE RANGO ${horasTexto} desde ${formatRef(episode.since)} (GMT-5). Se envía solo umbral ${umbralHoras} h (tipo ${tipoEvento}). ${consultaHistorial ? 'Referencia obtenida por consulta 12 h (fijada).' : 'Referencia persistida.'} Destino: ${grupo.emails.join(', ')}.`;
+        const criterioEnvio = `FUERA DE RANGO ${horasTexto} desde ${formatRef(episode.since)} (GMT-5). Se envía solo umbral ${formatUmbralHoras(umbralHoras)} (tipo ${tipoEvento}). ${consultaHistorial ? 'Referencia obtenida por consulta 12 h (fijada).' : 'Referencia persistida.'} Destino: ${grupo.emails.join(', ')}.`;
 
         if (umbralYaEnviado(episode, umbralHoras)) {
           pushEval(evaluaciones, {
@@ -701,7 +781,7 @@ export async function runAlertCycle(options = {}) {
             umbralesEnviadosHoy: [...sentUmbrales],
             proximoUmbralHoras: nextUmbral ?? null,
             telemetria: telem,
-            criterio: `Umbral ${umbralHoras} h ya enviado en este episodio. No se repite. ${criterioRef}`,
+            criterio: `Umbral ${formatUmbralHoras(umbralHoras)} ya enviado en este episodio. No se repite. ${criterioRef}`,
           });
           result.resumen.fueraRangoSinEnvio++;
           continue;
@@ -736,6 +816,7 @@ export async function runAlertCycle(options = {}) {
           const incidenteId = uid('inc');
           addIncidente({
             id: incidenteId,
+            tipo: 'correo_enviado',
             envioId,
             alertKind: 'fuera_rango',
             grupoId: grupo.id,
@@ -864,7 +945,8 @@ async function resolveDispositivoForRowKey(rowKey) {
 }
 
 /**
- * Re-analiza historial 12 h y actualiza referencia sin reiniciar umbrales enviados.
+ * Re-analiza historial 12 h y actualiza referencia del incidente activo.
+ * Reinicia umbrales si detecta un nuevo intervalo fuera de rango.
  */
 export async function refreshDeviceReferenceFromHistorial(rowKey) {
   const found = findAssignmentByRowKey(rowKey);
@@ -882,11 +964,14 @@ export async function refreshDeviceReferenceFromHistorial(rowKey) {
     HISTORICAL_WINDOW_HOURS,
     now
   );
-  const since = resolveOutOfRangeSince(hist.datos, now, rangoOpts);
+  const since = resolveAlertOutOfRangeSince(hist.datos, now, rangoOpts);
   const state = getState();
 
   if (since == null) {
-    const recovered = clearEpisode(state, rowKey, now);
+    const recovered = clearEpisode(state, rowKey, now, {
+      imei: dispositivo.imei,
+      codigo: dispositivo.codigo ?? '—',
+    });
     saveState(state);
     return {
       rowKey,
@@ -894,32 +979,56 @@ export async function refreshDeviceReferenceFromHistorial(rowKey) {
       recovered,
       since: null,
       consultaHistorial: true,
-      criterio: 'Re-análisis 12 h: EN RANGO efectivo. Episodio cerrado.',
+      criterio: 'Re-análisis 12 h (return_air): EN RANGO. Episodio cerrado.',
     };
   }
 
   let episode = getEpisode(state, rowKey);
+  if (episode && episodeKind(episode) !== 'fuera_rango') episode = null;
   const prevSent = episode ? [...ensureSentUmbrales(episode)] : [];
+  const reconciled = episode
+    ? reconcileEpisodeReference(episode, hist.datos, now, rangoOpts)
+    : { since, resetUmbrales: true };
+
+  if (reconciled == null) {
+    const recovered = clearEpisode(state, rowKey, now, {
+      imei: dispositivo.imei,
+      codigo: dispositivo.codigo ?? '—',
+    });
+    saveState(state);
+    return {
+      rowKey,
+      episode: null,
+      recovered,
+      since: null,
+      consultaHistorial: true,
+      criterio: 'Re-análisis 12 h: recuperación EN RANGO.',
+    };
+  }
+
+  const nextSent = reconciled.resetUmbrales ? [] : prevSent;
   if (episode) {
-    episode.since = since;
+    episode.since = reconciled.since;
     episode.referenceLocked = true;
     episode.historialConsultadoAt = now.toISOString();
-    episode.sentUmbrales = prevSent;
+    episode.sentUmbrales = nextSent;
   } else {
-    episode = startEpisode(state, rowKey, since, {
+    episode = startEpisode(state, rowKey, reconciled.since, {
       fromHistorial: true,
       historialPuntos: hist.datos?.length ?? 0,
     });
-    episode.sentUmbrales = prevSent;
+    episode.sentUmbrales = nextSent;
   }
 
   saveState(state);
   return {
     rowKey,
     episode,
-    since,
+    since: reconciled.since,
     consultaHistorial: true,
-    criterio: `Referencia actualizada ${formatRef(since)} (re-análisis 12 h). Umbrales conservados: ${prevSent.join(', ') || 'ninguno'}.`,
+    criterio: reconciled.resetUmbrales
+      ? `Nuevo incidente ${formatRef(reconciled.since)}. Umbrales reiniciados.`
+      : `Incidente activo ${formatRef(reconciled.since)}. Umbrales: ${nextSent.join(', ') || 'ninguno'}.`,
   };
 }
 
@@ -960,6 +1069,74 @@ export function applyManualDeviceReference(rowKey, sinceIso, resetSentUmbrales =
   };
 }
 
+export function archiveIncidente(id, usuario = 'sistema') {
+  const all = getIncidentes();
+  const idx = all.findIndex((i) => i.id === id);
+  if (idx === -1) throw new Error('Incidente no encontrado');
+  const now = new Date().toISOString();
+  all[idx] = {
+    ...all[idx],
+    archivado: true,
+    archivadoAt: now,
+    archivadoPor: usuario,
+  };
+  writeJson('incidentes.json', all);
+  return all[idx];
+}
+
+export function archiveAllIncidentes(usuario = 'sistema') {
+  const all = getIncidentes();
+  const now = new Date().toISOString();
+  let count = 0;
+  for (let i = 0; i < all.length; i += 1) {
+    if (all[i].archivado === true) continue;
+    all[i] = {
+      ...all[i],
+      archivado: true,
+      archivadoAt: now,
+      archivadoPor: usuario,
+    };
+    count += 1;
+  }
+  writeJson('incidentes.json', all);
+  return { count, archivadoAt: now };
+}
+
+export async function getDeviceEventosView(rowKey) {
+  const found = findAssignmentByRowKey(rowKey);
+  if (!found) throw new Error('Equipo no encontrado en grupos de correo');
+
+  const dispositivo = await resolveDispositivoForRowKey(rowKey);
+  if (!dispositivo) throw new Error('Equipo sin telemetría actual');
+
+  const now = new Date();
+  const rangoOpts = resolveRangoOptsForDevice(rowKey);
+  const codigo = dispositivo.codigo ?? found.assignment.codigo;
+  const hist = await fetchHistorialUltimasHoras(
+    codigo,
+    dispositivo.imei,
+    HISTORICAL_WINDOW_HOURS,
+    now
+  );
+  const state = getState();
+  const incidentes = getIncidentes()
+    .filter((i) => i.rowKey === rowKey)
+    .slice(0, 80);
+
+  return {
+    rowKey,
+    imei: dispositivo.imei,
+    codigo: dispositivo.codigo ?? found.assignment.codigo ?? '—',
+    episode: state.episodes?.[rowKey] ?? null,
+    lastRecovered: state.lastRecovered?.[rowKey] ?? null,
+    intervalosFueraRango: computeOutOfRangeIntervals(hist.datos, rangoOpts, now),
+    intervalosApagado: computeApagadoIntervals(hist.datos, now),
+    incidentes,
+    historialPuntos: hist.datos?.length ?? 0,
+    consultadoAt: now.toISOString(),
+  };
+}
+
 export function getAlertStateView() {
   const state = getState();
   const configs = getDeviceAlertConfigMap();
@@ -994,4 +1171,7 @@ export {
   getIncidentes,
   addIncidente,
   getCiclos,
+  archiveIncidente,
+  archiveAllIncidentes,
+  getDeviceEventosView,
 };
