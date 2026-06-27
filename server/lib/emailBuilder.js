@@ -1,4 +1,5 @@
 import { formatDateTimeTz, formatDateSubjectTz } from './timezone.js';
+import { formatUmbralHoras } from './store.js';
 
 function fmtTemp(v) {
   if (v == null || Number.isNaN(v)) return '—';
@@ -41,8 +42,8 @@ export function buildFueraDeRangoEmail(params) {
       : '';
 
   const tiempoTexto = esPrueba
-    ? `Simulación: mayor a ${umbralHoras} h ${diaLabel(diaCalendario, hoy)} (~${horasFueraRango} h).`
-    : `Mayor a ${umbralHoras} horas ${diaLabel(diaCalendario, hoy)} (acumulado ~${horasFueraRango} h)${refTexto}.`;
+    ? `Simulación: mayor a ${formatUmbralHoras(umbralHoras)} ${diaLabel(diaCalendario, hoy)} (acumulado ~${horasFueraRango} h).`
+    : `Mayor a ${formatUmbralHoras(umbralHoras)} ${diaLabel(diaCalendario, hoy)} (acumulado ~${horasFueraRango} h)${refTexto}.`;
 
   const intro = esPrueba
     ? 'Se envía este correo de PRUEBA generado por la plataforma ZTRACK.'
@@ -120,8 +121,8 @@ export function buildApagadoEmail(params) {
   const subject = `REEFER ${dispositivoReeferId} - ${nombrePlataforma} - ALERTA ${tipoAlarma} ${fechaAlerta}`;
 
   const tiempoTexto = esPrueba
-    ? `Simulación: equipo apagado más de ${umbralHoras} h ${diaLabel(diaCalendario, hoy)} (~${horasApagado} h).`
-    : `Equipo apagado (power_state 0) más de ${umbralHoras} horas ${diaLabel(diaCalendario, hoy)} (acumulado ~${horasApagado} h). Desde ${formatDateTimeTz(referenciaDesde)} (GMT-5).`;
+    ? `Simulación: equipo apagado más de ${formatUmbralHoras(umbralHoras)} ${diaLabel(diaCalendario, hoy)} (acumulado ~${horasApagado} h).`
+    : `Equipo apagado (power_state 0) más de ${formatUmbralHoras(umbralHoras)} ${diaLabel(diaCalendario, hoy)} (acumulado ~${horasApagado} h). Desde ${formatDateTimeTz(referenciaDesde)} (GMT-5).`;
 
   const intro = esPrueba
     ? 'Se envía este correo de PRUEBA de APAGADO generado por la plataforma ZTRACK.'

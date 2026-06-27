@@ -1,6 +1,7 @@
 #!/bin/sh
 set -e
 
+export TZ="${TZ:-America/Lima}"
 export CORREO_DATA_DIR="${CORREO_DATA_DIR:-/app/server/data}"
 mkdir -p "$CORREO_DATA_DIR"
 

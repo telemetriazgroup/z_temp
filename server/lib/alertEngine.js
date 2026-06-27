@@ -7,7 +7,7 @@ import {
   todayKey,
   formatUmbralHoras,
 } from './store.js';
-import { formatDateTimeTz } from './timezone.js';
+import { formatDateTimeTz, parseTelemetryDate } from './timezone.js';
 import { buildFueraDeRangoEmail, buildApagadoEmail } from './emailBuilder.js';
 import { fetchAllDispositivos, deviceRowKey } from './telemetry.js';
 import { getSmtpConfig } from './smtpRepository.js';
@@ -22,6 +22,8 @@ import {
   computeOutOfRangeIntervals,
   computeApagadoIntervals,
   horasDesdeReferencia,
+  horasDesdeReferenciaEquipo,
+  horasEnterasDesdeReferenciaEquipo,
   horasEnterasDesdeReferencia,
   HISTORICAL_WINDOW_HOURS,
 } from './historicalTelemetry.js';
@@ -197,11 +199,11 @@ function markUmbralEnviado(episode, umbralHoras, umbrales) {
   episode.sentUmbrales.sort((a, b) => a - b);
 }
 
-/** Solo el mayor umbral alcanzado y aún no notificado en el episodio. */
+/** Siguiente umbral alcanzado y aún no notificado (el menor pendiente, p. ej. 2 h antes que 5 h). */
 function pickUmbralPendiente(umbrales, horasTranscurridas, sentUmbrales) {
   const eligible = umbrales.filter((u) => horasTranscurridas >= u && !sentUmbrales.includes(u));
   if (eligible.length === 0) return null;
-  return Math.max(...eligible);
+  return Math.min(...eligible);
 }
 
 function proximoUmbralPendiente(umbrales, horasTranscurridas, sentUmbrales) {
@@ -480,8 +482,8 @@ export async function runAlertCycle(options = {}) {
       if (isEquipoApagado(dispositivo) === true) {
         clearEpisodeIfKind(state, assignment.rowKey, 'fuera_rango', now);
         const episode = ensureApagadoEpisode(state, assignment.rowKey, now);
-        const horasTranscurridas = horasDesdeReferencia(episode.since, now);
-        const horasEnteras = horasEnterasDesdeReferencia(episode.since, now);
+        const horasTranscurridas = horasDesdeReferenciaEquipo(dispositivo, episode.since, now);
+        const horasEnteras = horasEnterasDesdeReferenciaEquipo(dispositivo, episode.since, now);
         const horasTexto = `${Math.round(horasTranscurridas * 10) / 10} h`;
         const sentUmbrales = episode.sentUmbrales ?? [];
         const umbralHoras = pickUmbralPendiente(umbrales, horasTranscurridas, sentUmbrales);
@@ -513,13 +515,14 @@ export async function runAlertCycle(options = {}) {
           continue;
         }
 
+        const horasApagadoReport = Math.round(horasTranscurridas * 10) / 10;
         const content = buildApagadoEmail({
           dispositivo,
           dispositivoReeferId,
           nombrePlataforma,
           cliente: grupo.cliente?.trim() || 'Cliente',
           umbralHoras,
-          horasApagado: horasEnteras,
+          horasApagado: horasApagadoReport,
           diaCalendario: hoy,
           hoy,
           referenciaDesde: episode.since,
@@ -542,7 +545,7 @@ export async function runAlertCycle(options = {}) {
             descripcionEquipo: dispositivoReeferId,
             nombrePlataforma,
             umbralHoras,
-            horasFueraRango: horasEnteras,
+            horasFueraRango: horasApagadoReport,
             referenciaDesde: episode.since,
             diaCalendario: hoy,
             tipoEvento,
@@ -567,7 +570,7 @@ export async function runAlertCycle(options = {}) {
             nombrePlataforma,
             diaCalendario: hoy,
             umbralHoras,
-            horasFueraRango: horasEnteras,
+            horasFueraRango: horasApagadoReport,
             referenciaDesde: episode.since,
             tipoEvento,
             estado: 'pendiente',
@@ -710,9 +713,10 @@ export async function runAlertCycle(options = {}) {
         continue;
       }
 
-      const horasFuera = horasDesdeReferencia(episode.since, now);
+      const horasFuera = horasDesdeReferenciaEquipo(dispositivo, episode.since, now);
       const horasTranscurridas = horasFuera;
-      const horasEnteras = horasEnterasDesdeReferencia(episode.since, now);
+      const horasEnteras = horasEnterasDesdeReferenciaEquipo(dispositivo, episode.since, now);
+      const horasAcumuladas = Math.round(horasFuera * 10) / 10;
       const sentUmbrales = episode.sentUmbrales ?? [];
       const umbralHoras = pickUmbralPendiente(umbrales, horasTranscurridas, sentUmbrales);
       const nextUmbral = proximoUmbralPendiente(umbrales, horasTranscurridas, sentUmbrales);
@@ -724,7 +728,7 @@ export async function runAlertCycle(options = {}) {
           const ultimo = sentUmbrales[sentUmbrales.length - 1];
           criterio = `FUERA DE RANGO ${horasTexto} desde ${formatRef(episode.since)} (GMT-5). Último aviso: ${formatUmbralHoras(ultimo)}. ${nextUmbral != null ? `Esperando ${formatUmbralHoras(nextUmbral)} (${Math.max(0, nextUmbral - horasFuera).toFixed(1)} h restantes).` : 'Sin más umbrales.'} ${criterioRef}`;
         } else if (nextUmbral != null) {
-          criterio = `FUERA DE RANGO ${horasTexto} desde ${formatRef(episode.since)} (GMT-5). Próximo aviso al alcanzar ${nextUmbral} h (faltan ~${Math.max(0, nextUmbral - horasFuera).toFixed(1)} h). ${criterioRef}`;
+          criterio = `FUERA DE RANGO ${horasTexto} desde ${formatRef(episode.since)} (GMT-5). Próximo aviso al alcanzar ${formatUmbralHoras(nextUmbral)} (faltan ~${Math.max(0, nextUmbral - horasFuera).toFixed(1)} h). ${criterioRef}`;
         } else {
           criterio = `FUERA DE RANGO ${horasTexto} desde ${formatRef(episode.since)} (GMT-5). Sin umbrales pendientes. ${criterioRef}`;
         }
@@ -758,7 +762,7 @@ export async function runAlertCycle(options = {}) {
           nombrePlataforma,
           cliente: grupo.cliente?.trim() || 'Cliente',
           umbralHoras,
-          horasFueraRango: horasEnteras,
+          horasFueraRango: horasAcumuladas,
           diaCalendario: hoy,
           hoy,
           referenciaDesde: episode.since,
@@ -802,7 +806,7 @@ export async function runAlertCycle(options = {}) {
             descripcionEquipo: dispositivoReeferId,
             nombrePlataforma,
             umbralHoras,
-            horasFueraRango: horasEnteras,
+            horasFueraRango: horasAcumuladas,
             referenciaDesde: episode.since,
             diaCalendario: hoy,
             tipoEvento,
@@ -828,7 +832,7 @@ export async function runAlertCycle(options = {}) {
             nombrePlataforma,
             diaCalendario: hoy,
             umbralHoras,
-            horasFueraRango: horasEnteras,
+            horasFueraRango: horasAcumuladas,
             referenciaDesde: episode.since,
             tipoEvento,
             estado: 'pendiente',
@@ -873,7 +877,7 @@ export async function runAlertCycle(options = {}) {
             descripcionEquipo: dispositivoReeferId,
             nombrePlataforma,
             umbralHoras,
-            horasFueraRango: horasEnteras,
+            horasFueraRango: horasAcumuladas,
             referenciaDesde: episode.since,
             diaCalendario: hoy,
             tipoEvento,
@@ -1034,7 +1038,7 @@ export async function refreshDeviceReferenceFromHistorial(rowKey) {
 
 /** Fija referencia manual; opcionalmente reinicia umbrales enviados. */
 export function applyManualDeviceReference(rowKey, sinceIso, resetSentUmbrales = false) {
-  const since = new Date(sinceIso);
+  const since = parseTelemetryDate(sinceIso);
   if (Number.isNaN(since.getTime())) throw new Error('Fecha de referencia inválida');
 
   const state = getState();

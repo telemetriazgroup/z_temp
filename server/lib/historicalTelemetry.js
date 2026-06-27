@@ -1,7 +1,7 @@
 const TUNEL_BASE = process.env.TUNEL_API_BASE ?? 'http://161.132.53.51:9051';
 const STARCOOL_BASE = process.env.STARCOOL_API_BASE ?? 'http://161.132.206.104:9112';
 
-import { formatoFechaQueryApi } from './timezone.js';
+import { formatoFechaQueryApi, parseTelemetryDate, parseTelemetryTimestamp } from './timezone.js';
 import { getMargenesSetpoint, toleranciaSetpointDefault } from './rangoTemperatura.js';
 import { defrostActivoEfectivo, filaDefrostEfectivo } from './powerState.js';
 
@@ -25,8 +25,7 @@ function buildHistorialUrl(codigo, imei) {
 function timestampRegistro(row) {
   const v = row.created_at ?? row.fecha ?? null;
   if (v == null || v === '') return NaN;
-  const t = new Date(v).getTime();
-  return Number.isNaN(t) ? NaN : t;
+  return parseTelemetryTimestamp(v);
 }
 
 function toleranciaSetpoint(setPoint) {
@@ -253,8 +252,8 @@ export function reconcileEpisodeReference(episode, datos, now = new Date(), rang
   const resolved = resolveAlertOutOfRangeSince(datos, now, rangoOpts);
   if (resolved == null) return null;
 
-  const prev = new Date(episode.since).getTime();
-  const next = new Date(resolved).getTime();
+  const prev = parseTelemetryTimestamp(episode.since);
+  const next = parseTelemetryTimestamp(resolved);
   if (Number.isNaN(prev) || Math.abs(next - prev) > 60_000) {
     return { since: resolved, resetUmbrales: true };
   }
@@ -331,9 +330,33 @@ export function computeApagadoIntervals(datos, referencia = new Date()) {
 }
 
 export function horasDesdeReferencia(sinceIso, now = new Date()) {
-  const start = new Date(sinceIso).getTime();
+  const start = parseTelemetryTimestamp(sinceIso);
   if (Number.isNaN(start)) return 0;
-  return Math.max(0, (now.getTime() - start) / MS_HORA);
+  const end = now instanceof Date ? now.getTime() : parseTelemetryTimestamp(now);
+  if (Number.isNaN(end)) return 0;
+  return Math.max(0, (end - start) / MS_HORA);
+}
+
+/**
+ * Hasta cuándo contar horas fuera de rango/apagado.
+ * No acumula tiempo después de la última telemetría recibida (evita 5 h ficticias si el equipo dejó de reportar).
+ */
+export function effectiveEvaluationTime(dispositivo, now = new Date()) {
+  const ua = dispositivo?.ultima_actualizacion;
+  if (ua == null || ua === '') return now;
+  const uaDate = parseTelemetryDate(ua);
+  if (Number.isNaN(uaDate.getTime())) return now;
+  const nowMs = now instanceof Date ? now.getTime() : parseTelemetryTimestamp(now);
+  return uaDate.getTime() <= nowMs ? uaDate : now;
+}
+
+/** Horas desde referencia hasta la última comunicación efectiva del equipo. */
+export function horasDesdeReferenciaEquipo(dispositivo, sinceIso, now = new Date()) {
+  return horasDesdeReferencia(sinceIso, effectiveEvaluationTime(dispositivo, now));
+}
+
+export function horasEnterasDesdeReferenciaEquipo(dispositivo, sinceIso, now = new Date()) {
+  return Math.floor(horasDesdeReferenciaEquipo(dispositivo, sinceIso, now));
 }
 
 export function horasEnterasDesdeReferencia(sinceIso, now = new Date()) {
