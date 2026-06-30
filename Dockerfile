@@ -35,7 +35,7 @@ RUN if [ -f pnpm-lock.yaml ] || [ ! -f package-lock.json ]; then \
 FROM node:22-alpine
 
 ENV TZ=America/Lima
-RUN apk add --no-cache nginx tzdata
+RUN apk add --no-cache nginx tzdata font-dejavu
 
 COPY nginx.conf /etc/nginx/http.d/default.conf
 COPY docker-entrypoint.sh /docker-entrypoint.sh

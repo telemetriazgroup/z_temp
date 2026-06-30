@@ -1,7 +1,40 @@
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { formatDateTimeTz } from './timezone.js';
 import * as XLSX from 'xlsx';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CHART_CID = 'reefer-monitoring-chart';
+const CHART_FONT_FAMILY = 'DejaVu Sans';
+
+/** Rutas posibles de fuentes (repo local + Alpine Docker). */
+function resolveChartFontFiles() {
+  const regularCandidates = [
+    path.join(__dirname, '../assets/fonts/DejaVuSans.ttf'),
+    '/usr/share/fonts/dejavu/DejaVuSans.ttf',
+    '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+  ];
+  const boldCandidates = [
+    path.join(__dirname, '../assets/fonts/DejaVuSans-Bold.ttf'),
+    '/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf',
+    '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+  ];
+  const fontFiles = [];
+  for (const p of regularCandidates) {
+    if (fs.existsSync(p)) {
+      fontFiles.push(p);
+      break;
+    }
+  }
+  for (const p of boldCandidates) {
+    if (fs.existsSync(p)) {
+      fontFiles.push(p);
+      break;
+    }
+  }
+  return fontFiles;
+}
 
 function fmtNum(v) {
   if (v == null || Number.isNaN(v)) return '—';
@@ -113,7 +146,7 @@ export function buildMonitoringChartSvg(puntos, chartTitle = 'Reefer Monitoring 
       `<line x1="${pad.l}" y1="${y.toFixed(1)}" x2="${w - pad.r}" y2="${y.toFixed(1)}" stroke="#e5e7eb" stroke-width="1"/>`
     );
     gridLines.push(
-      `<text x="${pad.l - 6}" y="${(y + 4).toFixed(1)}" font-size="10" fill="#666" text-anchor="end">${v.toFixed(1)}</text>`
+      `<text class="chart-axis" x="${pad.l - 6}" y="${(y + 4).toFixed(1)}" font-size="10" text-anchor="end">${v.toFixed(1)}</text>`
     );
   }
 
@@ -125,26 +158,37 @@ export function buildMonitoringChartSvg(puntos, chartTitle = 'Reefer Monitoring 
     const p = puntos[idx];
     const x = xAt(idx);
     const label = escapeXml(p.horaCompleta ?? p.hora ?? '');
-    xLabels.push(`
-      <text x="${x.toFixed(1)}" y="${h - 14}" font-size="9" fill="#444" text-anchor="end" transform="rotate(-35 ${x.toFixed(1)} ${h - 14})">${label}</text>
-    `);
+    xLabels.push(
+      `<text class="chart-xlabel" x="${x.toFixed(1)}" y="${h - 14}" text-anchor="end" transform="rotate(-35 ${x.toFixed(1)} ${h - 14})">${label}</text>`
+    );
   }
 
   const returnLabels = localMaximaIndices(puntos, 'returnAir').map((i) => {
     const p = puntos[i];
     const v = p.returnAir;
     if (v == null) return '';
-    return `<text x="${xAt(i).toFixed(1)}" y="${(yAt(v) - 6).toFixed(1)}" font-size="9" fill="#dc2626" text-anchor="middle">${v}</text>`;
+    return `<text class="chart-return-val" x="${xAt(i).toFixed(1)}" y="${(yAt(v) - 6).toFixed(1)}" text-anchor="middle">${v}</text>`;
   });
 
   const returnPath = linePath('returnAir');
   const supplyPath = linePath('tempSupply');
   const setPath = linePath('setPoint');
+  const ff = CHART_FONT_FAMILY;
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+  <defs>
+    <style><![CDATA[
+      .chart-text { font-family: '${ff}', sans-serif; fill: #333; }
+      .chart-title { font-family: '${ff}', sans-serif; font-weight: 700; fill: #111; }
+      .chart-axis { font-family: '${ff}', sans-serif; fill: #666; }
+      .chart-xlabel { font-family: '${ff}', sans-serif; fill: #444; font-size: 9px; }
+      .chart-legend { font-family: '${ff}', sans-serif; fill: #333; font-size: 10px; }
+      .chart-return-val { font-family: '${ff}', sans-serif; fill: #dc2626; font-size: 9px; }
+    ]]></style>
+  </defs>
   <rect width="${w}" height="${h}" fill="#ffffff"/>
-  <text x="${w / 2}" y="24" font-size="14" font-weight="bold" fill="#111" text-anchor="middle">${escapeXml(chartTitle)}</text>
-  <text x="${pad.l - 40}" y="${pad.t + innerH / 2}" font-size="11" fill="#333" transform="rotate(-90 ${pad.l - 40} ${pad.t + innerH / 2})">Temperature(C°)</text>
+  <text class="chart-title" x="${w / 2}" y="24" font-size="14" text-anchor="middle">${escapeXml(chartTitle)}</text>
+  <text class="chart-axis" x="${pad.l - 40}" y="${pad.t + innerH / 2}" font-size="11" transform="rotate(-90 ${pad.l - 40} ${pad.t + innerH / 2})">Temperature (C)</text>
   ${gridLines.join('\n')}
   <line x1="${pad.l}" y1="${pad.t + innerH}" x2="${w - pad.r}" y2="${pad.t + innerH}" stroke="#999"/>
   <line x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${pad.t + innerH}" stroke="#999"/>
@@ -154,9 +198,9 @@ export function buildMonitoringChartSvg(puntos, chartTitle = 'Reefer Monitoring 
   ${returnLabels.join('\n')}
   ${xLabels.join('\n')}
   <rect x="${w - 200}" y="36" width="188" height="58" fill="#fff" stroke="#ccc" rx="2"/>
-  <line x1="${w - 190}" y1="52" x2="${w - 172}" y2="52" stroke="#dc2626" stroke-width="2"/><text x="${w - 168}" y="56" font-size="10" fill="#333">Return</text>
-  <line x1="${w - 190}" y1="68" x2="${w - 172}" y2="68" stroke="#16a34a" stroke-width="2"/><text x="${w - 168}" y="72" font-size="10" fill="#333">Supply</text>
-  <line x1="${w - 190}" y1="84" x2="${w - 172}" y2="84" stroke="#eab308" stroke-width="2"/><text x="${w - 168}" y="88" font-size="10" fill="#333">SetPoint</text>
+  <line x1="${w - 190}" y1="52" x2="${w - 172}" y2="52" stroke="#dc2626" stroke-width="2"/><text class="chart-legend" x="${w - 168}" y="56">Return</text>
+  <line x1="${w - 190}" y1="68" x2="${w - 172}" y2="68" stroke="#16a34a" stroke-width="2"/><text class="chart-legend" x="${w - 168}" y="72">Supply</text>
+  <line x1="${w - 190}" y1="84" x2="${w - 172}" y2="84" stroke="#eab308" stroke-width="2"/><text class="chart-legend" x="${w - 168}" y="88">SetPoint</text>
 </svg>`;
 }
 
@@ -164,12 +208,22 @@ async function svgToPngBuffer(svg) {
   if (!svg) return null;
   try {
     const { Resvg } = await import('@resvg/resvg-js');
+    const fontFiles = resolveChartFontFiles();
     const resvg = new Resvg(svg, {
       fitTo: { mode: 'width', value: 820 },
       background: 'white',
+      font: {
+        loadSystemFonts: fontFiles.length === 0,
+        fontFiles,
+        defaultFontFamily: CHART_FONT_FAMILY,
+        sansSerifFamily: CHART_FONT_FAMILY,
+        serifFamily: CHART_FONT_FAMILY,
+        monospaceFamily: CHART_FONT_FAMILY,
+      },
     });
     return Buffer.from(resvg.render().asPng());
-  } catch {
+  } catch (err) {
+    console.error('[emailTraceability] svgToPng:', err?.message ?? err);
     return null;
   }
 }
@@ -253,6 +307,12 @@ export async function buildTrazabilidadEmailPack(trazabilidad, options = {}) {
   const attachments = [];
 
   let chartHtml = '';
+  const legendHtml = `<p style="font-size:12px;margin:6px 0 0"><span style="color:#dc2626;font-weight:bold">&#9632; Return</span> &nbsp; <span style="color:#16a34a;font-weight:bold">&#9632; Supply</span> &nbsp; <span style="color:#eab308;font-weight:bold">&#9632; SetPoint</span></p>`;
+  const rangoHora =
+    puntosGrafico.length > 0
+      ? `${puntosGrafico[0].horaCompleta ?? puntosGrafico[0].hora} — ${puntosGrafico[puntosGrafico.length - 1].horaCompleta ?? puntosGrafico[puntosGrafico.length - 1].hora} (GMT-5)`
+      : '';
+
   if (pngBuffer) {
     attachments.push({
       filename: 'reefer_monitoring_chart.png',
@@ -261,9 +321,12 @@ export async function buildTrazabilidadEmailPack(trazabilidad, options = {}) {
       contentType: 'image/png',
     });
     chartHtml = `<p><strong>Gráfica de comportamiento (últimas ${trazabilidad.ventanaHoras} h, GMT-5)</strong></p>
-<img src="cid:${CHART_CID}" alt="Gráfica Return, Supply y SetPoint" style="max-width:100%;height:auto;border:1px solid #ddd"/>`;
+${legendHtml}
+${rangoHora ? `<p style="font-size:11px;color:#555;margin:4px 0">${escapeXml(rangoHora)}</p>` : ''}
+<img src="cid:${CHART_CID}" alt="Gráfica Return, Supply y SetPoint" style="max-width:100%;height:auto;border:1px solid #ddd;display:block"/>`;
   } else if (svg) {
     chartHtml = `<p><strong>Gráfica de comportamiento (últimas ${trazabilidad.ventanaHoras} h, GMT-5)</strong></p>
+${legendHtml}
 <div style="overflow-x:auto">${svg}</div>`;
   }
 
