@@ -87,3 +87,21 @@ export function formatDateSubjectTz(d = new Date()) {
   const p = partsInTz(d);
   return `${p.year}/${p.month}/${p.day}`;
 }
+
+/** Medianoche del día calendario GMT-5 (ms epoch). */
+export function startOfDayMs(d = new Date()) {
+  const p = partsInTz(d);
+  return parseTelemetryTimestamp(`${p.year}-${p.month}-${p.day}T00:00:00`);
+}
+
+/** Hora corta HH:mm en GMT-5. */
+export function formatTimeShortTz(iso) {
+  if (iso == null) return '—';
+  const d = iso instanceof Date ? iso : parseTelemetryDate(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString('es-PE', {
+    timeZone: CORREO_TZ,
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}

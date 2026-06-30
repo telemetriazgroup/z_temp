@@ -15,9 +15,13 @@
 - Solo con equipo **ON** (`power_state = 1`).
 - Defrost con equipo ON no cuenta como fuera de rango.
 - Opcional por equipo: alerta a **30 min** y/o **1 h**, además de 2 h, 3 h…
-- Las horas fuera de rango se cuentan hasta la **última comunicación** del equipo, no más allá (evita 5 h ficticias si dejó de reportar).
+- Las horas **acumuladas** del incidente se cuentan desde la referencia hasta la **última comunicación** (pueden ser 46 h, 70 h, etc.).
+- Los **umbrales de envío** (30 min, 1 h, 2 h…) se evalúan por **día calendario GMT-5**: a medianoche se reinician los avisos del día, pero la referencia y el acumulado total se mantienen.
+- Ejemplo: alerta a las 23:00 del 18/06; el 19/06, tras 30 min apagado/fuera de rango en ese día, vuelve a enviarse el umbral de 30 min mostrando el acumulado total.
+- Las horas fuera de rango se cuentan hasta la **última comunicación** del equipo, no más allá (evita horas ficticias si dejó de reportar).
 - Los umbrales se envían en orden (30 min → 1 h → 2 h → 3 h…), no se salta al mayor.
-- Un umbral se envía **una vez por incidente**; no se repite el 5 h salvo que haya un incidente nuevo.
+- Un umbral se envía **una vez por día calendario** por incidente; al día siguiente pueden repetirse (30 min, 1 h…) si el evento continúa.
+- Cada correo incluye **temperaturas actuales**, **tabla** y **gráfico SVG** de evolución de las últimas **3 h**.
 - Al cerrar un incidente se guarda registro `episodio_cerrado` en `incidentes.json`.
 
 ## Ejemplo
