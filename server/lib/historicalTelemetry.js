@@ -1,7 +1,7 @@
 const TUNEL_BASE = process.env.TUNEL_API_BASE ?? 'http://161.132.53.51:9051';
 const STARCOOL_BASE = process.env.STARCOOL_API_BASE ?? 'http://161.132.206.104:9112';
 
-import { formatoFechaQueryApi, parseTelemetryDate, parseTelemetryTimestamp, startOfDayMs, formatTimeShortTz } from './timezone.js';
+import { formatoFechaQueryApi, parseTelemetryDate, parseTelemetryTimestamp, startOfDayMs, formatTimeShortTz, formatChartAxisLabel, formatDateTimeTz } from './timezone.js';
 import { getMargenesSetpoint, toleranciaSetpointDefault } from './rangoTemperatura.js';
 import { defrostActivoEfectivo, filaDefrostEfectivo } from './powerState.js';
 
@@ -363,9 +363,6 @@ export function horasEnterasDesdeReferencia(sinceIso, now = new Date()) {
   return Math.floor(horasDesdeReferencia(sinceIso, now));
 }
 
-/** Ventana de trazabilidad adjunta a correos de alerta. */
-export const TRACEABILITY_WINDOW_HOURS = 3;
-
 /**
  * Horas del episodio activas en el día calendario GMT-5 actual.
  * Usado para reiniciar umbrales (30 min, 1 h, 2 h…) cada medianoche.
@@ -381,9 +378,45 @@ export function horasEnDiaCalendario(sinceIso, dispositivo, now = new Date()) {
   return Math.round(((evalMs - intervalStart) / MS_HORA) * 100) / 100;
 }
 
+/** Ventana de trazabilidad adjunta a correos de alerta. */
+export const TRACEABILITY_WINDOW_HOURS = 3;
+
+const MS_30MIN = 30 * 60 * 1000;
+
+function mapRowToPunto(row, ts) {
+  const fechaRaw = row.created_at ?? row.fecha ?? null;
+  return {
+    ts,
+    fecha: fechaRaw,
+    hora: formatTimeShortTz(fechaRaw ?? new Date(ts).toISOString()),
+    horaCompleta: formatChartAxisLabel(fechaRaw ?? new Date(ts).toISOString()),
+    setPoint: row.set_point ?? null,
+    returnAir: row.return_air ?? null,
+    tempSupply: row.temp_supply_1 ?? null,
+    evaporatorCoil: row.evaporation_coil ?? null,
+    powerState: row.power_state ?? null,
+    enRango: row.en_rango ?? null,
+  };
+}
+
+function findClosestPoint(sorted, targetTs) {
+  if (sorted.length === 0) return null;
+  let best = sorted[0];
+  let bestDiff = Math.abs(best.ts - targetTs);
+  for (const item of sorted) {
+    const diff = Math.abs(item.ts - targetTs);
+    if (diff < bestDiff) {
+      best = item;
+      bestDiff = diff;
+    }
+  }
+  return best;
+}
+
 /**
- * Puntos de telemetría de las últimas N horas para tabla/gráfico en correo.
- * @returns {{ ventanaHoras: number, generadoAt: string, puntos: Array<object> }}
+ * Puntos de telemetría 3 h para correo.
+ * - puntosTabla: ~cada 30 min desde el último registro hacia atrás (más reciente primero)
+ * - puntosGrafico: serie completa ascendente para la gráfica
  */
 export function prepareHistorialTrazabilidad(
   datos,
@@ -396,43 +429,37 @@ export function prepareHistorialTrazabilidad(
     .filter(({ ts }) => !Number.isNaN(ts) && ts >= cutoff)
     .sort((a, b) => a.ts - b.ts);
 
-  const maxFilas = 60;
-  const step = sorted.length > maxFilas ? Math.ceil(sorted.length / maxFilas) : 1;
-  const puntos = [];
-  for (let i = 0; i < sorted.length; i += step) {
-    const { row, ts } = sorted[i];
-    const fechaRaw = row.created_at ?? row.fecha ?? null;
-    puntos.push({
-      ts,
-      fecha: fechaRaw,
-      hora: formatTimeShortTz(fechaRaw ?? new Date(ts).toISOString()),
-      setPoint: row.set_point ?? null,
-      returnAir: row.return_air ?? null,
-      tempSupply: row.temp_supply_1 ?? null,
-      evaporatorCoil: row.evaporation_coil ?? null,
-      powerState: row.power_state ?? null,
-      enRango: row.en_rango ?? null,
-    });
+  if (sorted.length === 0) {
+    return {
+      ventanaHoras,
+      generadoAt: referencia.toISOString(),
+      puntosTabla: [],
+      puntosGrafico: [],
+      puntos: [],
+    };
   }
-  const last = sorted[sorted.length - 1];
-  if (last && (puntos.length === 0 || puntos[puntos.length - 1].ts !== last.ts)) {
-    const fechaRaw = last.row.created_at ?? last.row.fecha ?? null;
-    puntos.push({
-      ts: last.ts,
-      fecha: fechaRaw,
-      hora: formatTimeShortTz(fechaRaw ?? new Date(last.ts).toISOString()),
-      setPoint: last.row.set_point ?? null,
-      returnAir: last.row.return_air ?? null,
-      tempSupply: last.row.temp_supply_1 ?? null,
-      evaporatorCoil: last.row.evaporation_coil ?? null,
-      powerState: last.row.power_state ?? null,
-      enRango: last.row.en_rango ?? null,
-    });
+
+  const puntosGrafico = sorted.map(({ row, ts }) => mapRowToPunto(row, ts));
+
+  const seen = new Set();
+  const puntosTabla = [];
+  let targetTs = sorted[sorted.length - 1].ts;
+  while (targetTs >= cutoff) {
+    const closest = findClosestPoint(sorted, targetTs);
+    if (closest != null && !seen.has(closest.ts)) {
+      seen.add(closest.ts);
+      puntosTabla.push(mapRowToPunto(closest.row, closest.ts));
+    }
+    targetTs -= MS_30MIN;
   }
+  puntosTabla.sort((a, b) => b.ts - a.ts);
 
   return {
     ventanaHoras,
     generadoAt: referencia.toISOString(),
-    puntos,
+    puntosTabla,
+    puntosGrafico,
+    /** @deprecated usar puntosTabla */
+    puntos: puntosTabla,
   };
 }

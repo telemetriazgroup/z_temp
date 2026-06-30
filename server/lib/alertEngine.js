@@ -9,6 +9,7 @@ import {
 } from './store.js';
 import { formatDateTimeTz, parseTelemetryDate } from './timezone.js';
 import { buildFueraDeRangoEmail, buildApagadoEmail } from './emailBuilder.js';
+import { buildTrazabilidadEmailPack } from './emailTraceability.js';
 import { fetchAllDispositivos, deviceRowKey } from './telemetry.js';
 import { getSmtpConfig } from './smtpRepository.js';
 import { getDeviceNameByImei } from './deviceNamesRepository.js';
@@ -161,6 +162,21 @@ async function fetchTrazabilidadCorreo(dispositivo, now) {
   } catch {
     return null;
   }
+}
+
+async function buildTrazabilidadForEmail(trazabilidad, dispositivo, dispositivoReeferId, nombrePlataforma) {
+  if (!trazabilidad) {
+    return { trazabilidadHtml: '', trazabilidadAttachments: [] };
+  }
+  const chartTitle = `Reefer Monitoring Data ${dispositivo?.imei ?? ''}(${nombrePlataforma || dispositivoReeferId})`;
+  const pack = await buildTrazabilidadEmailPack(trazabilidad, {
+    chartTitle,
+    imei: dispositivo?.imei,
+  });
+  return {
+    trazabilidadHtml: pack.html,
+    trazabilidadAttachments: pack.attachments ?? [],
+  };
 }
 
 function ensureSentUmbrales(episode) {
@@ -387,6 +403,7 @@ async function sendMail(smtp, to, content) {
     subject: content.subject,
     text: content.text,
     html: content.html,
+    attachments: content.attachments ?? [],
   });
   return info.messageId;
 }
@@ -564,6 +581,12 @@ export async function runAlertCycle(options = {}) {
         const horasApagadoReport = Math.round(horasAcumuladas * 10) / 10;
         const horasEnDiaReport = Math.round(horasEnDia * 10) / 10;
         const trazabilidad = await fetchTrazabilidadCorreo(dispositivo, now);
+        const trazEmail = await buildTrazabilidadForEmail(
+          trazabilidad,
+          dispositivo,
+          dispositivoReeferId,
+          nombrePlataforma
+        );
         const content = buildApagadoEmail({
           dispositivo,
           dispositivoReeferId,
@@ -578,6 +601,7 @@ export async function runAlertCycle(options = {}) {
           referenciaDesde: episode.since,
           tipoEvento,
           trazabilidad,
+          ...trazEmail,
         });
         const envioId = uid('envio');
         const criterioEnvio = `APAGADO ${horasDiaTxt} / ${horasAcumTxt} desde ${formatRef(episode.since)} (GMT-5). Se envía alerta APAGADO umbral ${formatUmbralHoras(umbralHoras)} del día ${hoy}. Destino: ${grupo.emails.join(', ')}.`;
@@ -819,6 +843,12 @@ export async function runAlertCycle(options = {}) {
 
       {
         const trazabilidad = await fetchTrazabilidadCorreo(dispositivo, now);
+        const trazEmail = await buildTrazabilidadForEmail(
+          trazabilidad,
+          dispositivo,
+          dispositivoReeferId,
+          nombrePlataforma
+        );
         const content = buildFueraDeRangoEmail({
           dispositivo,
           dispositivoReeferId,
@@ -833,6 +863,7 @@ export async function runAlertCycle(options = {}) {
           referenciaDesde: episode.since,
           tipoEvento,
           trazabilidad,
+          ...trazEmail,
         });
 
         const envioId = uid('envio');

@@ -1,6 +1,6 @@
 import { formatDateTimeTz, formatDateSubjectTz } from './timezone.js';
 import { formatUmbralHoras } from './store.js';
-import { buildTrazabilidadHtml, buildTrazabilidadText } from './emailTraceability.js';
+import { buildTrazabilidadText } from './emailTraceability.js';
 
 function fmtTemp(v) {
   if (v == null || Number.isNaN(v)) return '—';
@@ -72,7 +72,8 @@ export function buildFueraDeRangoEmail(params) {
     referenciaDesde,
     tipoEvento = 'operaciones',
     esPrueba = false,
-    trazabilidad = null,
+    trazabilidadHtml = '',
+    trazabilidadAttachments = [],
   } = params;
 
   const d = dispositivo.ultimo_dato ?? {};
@@ -99,6 +100,8 @@ export function buildFueraDeRangoEmail(params) {
     ? 'Se envía este correo de PRUEBA generado por la plataforma ZTRACK.'
     : 'Se notifica la siguiente ALERTA FUERA DE RANGO, generada por la plataforma ZTRACK.';
 
+  const trazText = buildTrazabilidadText(params.trazabilidad ?? null);
+
   const lines = [
     `Señores ${cliente}`,
     '',
@@ -119,7 +122,7 @@ export function buildFueraDeRangoEmail(params) {
     `• Horas acumuladas del incidente: ~${roundHoras(acumulado)} h`,
     `• Última Comunicación registrada: ${fmtDateShort(dispositivo.ultima_actualizacion)} (GMT-5)`,
     ...buildTemperaturasTexto(d),
-    ...buildTrazabilidadText(trazabilidad),
+    ...trazText,
     '',
     'Estado del equipo :',
     'El equipo se encuentra fuera del rango de temperatura configurado en la plataforma ZTRACK.',
@@ -144,10 +147,10 @@ ${referenciaDesde ? `<li><strong>Inicio fuera de rango:</strong> ${formatDateTim
 <li><strong>Última comunicación:</strong> ${fmtDateShort(dispositivo.ultima_actualizacion)} (GMT-5)</li>
 </ul>
 ${buildTemperaturasHtml(d)}
-${buildTrazabilidadHtml(trazabilidad)}
+${trazabilidadHtml}
 <p>Atentamente,<br><strong>ZTRACK-ZGROUP</strong></p></body></html>`;
 
-  return { subject, text, html };
+  return { subject, text, html, attachments: trazabilidadAttachments };
 }
 
 export function buildApagadoEmail(params) {
@@ -165,7 +168,8 @@ export function buildApagadoEmail(params) {
     referenciaDesde,
     tipoEvento = 'operaciones',
     esPrueba = false,
-    trazabilidad = null,
+    trazabilidadHtml = '',
+    trazabilidadAttachments = [],
   } = params;
 
   const d = dispositivo.ultimo_dato ?? {};
@@ -192,6 +196,8 @@ export function buildApagadoEmail(params) {
     ? 'Se envía este correo de PRUEBA de APAGADO generado por la plataforma ZTRACK.'
     : 'Se notifica la siguiente ALERTA APAGADO. El equipo está OFF; no se envía alerta de fuera de rango en paralelo.';
 
+  const trazText = buildTrazabilidadText(params.trazabilidad ?? null);
+
   const lines = [
     `Señores ${cliente}`,
     '',
@@ -211,7 +217,7 @@ export function buildApagadoEmail(params) {
     `• Última Comunicación registrada: ${fmtDateShort(dispositivo.ultima_actualizacion)} (GMT-5)`,
     ...buildTemperaturasTexto(d),
     '• Power state: APAGADO (0)',
-    ...buildTrazabilidadText(trazabilidad),
+    ...trazText,
     '',
     'Estado del equipo :',
     'El equipo se encuentra apagado. Las alertas de fuera de rango solo aplican cuando power_state = 1 (encendido).',
@@ -237,8 +243,8 @@ export function buildApagadoEmail(params) {
 <li><strong>Última comunicación:</strong> ${fmtDateShort(dispositivo.ultima_actualizacion)} (GMT-5)</li>
 </ul>
 ${buildTemperaturasHtml(d, ' · <strong>Power: APAGADO (0)</strong>')}
-${buildTrazabilidadHtml(trazabilidad)}
+${trazabilidadHtml}
 <p>Atentamente,<br><strong>ZTRACK-ZGROUP</strong></p></body></html>`;
 
-  return { subject, text, html };
+  return { subject, text, html, attachments: trazabilidadAttachments };
 }

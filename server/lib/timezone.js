@@ -94,6 +94,15 @@ export function startOfDayMs(d = new Date()) {
   return parseTelemetryTimestamp(`${p.year}-${p.month}-${p.day}T00:00:00`);
 }
 
+/** DD-MM-YYYY HH:MM:SS en GMT-5 (eje gráficos). */
+export function formatChartAxisLabel(iso) {
+  if (iso == null) return '—';
+  const d = iso instanceof Date ? iso : parseTelemetryDate(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  const p = partsInTz(d);
+  return `${p.day}-${p.month}-${p.year} ${p.hour}:${p.minute}:${p.second}`;
+}
+
 /** Hora corta HH:mm en GMT-5. */
 export function formatTimeShortTz(iso) {
   if (iso == null) return '—';
