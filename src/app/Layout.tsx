@@ -3,6 +3,7 @@ import { Outlet, Link, useNavigate, useLocation } from 'react-router';
 import { useAuth } from './AuthContext';
 import { userIsIffRestrictedNavigation } from './modules/usuario';
 import { fetchServerGrupos, syncDeviceNamesToServer } from './modules/correo/correoServerApi';
+import { refreshDeviceNamesFromServer } from './lib/deviceLocalNames';
 import { userHasCorreoIncidentAccess } from './modules/correo/incidentAccess';
 import { Button } from './components/ui/button';
 import { 
@@ -48,6 +49,7 @@ export default function Layout() {
     if (user.deviceNames && Object.keys(user.deviceNames).length > 0) {
       void syncDeviceNamesToServer(user.deviceNames).catch(() => {});
     }
+    void refreshDeviceNamesFromServer().catch(() => {});
   }, [user]);
 
   useEffect(() => {

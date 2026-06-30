@@ -18,6 +18,7 @@ import type {
   ReferenciaUpdateResult,
   DeviceEventosView,
 } from './types';
+import type { DeviceLocalNameHistoryEntry } from '../../lib/deviceLocalNames';
 
 const BASE = import.meta.env.VITE_CORREO_API_BASE ?? '/reefer/api/correo';
 
@@ -101,6 +102,45 @@ export async function syncDeviceNamesToServer(names: Record<string, string>): Pr
   });
   const body = await parseRes<{ count: number }>(res);
   return body.count;
+}
+
+export async function fetchDeviceNamesFromServer(): Promise<Record<string, string>> {
+  const res = await fetch(`${BASE}/device-names`);
+  const body = await parseRes<{ data: { namesByRowKey: Record<string, string> } }>(res);
+  return body.data?.namesByRowKey ?? {};
+}
+
+export async function saveDeviceNameOnServer(params: {
+  rowKey: string;
+  imei: string;
+  codigo?: string;
+  name: string;
+  usuario?: string;
+}): Promise<{ name: string | null; historyEntry: DeviceLocalNameHistoryEntry | null }> {
+  const res = await fetch(`${BASE}/device-names`, {
+    method: 'POST',
+    headers: headers(params.usuario),
+    body: JSON.stringify(params),
+  });
+  const body = await parseRes<{
+    data: {
+      name: string | null;
+      historyEntry: DeviceLocalNameHistoryEntry | null;
+    };
+  }>(res);
+  return body.data;
+}
+
+export async function fetchDeviceNameHistoryFromServer(
+  rowKey: string,
+  limit = 20
+): Promise<DeviceLocalNameHistoryEntry[]> {
+  const q = new URLSearchParams({ rowKey, limit: String(limit) });
+  const res = await fetch(`${BASE}/device-names/history?${q.toString()}`);
+  const body = await parseRes<{
+    data: DeviceLocalNameHistoryEntry[];
+  }>(res);
+  return body.data ?? [];
 }
 
 export async function replaceServerGrupos(grupos: GrupoCorreo[]): Promise<void> {

@@ -12,10 +12,16 @@ import {
   persistDeviceLocalNames,
   recordDeviceLocalNameChange,
   getDeviceLocalNameHistoryForRow,
+  refreshDeviceNamesFromServer,
+  applyServerDeviceNameHistory,
   type DeviceLocalNameMap,
   type DeviceLocalNameHistoryEntry,
 } from '../lib/deviceLocalNames';
-import { syncDeviceNamesToServer, fetchDeviceAlertConfigMap } from '../modules/correo/correoServerApi';
+import {
+  saveDeviceNameOnServer,
+  fetchDeviceNameHistoryFromServer,
+  fetchDeviceAlertConfigMap,
+} from '../modules/correo/correoServerApi';
 import {
   usaRangoPersonalizado,
   evaluarEstadoRangoListado,
@@ -233,6 +239,14 @@ export default function Listado() {
     load();
   }, [load]);
 
+  useEffect(() => {
+    void refreshDeviceNamesFromServer()
+      .then(setLocalNames)
+      .catch(() => {
+        setLocalNames(readDeviceLocalNames());
+      });
+  }, []);
+
   const dispositivos = data?.data?.dispositivos ?? [];
   const resumenApi: ResumenDispositivos | null = data?.data?.resumen ?? null;
 
@@ -309,28 +323,41 @@ export default function Listado() {
     if (nameEdit == null) return;
     const trimmed = nameEdit.draft.trim();
     const nombreNuevo = trimmed === '' ? SIN_ASIGNAR : trimmed;
+    const { rowKey, containerId: imei, codigo, nombreAnterior } = nameEdit;
 
-    setLocalNames((prev) => {
-      const next = { ...prev };
-      if (trimmed === '') delete next[nameEdit.rowKey];
-      else next[nameEdit.rowKey] = trimmed;
-      persistDeviceLocalNames(next);
-      if (trimmed !== '') {
-        void syncDeviceNamesToServer({ [nameEdit.containerId]: trimmed }).catch(() => {});
+    void (async () => {
+      try {
+        const result = await saveDeviceNameOnServer({
+          rowKey,
+          imei,
+          codigo: codigo !== '—' ? codigo : undefined,
+          name: nombreNuevo,
+          usuario: user?.username,
+        });
+
+        setLocalNames((prev) => {
+          const next = { ...prev };
+          if (trimmed === '') delete next[rowKey];
+          else next[rowKey] = trimmed;
+          persistDeviceLocalNames(next);
+          return next;
+        });
+
+        recordDeviceLocalNameChange({
+          rowKey,
+          imei,
+          codigo: codigo !== '—' ? codigo : undefined,
+          nombreAnterior,
+          nombreNuevo,
+          usuario: user?.username,
+          historyEntry: result.historyEntry,
+        });
+      } catch (e) {
+        console.error('Error al guardar nombre en servidor:', e);
+      } finally {
+        setNameEdit(null);
       }
-      return next;
-    });
-
-    recordDeviceLocalNameChange({
-      rowKey: nameEdit.rowKey,
-      imei: nameEdit.containerId,
-      codigo: nameEdit.codigo !== '—' ? nameEdit.codigo : undefined,
-      nombreAnterior: nameEdit.nombreAnterior,
-      nombreNuevo,
-      usuario: user?.username,
-    });
-
-    setNameEdit(null);
+    })();
   };
 
   const openNameEdit = (device: {
@@ -339,8 +366,15 @@ export default function Listado() {
     codigo: string;
     nombreAsignado: string;
   }) => {
-    const historial = getDeviceLocalNameHistoryForRow(device.rowKey, 15);
-    setNameHistory(historial);
+    void fetchDeviceNameHistoryFromServer(device.rowKey, 15)
+      .then((entries) => {
+        applyServerDeviceNameHistory(device.rowKey, entries);
+        setNameHistory(entries);
+      })
+      .catch(() => {
+        setNameHistory(getDeviceLocalNameHistoryForRow(device.rowKey, 15));
+      });
+
     setNameEdit({
       rowKey: device.rowKey,
       containerId: device.containerId,
@@ -714,7 +748,7 @@ export default function Listado() {
               {nameEdit?.codigo != null && nameEdit.codigo !== '—' && (
                 <> · {nameEdit.codigo}</>
               )}
-              . Se guarda en este navegador y se registra en el historial de cambios.
+              . Se guarda en el servidor (visible para todos los usuarios) y se registra en el historial de cambios.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">

@@ -23,7 +23,7 @@ import {
   getDeviceEventosView,
 } from './lib/alertEngine.js';
 import { getSmtpConfig, saveSmtpConfig, smtpPublicView } from './lib/smtpRepository.js';
-import { mergeDeviceNames, getDeviceNameByImei } from './lib/deviceNamesRepository.js';
+import { mergeDeviceNames, getDeviceNameByImei, getDeviceNamesView, setDeviceName, getDeviceNameHistory } from './lib/deviceNamesRepository.js';
 import {
   getDeviceAlertConfigMap,
   saveDeviceAlertConfig,
@@ -91,6 +91,38 @@ app.post('/reefer/api/correo/device-names/sync', (req, res) => {
   }
   const merged = mergeDeviceNames(names);
   res.json({ ok: true, count: Object.keys(merged).length });
+});
+
+app.get('/reefer/api/correo/device-names', (_req, res) => {
+  res.json({ ok: true, data: getDeviceNamesView() });
+});
+
+app.get('/reefer/api/correo/device-names/history', (req, res) => {
+  const rowKey = req.query.rowKey?.toString().trim();
+  if (!rowKey) {
+    return res.status(400).json({ ok: false, error: 'rowKey es obligatorio' });
+  }
+  const limit = Math.min(Number(req.query.limit) || 20, 100);
+  res.json({ ok: true, data: getDeviceNameHistory(rowKey, limit) });
+});
+
+app.post('/reefer/api/correo/device-names', (req, res) => {
+  try {
+    const { rowKey, imei, codigo, name } = req.body ?? {};
+    if (!rowKey || !imei) {
+      return res.status(400).json({ ok: false, error: 'rowKey e imei son obligatorios' });
+    }
+    const result = setDeviceName({
+      rowKey: String(rowKey).trim(),
+      imei: String(imei).trim(),
+      codigo: codigo != null ? String(codigo).trim() : undefined,
+      name: name != null ? String(name) : '',
+      usuario: getUser(req),
+    });
+    res.json({ ok: true, data: result });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
 });
 
 app.put('/reefer/api/correo/grupos', (req, res) => {
