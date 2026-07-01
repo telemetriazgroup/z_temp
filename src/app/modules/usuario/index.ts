@@ -4,13 +4,14 @@ export {
   getUserById,
   getUserByUsername,
   authenticate,
-  saveUsers,
   addUser,
   updateUser,
   deleteUser,
   generateUserId,
+  migrateLegacyUsersIfNeeded,
 } from './userRepository';
 export {
+  userIsMonitoreoNavigation,
   userIsIffRestrictedNavigation,
   userHasFullDeviceAccess,
   userMayAccessImei,

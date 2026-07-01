@@ -85,13 +85,24 @@ export default function Usuarios() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
-  const reload = useCallback(() => {
-    setUsers(getUsers());
-  }, []);
+  const reload = useCallback(async () => {
+    if (currentUser?.superUser !== true) return;
+    setLoading(true);
+    try {
+      const list = await getUsers(currentUser.username);
+      setUsers(list);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo cargar usuarios');
+    } finally {
+      setLoading(false);
+    }
+  }, [currentUser?.superUser, currentUser?.username]);
 
   useEffect(() => {
-    reload();
+    void reload();
   }, [reload]);
 
   if (currentUser?.superUser !== true) {
@@ -119,7 +130,7 @@ export default function Usuarios() {
     setDialogOpen(true);
   };
 
-  const submit = () => {
+  const submit = async () => {
     setError(null);
     const username = form.username.trim();
     if (!username) {
@@ -131,74 +142,92 @@ export default function Usuarios() {
       return;
     }
 
+    setSaving(true);
     try {
       if (form.superUser) {
         if (editingId) {
-          updateUser(editingId, {
-            username,
-            password: form.password.trim(),
-            role: form.role,
-            superUser: true,
-            deviceAccess: ['all'],
-            deviceNames: undefined,
-          });
-          if (currentUser?.id === editingId) refreshUser();
+          await updateUser(
+            editingId,
+            {
+              username,
+              password: form.password.trim(),
+              role: form.role,
+              superUser: true,
+              deviceAccess: ['all'],
+              deviceNames: undefined,
+            },
+            currentUser.username
+          );
+          if (currentUser?.id === editingId) await refreshUser();
         } else {
-          addUser({
-            id: generateUserId(),
-            username,
-            password: form.password.trim(),
-            role: form.role,
-            superUser: true,
-            deviceAccess: ['all'],
-          });
+          await addUser(
+            {
+              id: generateUserId(),
+              username,
+              password: form.password.trim(),
+              role: form.role,
+              superUser: true,
+              deviceAccess: ['all'],
+            },
+            currentUser.username
+          );
         }
       } else {
         const imeis = parseImeiList(form.imeiText);
         if (imeis.length === 0) {
           setError('Indique al menos un IMEI o marque superusuario');
+          setSaving(false);
           return;
         }
         const deviceNames = parseDeviceNamesBlock(form.namesText);
         const hasNames = Object.keys(deviceNames).length > 0;
         if (editingId) {
-          updateUser(editingId, {
-            username,
-            password: form.password.trim(),
-            role: form.role,
-            superUser: false,
-            deviceAccess: imeis,
-            deviceNames: hasNames ? deviceNames : undefined,
-          });
-          if (currentUser?.id === editingId) refreshUser();
+          await updateUser(
+            editingId,
+            {
+              username,
+              password: form.password.trim(),
+              role: form.role,
+              superUser: false,
+              deviceAccess: imeis,
+              deviceNames: hasNames ? deviceNames : undefined,
+            },
+            currentUser.username
+          );
+          if (currentUser?.id === editingId) await refreshUser();
         } else {
-          addUser({
-            id: generateUserId(),
-            username,
-            password: form.password.trim(),
-            role: form.role,
-            superUser: false,
-            deviceAccess: imeis,
-            deviceNames: hasNames ? deviceNames : undefined,
-          });
+          await addUser(
+            {
+              id: generateUserId(),
+              username,
+              password: form.password.trim(),
+              role: form.role,
+              superUser: false,
+              deviceAccess: imeis,
+              deviceNames: hasNames ? deviceNames : undefined,
+            },
+            currentUser.username
+          );
         }
       }
       setDialogOpen(false);
-      reload();
+      await reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error al guardar');
+    } finally {
+      setSaving(false);
     }
   };
 
-  const handleDelete = (u: User) => {
+  const handleDelete = async (u: User) => {
     if (u.id === currentUser?.id) {
       alert('No puede eliminar su propia sesión desde aquí.');
       return;
     }
     if (!window.confirm(`¿Eliminar usuario «${u.username}»?`)) return;
     try {
-      deleteUser(u.id);
-      reload();
+      await deleteUser(u.id, currentUser.username);
+      await reload();
     } catch (e) {
       alert(e instanceof Error ? e.message : 'No se pudo eliminar');
     }
@@ -213,7 +242,7 @@ export default function Usuarios() {
             Usuarios
           </h1>
           <p className="text-gray-500 mt-1">
-            Alta, edición y baja de cuentas (almacenamiento local).
+            Alta, edición y baja de cuentas (persistidas en el servidor).
           </p>
         </div>
         <Button onClick={openCreate}>
@@ -231,53 +260,57 @@ export default function Usuarios() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Usuario</TableHead>
-                <TableHead>Rol</TableHead>
-                <TableHead>Tipo</TableHead>
-                <TableHead>Dispositivos</TableHead>
-                <TableHead className="text-right">Acciones</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {users.map((u) => (
-                <TableRow key={u.id}>
-                  <TableCell className="font-medium">{u.username}</TableCell>
-                  <TableCell>{u.role}</TableCell>
-                  <TableCell>
-                    {u.superUser === true ? (
-                      <Badge>Superusuario</Badge>
-                    ) : (
-                      <Badge variant="secondary">Restringido</Badge>
-                    )}
-                  </TableCell>
-                  <TableCell className="max-w-[280px] truncate text-sm text-muted-foreground">
-                    {u.superUser === true || u.deviceAccess.includes('all')
-                      ? 'Todos'
-                      : `${u.deviceAccess.length} IMEI`}
-                  </TableCell>
-                  <TableCell className="text-right space-x-1">
-                    <Button variant="ghost" size="icon" onClick={() => openEdit(u)}>
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleDelete(u)}
-                      disabled={
-                        u.id === currentUser?.id ||
-                        (u.superUser === true && countSuperUsers(users) <= 1)
-                      }
-                    >
-                      <Trash2 className="h-4 w-4 text-red-600" />
-                    </Button>
-                  </TableCell>
+          {loading ? (
+            <p className="text-sm text-muted-foreground">Cargando usuarios…</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Usuario</TableHead>
+                  <TableHead>Rol</TableHead>
+                  <TableHead>Tipo</TableHead>
+                  <TableHead>Dispositivos</TableHead>
+                  <TableHead className="text-right">Acciones</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {users.map((u) => (
+                  <TableRow key={u.id}>
+                    <TableCell className="font-medium">{u.username}</TableCell>
+                    <TableCell>{u.role}</TableCell>
+                    <TableCell>
+                      {u.superUser === true ? (
+                        <Badge>Superusuario</Badge>
+                      ) : (
+                        <Badge variant="secondary">Restringido</Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="max-w-[280px] truncate text-sm text-muted-foreground">
+                      {u.superUser === true || u.deviceAccess.includes('all')
+                        ? 'Todos'
+                        : `${u.deviceAccess.length} IMEI`}
+                    </TableCell>
+                    <TableCell className="text-right space-x-1">
+                      <Button variant="ghost" size="icon" onClick={() => openEdit(u)}>
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => void handleDelete(u)}
+                        disabled={
+                          u.id === currentUser?.id ||
+                          (u.superUser === true && countSuperUsers(users) <= 1)
+                        }
+                      >
+                        <Trash2 className="h-4 w-4 text-red-600" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
 
@@ -365,10 +398,12 @@ export default function Usuarios() {
             {error && <p className="text-sm text-red-600">{error}</p>}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>
+            <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>
               Cancelar
             </Button>
-            <Button onClick={submit}>Guardar</Button>
+            <Button onClick={() => void submit()} disabled={saving}>
+              {saving ? 'Guardando…' : 'Guardar'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

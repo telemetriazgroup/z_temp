@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Outlet, Link, useNavigate, useLocation } from 'react-router';
 import { useAuth } from './AuthContext';
-import { userIsIffRestrictedNavigation } from './modules/usuario';
+import { userIsMonitoreoNavigation } from './modules/usuario';
 import { fetchServerGrupos, syncDeviceNamesToServer } from './modules/correo/correoServerApi';
 import { refreshDeviceNamesFromServer } from './lib/deviceLocalNames';
 import { userHasCorreoIncidentAccess } from './modules/correo/incidentAccess';
@@ -38,7 +38,7 @@ export default function Layout() {
     navigate('/login');
   };
 
-  const soloListadoIff = userIsIffRestrictedNavigation(user);
+  const menuMonitoreo = userIsMonitoreoNavigation(user);
   const verIncidentesCorreo = userHasCorreoIncidentAccess(user, gruposCorreo);
 
   useEffect(() => {
@@ -53,34 +53,29 @@ export default function Layout() {
   }, [user]);
 
   useEffect(() => {
-    if (!user || !soloListadoIff) return;
+    if (!user || !menuMonitoreo) return;
     const permitido =
+      location.pathname === '/' ||
       location.pathname === '/listado' ||
       location.pathname.startsWith('/listado/') ||
-      location.pathname === '/alarmas' ||
-      location.pathname === '/catalogo-alarmas' ||
-      location.pathname === '/control-auditoria' ||
-      location.pathname === '/incidentes-correo';
+      location.pathname === '/catalogo-alarmas';
     if (!permitido) {
-      navigate('/listado', { replace: true });
+      navigate('/', { replace: true });
     }
-  }, [user, soloListadoIff, location.pathname, navigate]);
+  }, [user, menuMonitoreo, location.pathname, navigate]);
 
   const menuItems = useMemo(() => {
-    const incidentesItem = verIncidentesCorreo
-      ? [{ path: '/incidentes-correo' as const, label: 'Incidentes correo', icon: Inbox }]
-      : [];
-
-    if (soloListadoIff) {
+    if (menuMonitoreo) {
       return [
+        { path: '/', label: 'Inicio', icon: Home },
         { path: '/listado', label: 'Listado', icon: List },
-        { path: '/control-auditoria', label: 'Control / Auditoría', icon: History },
-        { path: '/alarmas', label: 'Alarmas', icon: Bell },
         { path: '/catalogo-alarmas', label: 'Catálogo Alarmas', icon: BookOpen },
-        ...incidentesItem,
       ];
     }
 
+    const incidentesItem = verIncidentesCorreo
+      ? [{ path: '/incidentes-correo' as const, label: 'Incidentes correo', icon: Inbox }]
+      : [];
     return [
       { path: '/', label: 'Inicio', icon: Home },
       { path: '/listado', label: 'Listado', icon: List },
@@ -106,7 +101,7 @@ export default function Layout() {
       { path: '/ubicanos', label: 'Ubícanos', icon: MapPin },
       { path: '/ayuda', label: 'Ayuda/Soporte', icon: HelpCircle },
     ];
-  }, [soloListadoIff, user?.superUser, verIncidentesCorreo]);
+  }, [menuMonitoreo, user?.superUser, verIncidentesCorreo]);
 
   return (
     <div className="min-h-screen bg-gray-50 flex">

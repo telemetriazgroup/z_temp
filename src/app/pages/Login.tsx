@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useAuth } from '../AuthContext';
-import { userIsIffRestrictedNavigation } from '../modules/usuario';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
@@ -11,18 +10,25 @@ export default function Login() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    
-    const loggedIn = login(username, password);
-    if (loggedIn) {
-      navigate(userIsIffRestrictedNavigation(loggedIn) ? '/listado' : '/');
-    } else {
-      setError('Usuario o contraseña incorrectos');
+    setLoading(true);
+    try {
+      const loggedIn = await login(username, password);
+      if (loggedIn) {
+        navigate('/');
+      } else {
+        setError('Usuario o contraseña incorrectos');
+      }
+    } catch {
+      setError('No se pudo conectar con el servidor de usuarios');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -53,6 +59,7 @@ export default function Login() {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 required
+                disabled={loading}
               />
             </div>
             <div className="space-y-2">
@@ -64,13 +71,14 @@ export default function Login() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
+                disabled={loading}
               />
             </div>
             {error && (
               <div className="text-red-600 text-sm">{error}</div>
             )}
-            <Button type="submit" className="w-full">
-              Ingresar
+            <Button type="submit" className="w-full" disabled={loading}>
+              {loading ? 'Ingresando…' : 'Ingresar'}
             </Button>
           </form>
         </CardContent>

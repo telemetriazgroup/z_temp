@@ -1,6 +1,12 @@
 import type { User, DispositivoUltimoEstado } from '../../types';
 import { IFF_STYLE_ACCOUNT_USERNAMES } from './bootstrapUsers';
 
+/** Menú restringido para rol Monitoreo (no superusuario). */
+export function userIsMonitoreoNavigation(user: User | null): boolean {
+  if (user == null || user.superUser === true) return false;
+  return user.role === 'Monitoreo';
+}
+
 /** Operativo restringido: cuentas semilla tipo IFF o correo `@iff.com` (no superusuario). */
 export function userIsIffRestrictedNavigation(user: User | null): boolean {
   if (user == null || user.superUser === true) return false;

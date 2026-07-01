@@ -1,18 +1,69 @@
 import React, { useMemo } from 'react';
 import { useNavigate } from 'react-router';
+import { useAuth } from '../AuthContext';
+import { userIsMonitoreoNavigation } from '../modules/usuario';
 import { mockDevices } from '../mockData';
 import { getDeviceAlarmEvents, ensureAlarmCatalog } from '../modules/alarma';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
-import { Activity, Power, Bell, Mail, Snowflake, TrendingUp, TrendingDown } from 'lucide-react';
+import { Button } from '../components/ui/button';
+import { Activity, Power, Bell, Mail, Snowflake, TrendingUp, TrendingDown, List, BookOpen } from 'lucide-react';
 
 export default function Inicio() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const esMonitoreo = userIsMonitoreoNavigation(user);
 
   const alarmEvents = useMemo(() => {
     ensureAlarmCatalog();
     return getDeviceAlarmEvents();
   }, []);
-  
+
+  if (esMonitoreo) {
+    return (
+      <div className="space-y-6 max-w-2xl">
+        <div>
+          <h1 className="text-3xl font-bold">Bienvenido/a</h1>
+          <p className="text-gray-500 mt-2">
+            Hola, <span className="font-medium text-gray-800">{user?.username}</span>.
+            Desde aquí puede consultar el estado de sus equipos y el catálogo de alarmas.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Card className="hover:shadow-md transition-shadow">
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <List className="h-5 w-5 text-blue-600" />
+                Listado de equipos
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground mb-4">
+                Vea el estado en tiempo real de los contenedores asignados a su cuenta.
+              </p>
+              <Button onClick={() => navigate('/listado')}>Ir al listado</Button>
+            </CardContent>
+          </Card>
+          <Card className="hover:shadow-md transition-shadow">
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <BookOpen className="h-5 w-5 text-orange-600" />
+                Catálogo de alarmas
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground mb-4">
+                Consulte la documentación de códigos de alarma del controlador.
+              </p>
+              <Button variant="outline" onClick={() => navigate('/catalogo-alarmas')}>
+                Ver catálogo
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
   const onlineDevices = mockDevices.filter(d => d.status === 'ONLINE').length;
   const waitDevices = mockDevices.filter(d => d.status === 'WAIT').length;
   const offlineDevices = mockDevices.filter(d => d.status === 'OFFLINE').length;

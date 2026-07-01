@@ -29,6 +29,17 @@ import {
   saveDeviceAlertConfig,
 } from './lib/deviceAlertConfigRepository.js';
 import { buildFueraDeRangoEmail } from './lib/emailBuilder.js';
+import {
+  ensureUserRegistry,
+  getUsersPublic,
+  authenticate,
+  addUser,
+  updateUser,
+  deleteUser,
+  migrateUsersFromClient,
+  getUserByUsername,
+  getUserByIdPublic,
+} from './lib/usersRepository.js';
 
 const PORT = Number(process.env.CORREO_PORT ?? 3003);
 const POLL_MS = Number(process.env.CORREO_POLL_MS ?? 2 * 60 * 1000);
@@ -46,6 +57,18 @@ function getUser(req) {
     req.body?.usuario?.toString().trim() ||
     'sistema'
   );
+}
+
+function isSuperUserRequest(req) {
+  return req.headers['x-ztrack-super-user']?.toString().toLowerCase() === 'true';
+}
+
+function requireSuperUser(req, res) {
+  if (!isSuperUserRequest(req)) {
+    res.status(403).json({ ok: false, error: 'Se requiere superusuario' });
+    return false;
+  }
+  return true;
 }
 
 app.get('/health', (_req, res) => {
@@ -82,6 +105,100 @@ app.put('/reefer/api/correo/config/smtp', (req, res) => {
 
 app.get('/reefer/api/correo/grupos', (_req, res) => {
   res.json({ ok: true, data: getGrupos() });
+});
+
+app.get('/reefer/api/correo/users', (req, res) => {
+  try {
+    ensureUserRegistry();
+    if (!requireSuperUser(req, res)) return;
+    res.json({ ok: true, data: getUsersPublic() });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/reefer/api/correo/users/login', (req, res) => {
+  try {
+    const username = req.body?.username?.toString().trim();
+    const password = req.body?.password?.toString() ?? '';
+    if (!username || !password) {
+      return res.status(400).json({ ok: false, error: 'Usuario y contraseña obligatorios' });
+    }
+    const user = authenticate(username, password);
+    if (user == null) {
+      return res.status(401).json({ ok: false, error: 'Usuario o contraseña incorrectos' });
+    }
+    res.json({ ok: true, data: user });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/reefer/api/correo/users/by-username/:username', (req, res) => {
+  try {
+    ensureUserRegistry();
+    const username = req.params.username?.toString().trim();
+    const user = getUserByUsername(username);
+    if (user == null) {
+      return res.status(404).json({ ok: false, error: 'Usuario no encontrado' });
+    }
+    const { password: _p, ...publicUser } = user;
+    res.json({ ok: true, data: publicUser });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/reefer/api/correo/users', (req, res) => {
+  try {
+    if (!requireSuperUser(req, res)) return;
+    const created = addUser(req.body ?? {});
+    res.json({ ok: true, data: created });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/reefer/api/correo/users/:id', (req, res) => {
+  try {
+    ensureUserRegistry();
+    const user = getUserByIdPublic(req.params.id);
+    if (user == null) {
+      return res.status(404).json({ ok: false, error: 'Usuario no encontrado' });
+    }
+    res.json({ ok: true, data: user });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.put('/reefer/api/correo/users/:id', (req, res) => {
+  try {
+    if (!requireSuperUser(req, res)) return;
+    const updated = updateUser(req.params.id, req.body ?? {});
+    res.json({ ok: true, data: updated });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+app.delete('/reefer/api/correo/users/:id', (req, res) => {
+  try {
+    if (!requireSuperUser(req, res)) return;
+    deleteUser(req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/reefer/api/correo/users/migrate', (req, res) => {
+  try {
+    const result = migrateUsersFromClient(req.body?.users);
+    res.json({ ok: true, data: result });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
 });
 
 app.post('/reefer/api/correo/device-names/sync', (req, res) => {
@@ -427,6 +544,7 @@ app.post('/reefer/api/correo/send', async (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
+  ensureUserRegistry();
   console.log(`ZTRACK correo API :${PORT} · ciclo cada ${POLL_MS / 1000}s`);
   setTimeout(() => {
     runAlertCycle({ trigger: 'automatic' }).catch((e) =>

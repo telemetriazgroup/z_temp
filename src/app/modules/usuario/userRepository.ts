@@ -1,11 +1,22 @@
 import type { User } from '../../types';
 import { BOOTSTRAP_USERS } from './bootstrapUsers';
+import {
+  fetchServerUsers,
+  loginOnServer,
+  createUserOnServer,
+  updateUserOnServer,
+  deleteUserOnServer,
+  migrateUsersOnServer,
+  fetchUserById,
+  fetchUserByUsername,
+} from './usersServerApi';
 
-const STORAGE_KEY = 'ztrack_users_registry_v1';
+const LEGACY_STORAGE_KEY = 'ztrack_users_registry_v1';
+const MIGRATION_FLAG_KEY = 'ztrack_users_migrated_v1';
 
-function readRaw(): User[] {
+function readLegacyLocal(): User[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(LEGACY_STORAGE_KEY);
     if (raw == null) return [];
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
@@ -15,150 +26,92 @@ function readRaw(): User[] {
   }
 }
 
-function writeRaw(users: User[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(users));
+function clearLegacyLocal(): void {
+  localStorage.removeItem(LEGACY_STORAGE_KEY);
 }
 
-function sameStringArray(a: string[], b: string[]): boolean {
-  if (a.length !== b.length) return false;
-  const sa = [...a].sort();
-  const sb = [...b].sort();
-  return sa.every((v, i) => v === sb[i]);
-}
-
-function sameAllowedCodigos(
-  a: User['allowedCodigos'],
-  b: User['allowedCodigos']
-): boolean {
-  const left = a ?? [];
-  const right = b ?? [];
-  return sameStringArray(left, right);
-}
-
-function sameDeviceNames(
-  a: Record<string, string> | undefined,
-  b: Record<string, string> | undefined
-): boolean {
-  const left = a ?? {};
-  const right = b ?? {};
-  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
-  for (const k of keys) {
-    if ((left[k] ?? '') !== (right[k] ?? '')) return false;
+/** Migra usuarios del registro local al servidor (una sola vez). */
+export async function migrateLegacyUsersIfNeeded(): Promise<void> {
+  if (localStorage.getItem(MIGRATION_FLAG_KEY) === '1') return;
+  const legacy = readLegacyLocal();
+  if (legacy.length === 0) {
+    localStorage.setItem(MIGRATION_FLAG_KEY, '1');
+    return;
   }
-  return true;
+  try {
+    await migrateUsersOnServer(legacy);
+    clearLegacyLocal();
+    localStorage.setItem(MIGRATION_FLAG_KEY, '1');
+  } catch {
+    // reintentar en próxima carga
+  }
 }
 
-/** Alinea alcance IFF de cuentas semilla ya guardadas (p. ej. nuevos IMEI en código). */
-function syncBootstrapProfiles(users: User[]): { users: User[]; changed: boolean } {
-  const seedById = new Map(BOOTSTRAP_USERS.map((s) => [s.id, s]));
-  let changed = false;
-  const next = users.map((u) => {
-    const seed = seedById.get(u.id);
-    if (seed == null) return u;
-    let patched = u;
-    if (!sameStringArray(u.deviceAccess, seed.deviceAccess)) {
-      patched = { ...patched, deviceAccess: [...seed.deviceAccess] };
-      changed = true;
-    }
-    if (!sameDeviceNames(u.deviceNames, seed.deviceNames)) {
-      patched = {
-        ...patched,
-        deviceNames: seed.deviceNames ? { ...seed.deviceNames } : undefined,
-      };
-      changed = true;
-    }
-    if (!sameAllowedCodigos(u.allowedCodigos, seed.allowedCodigos)) {
-      patched = {
-        ...patched,
-        allowedCodigos: seed.allowedCodigos ? [...seed.allowedCodigos] : undefined,
-      };
-      changed = true;
-    }
-    if (u.role !== seed.role) {
-      patched = { ...patched, role: seed.role };
-      changed = true;
-    }
-    return patched;
-  });
-  return { users: next, changed };
-}
-
-/** Asegura usuarios semilla (superadmin, iifperu) sin borrar el resto. */
-export function ensureUserRegistry(): User[] {
-  let users = readRaw();
-  if (users.length === 0) {
-    writeRaw([...BOOTSTRAP_USERS]);
+/** Inicializa registro en servidor y migra datos locales si existen. */
+export async function ensureUserRegistry(): Promise<User[]> {
+  await migrateLegacyUsersIfNeeded();
+  try {
+    return await fetchServerUsers('sistema', true);
+  } catch {
     return [...BOOTSTRAP_USERS];
   }
-  const byUser = new Set(users.map((u) => u.username.toLowerCase()));
-  let changed = false;
-  for (const seed of BOOTSTRAP_USERS) {
-    if (!byUser.has(seed.username.toLowerCase())) {
-      users.push({ ...seed });
-      changed = true;
-    }
+}
+
+export async function getUsers(actingUser?: string): Promise<User[]> {
+  try {
+    return await fetchServerUsers(actingUser ?? 'sistema', true);
+  } catch {
+    return readLegacyLocal();
   }
-  const synced = syncBootstrapProfiles(users);
-  users = synced.users;
-  if (synced.changed) changed = true;
-  if (changed) writeRaw(users);
-  return users;
 }
 
-export function getUsers(): User[] {
-  return readRaw();
-}
-
-export function getUserById(id: string): User | undefined {
-  return readRaw().find((u) => u.id === id);
-}
-
-export function getUserByUsername(username: string): User | undefined {
-  const u = username.toLowerCase();
-  return readRaw().find((x) => x.username.toLowerCase() === u);
-}
-
-export function authenticate(username: string, password: string): User | null {
-  ensureUserRegistry();
-  const user = getUserByUsername(username);
-  if (user == null || user.password !== password) return null;
-  return user;
-}
-
-export function saveUsers(users: User[]): void {
-  writeRaw(users);
-}
-
-export function addUser(user: User): void {
-  const users = readRaw();
-  if (users.some((u) => u.username.toLowerCase() === user.username.toLowerCase())) {
-    throw new Error('Ya existe un usuario con ese nombre');
+export async function getUserById(id: string): Promise<User | undefined> {
+  try {
+    const user = await fetchUserById(id);
+    return user ?? undefined;
+  } catch {
+    return undefined;
   }
-  users.push(user);
-  writeRaw(users);
 }
 
-export function updateUser(id: string, patch: Partial<User>): void {
-  const users = readRaw();
-  const idx = users.findIndex((u) => u.id === id);
-  if (idx === -1) throw new Error('Usuario no encontrado');
-  const prev = users[idx];
-  const next: User = { ...prev, ...patch };
-  if (patch.password === undefined || patch.password === '') {
-    next.password = prev.password;
+export async function getUserByUsername(username: string): Promise<User | undefined> {
+  try {
+    const user = await fetchUserByUsername(username);
+    return user ?? undefined;
+  } catch {
+    const u = username.toLowerCase();
+    return (await getUsers()).find((x) => x.username.toLowerCase() === u);
   }
-  users[idx] = next;
-  writeRaw(users);
 }
 
-export function deleteUser(id: string): void {
-  const users = readRaw();
-  const target = users.find((u) => u.id === id);
-  if (target == null) return;
-  if (target.superUser === true && users.filter((u) => u.superUser === true).length <= 1) {
-    throw new Error('No se puede eliminar el último superusuario');
+export async function authenticate(username: string, password: string): Promise<User | null> {
+  await migrateLegacyUsersIfNeeded();
+  try {
+    return await loginOnServer(username, password);
+  } catch {
+    const user = (await getUsers()).find(
+      (x) => x.username.toLowerCase() === username.toLowerCase()
+    );
+    if (user == null || user.password !== password) return null;
+    const { password: _p, ...publicUser } = user;
+    return publicUser as User;
   }
-  writeRaw(users.filter((u) => u.id !== id));
+}
+
+export async function addUser(user: User, actingUser: string): Promise<User> {
+  return createUserOnServer(user, actingUser);
+}
+
+export async function updateUser(
+  id: string,
+  patch: Partial<User>,
+  actingUser: string
+): Promise<User> {
+  return updateUserOnServer(id, patch, actingUser);
+}
+
+export async function deleteUser(id: string, actingUser: string): Promise<void> {
+  await deleteUserOnServer(id, actingUser);
 }
 
 export function generateUserId(): string {
