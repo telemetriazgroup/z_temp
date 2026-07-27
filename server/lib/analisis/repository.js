@@ -90,6 +90,7 @@ export async function replaceEventos(analisisId, eventos, openEnd = Date.now()) 
       for (const ev of eventos) {
         let clasificacion = ev.clasificacion ?? 'sin_clasificar';
         let detalle = ev.detalle ?? null;
+        let analisis = ev.analisis ?? null;
         let clasificadoPor = null;
         let clasificadoAt = null;
 
@@ -125,13 +126,13 @@ export async function replaceEventos(analisisId, eventos, openEnd = Date.now()) 
           const human =
             HUMAN.has(matchOverlap.clasificacion) ||
             (matchOverlap.clasificado_por != null &&
-              matchOverlap.clasificado_por !== 'sistema');
+              matchOverlap.clasificado_por !== 'sistema' &&
+              !['defrost', 'falso_apagado', 'falso_fuera'].includes(
+                matchOverlap.clasificacion
+              ));
           if (human) {
-            clasificacion = matchOverlap.clasificacion;
-            detalle = matchOverlap.detalle;
-            clasificadoPor = matchOverlap.clasificado_por;
-            clasificadoAt = matchOverlap.clasificado_at;
-          } else if (clasificacion === 'sin_clasificar') {
+            // Solo conservar clasificación humana (autorizado / programado / no_previsto).
+            // Nunca heredar DEFROST ni falsos del run anterior: el motor manda.
             clasificacion = matchOverlap.clasificacion;
             detalle = matchOverlap.detalle;
             clasificadoPor = matchOverlap.clasificado_por;
@@ -139,11 +140,32 @@ export async function replaceEventos(analisisId, eventos, openEnd = Date.now()) 
           }
         }
 
+        // Coherencia: si el análisis del motor dice FUERA, no dejar etiqueta DEFROST.
+        if (
+          clasificacion === 'defrost' &&
+          typeof analisis === 'string' &&
+          analisis.includes('Decisión: FUERA DE RANGO')
+        ) {
+          clasificacion = 'sin_clasificar';
+          detalle = null;
+          clasificadoPor = null;
+          clasificadoAt = null;
+        }
+        if (
+          clasificacion === 'sin_clasificar' &&
+          typeof analisis === 'string' &&
+          analisis.includes('Decisión: DEFROST')
+        ) {
+          clasificacion = 'defrost';
+          clasificadoPor = 'sistema';
+          clasificadoAt = new Date().toISOString();
+        }
+
         const { rows } = await client.query(
           `INSERT INTO analisis_evento (
              analisis_id, tipo, since_at, until_at, duration_hours,
-             clasificacion, detalle, hash_intervalo, clasificado_por, clasificado_at
-           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+             clasificacion, detalle, analisis, hash_intervalo, clasificado_por, clasificado_at
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
            RETURNING *`,
           [
             analisisId,
@@ -153,6 +175,7 @@ export async function replaceEventos(analisisId, eventos, openEnd = Date.now()) 
             ev.durationHours,
             clasificacion,
             detalle,
+            analisis,
             ev.hash,
             clasificadoPor,
             clasificadoAt,
@@ -323,6 +346,13 @@ export function mapEventoRow(row, { isAdmin = true } = {}) {
     durationMinutes,
     clasificacion: row.clasificacion,
     detalle: row.detalle,
+    ...(isAdmin
+      ? {
+          analisis:
+            row.analisis ??
+            'Sin texto de análisis del motor. Regenerar el mes para generar la lógica aplicada.',
+        }
+      : {}),
     hashIntervalo: row.hash_intervalo,
     clasificadoPor: row.clasificado_por,
     clasificadoAt: row.clasificado_at,

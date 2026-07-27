@@ -74,6 +74,10 @@ export async function ensureAnalisisSchema() {
       ALTER TABLE analisis_semana
         ADD COLUMN IF NOT EXISTS eventos_defrost INT NOT NULL DEFAULT 0
     `);
+    await query(`
+      ALTER TABLE analisis_evento
+        ADD COLUMN IF NOT EXISTS analisis TEXT
+    `);
     migrated = true;
     console.log('[analisis] esquema PostgreSQL listo');
     return true;

@@ -3,7 +3,7 @@ import {
   fetchHistorialRango,
   timestampRegistroHistorial,
 } from '../historicalTelemetry.js';
-import { computeSinTransmisionIntervals, eventHash } from './gaps.js';
+import { computeSinTransmisionIntervals, eventHash, subtractIntervals } from './gaps.js';
 import { aggregateWeeks, monthWindow } from './weeks.js';
 import {
   findAnalisisMensual,
@@ -38,6 +38,13 @@ import {
   esEventoOperativoParaMonitoreo,
 } from './rango.js';
 import { classifyFueraIntervalsWithDefrost } from './defrostPattern.js';
+import {
+  analisisApagadoReal,
+  analisisFalsoApagadoDuracion,
+  analisisFalsoApagadoSuministro,
+  analisisFalsoFuera,
+  analisisSinTransmision,
+} from './decisionAnalisis.js';
 
 function rowKeyOf(codigo, imei) {
   return `${codigo}-${imei}`;
@@ -47,11 +54,15 @@ function toEventos(apagados, fuera, gaps, descartes = {}) {
   const list = [];
   const pushMany = (items, tipo, defaults = {}) => {
     for (const i of items ?? []) {
+      const durationHours =
+        i.durationHours ?? intervalDurationHours(i.since, i.until);
+      const durationMinutes =
+        i.durationMinutes ?? Math.round(durationHours * 60 * 10) / 10;
       list.push({
         tipo,
         since: i.since,
         until: i.until,
-        durationHours: i.durationHours ?? intervalDurationHours(i.since, i.until),
+        durationHours,
         hash: eventHash(
           `${tipo}:${i.clasificacion ?? defaults.clasificacion ?? 'x'}`,
           i.since,
@@ -59,26 +70,40 @@ function toEventos(apagados, fuera, gaps, descartes = {}) {
         ),
         clasificacion: i.clasificacion ?? defaults.clasificacion,
         detalle: i.detalle ?? defaults.detalle ?? null,
+        analisis:
+          i.analisis ??
+          defaults.analisis?.(i, durationMinutes, durationHours) ??
+          null,
       });
     }
   };
 
-  pushMany(apagados, 'apagado');
+  pushMany(apagados, 'apagado', {
+    analisis: (_i, durationMinutes) => analisisApagadoReal(durationMinutes),
+  });
   pushMany(fuera, 'fuera_rango');
-  pushMany(gaps, 'sin_transmision');
+  pushMany(gaps, 'sin_transmision', {
+    analisis: (_i, _dm, durationHours) => analisisSinTransmision(durationHours),
+  });
   pushMany(descartes.falsosApagadoDuracion, 'apagado', {
     clasificacion: 'falso_apagado',
-    detalle: 'Falso apagado: duración < 8 minutos (descartado del cálculo operativo).',
+    detalle:
+      'Falso apagado: duración < 8 minutos (descartado del cálculo operativo).',
+    analisis: (_i, durationMinutes) =>
+      analisisFalsoApagadoDuracion(durationMinutes),
   });
   pushMany(descartes.falsosApagadoSuministro, 'apagado', {
     clasificacion: 'falso_apagado',
     detalle:
       'Falso apagado: power_state=0 con suministro cerca del set point (descartado del cálculo operativo).',
+    analisis: () => analisisFalsoApagadoSuministro(),
   });
   pushMany(descartes.fueraCortos, 'fuera_rango', {
     clasificacion: 'falso_fuera',
     detalle:
-      'Fuera de rango < 30 minutos (transitorio; descartado del cálculo operativo).',
+      'Fuera de rango < 20 minutos (transitorio; descartado del cálculo operativo).',
+    analisis: (i, durationMinutes) =>
+      i.analisis ?? analisisFalsoFuera(durationMinutes, i.detalle),
   });
 
   list.sort((a, b) => new Date(a.since) - new Date(b.since));
@@ -217,19 +242,27 @@ export async function runAnalisisMensual(input) {
     ref,
     rowEnRangoParaAnalisis
   ).filter((i) => new Date(i.since).getTime() >= window.desdeMs);
-  const {
-    defrost: fueraDefrost,
-    fueraReales,
-    cortos: fueraCortos,
-  } = classifyFueraIntervalsWithDefrost(fueraRaw, datos, {
-    minFueraMs: MIN_FUERA_RANGO_MS,
-    openEnd: now.getTime(),
-  });
-  const fuera = [...fueraReales, ...fueraDefrost];
 
   const gaps = computeSinTransmisionIntervals(datos).filter(
     (i) => new Date(i.since).getTime() >= window.desdeMs
   );
+
+  // Prioridad: no contar fuera de rango durante apagado ni durante sin transmisión
+  // (sin datos no se puede afirmar que estuviera fuera; solo admin ve esos huecos).
+  const fueraSinPrioritarios = subtractIntervals(
+    fueraRaw,
+    [...apagados, ...gaps],
+    now.getTime()
+  );
+  const {
+    defrost: fueraDefrost,
+    fueraReales,
+    cortos: fueraCortos,
+  } = classifyFueraIntervalsWithDefrost(fueraSinPrioritarios, datos, {
+    minFueraMs: MIN_FUERA_RANGO_MS,
+    openEnd: now.getTime(),
+  });
+  const fuera = [...fueraReales, ...fueraDefrost];
 
   let eventos = toEventos(apagados, fuera, gaps, {
     falsosApagadoDuracion: falsosApagado,
@@ -259,6 +292,7 @@ export async function runAnalisisMensual(input) {
         hash: e.hash_intervalo,
         clasificacion: e.clasificacion,
         detalle: e.detalle,
+        analisis: e.analisis,
       }));
     const newOnes = eventos.filter(
       (e) => new Date(e.since).getTime() >= fetchFrom.getTime() - 60000

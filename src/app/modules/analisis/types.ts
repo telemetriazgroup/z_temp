@@ -58,6 +58,8 @@ export interface AnalisisEvento {
   durationMinutes?: number;
   clasificacion: AnalisisClasificacion;
   detalle: string | null;
+  /** Solo admin: lógica del motor que justifica la decisión. */
+  analisis?: string | null;
   hashIntervalo: string;
   clasificadoPor?: string | null;
   clasificadoAt?: string | null;

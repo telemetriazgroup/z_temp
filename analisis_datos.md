@@ -19,8 +19,12 @@ Estado: **implementación iniciada** (API + motor + UI en detalle). Pendientes m
 | 2b | Apagados cortos | Solo cuentan apagados **≥ 8 minutos**. Menores = **falso apagado** (se descartan del análisis). |
 | 2b | Falso apagado por suministro | Si `power_state=0` pero `|temp_supply_1 − set_point| ≤ 2 °C`, **no** es apagado real (el equipo mantiene temperatura). Se discrimina del cálculo general. |
 | 2d | Vista monitoreo vs admin | **Monitoreo** solo ve eventos operativos (**apagado real**, **fuera de rango**, **DEFROST**) y sus horas, sin falsos positivos ni sin transmisión. **Admin** ve todo lo detectado (incl. falsos, sin TX y metadatos de descarte). |
-| 2c | Fuera de rango cortos | Solo cuentan episodios **≥ 30 minutos**. Los menores de 30 min se **descartan** (no se listan ni suman horas). |
+| 2c | Fuera de rango cortos | Solo cuentan episodios **≥ 20 minutos**. Los menores de 20 min se **descartan** (no se listan ni suman horas). |
 | 2c | Rango del análisis | Al analizar/regenerar se muestra y puede editar **set point + banda min/max** (ej. 14–16 → 12–18); se recalculan eventos con esa banda. |
+| 2c | Episodio fuera continuo | Fuera de rango = desde el **primer** `return_air` fuera de la banda (inclusiva) hasta el **primer** punto que **vuelve** a estar dentro. Ej. banda −10…5: 4.7 en rango; 6.5 abre; …; 4.9 cierra. |
+| 2e | Prioridad apagado vs fuera | Si hay **apagado** y **fuera de rango** en la misma franja, gana el **apagado**: el fuera se **recorta** (no se solapan). Los fragmentos de fuera **&lt; 20 min** tras el recorte se tratan como falsos/transitorios (solo admin; el cliente no los ve). |
+| 2f | Fuera vs sin transmisión | Si hay **sin transmisión** solapado con **fuera de rango**, el fuera se **recorta** en ese hueco: sin datos no se afirma fuera de rango. El cliente no ve sin TX ni esos tramos; solo admin. |
+| 2g | Fuera con DEFROST embebido | Si un fuera largo contiene un ciclo de **defrost** (~≤ 60 min), se **extrae** ese tramo como DEFROST y el fuera se **parte** en antes/después; esos minutos no inflan fuera de rango. |
 | 3 | Persistencia | **PostgreSQL** (evaluación en §7.5). |
 | 4 | UX de rangos | Vista de **rangos ya analizados**; si no hay → CTA **«Analizar este mes»**. |
 | 4 | Inicio del mes sin datos | El análisis **no fuerza el día 1**: empieza desde el **primer día con datos** del mes. |
@@ -117,7 +121,7 @@ Alineados con correos (`logica_alertas.md`, `server/lib/historicalTelemetry.js`)
 
 - ON, no defrost efectivo, fuera de banda (`rowEnRangoParaAlerta` / misma que correos).
 - Utilidad: `computeOutOfRangeIntervals`.
-- **Filtro de duración:** solo episodios con duración **≥ 30 minutos** entran al análisis / UI. Los menores se descartan como transitorios (`MIN_FUERA_RANGO_MS`).
+- **Filtro de duración:** solo episodios con duración **≥ 20 minutos** entran al análisis / UI. Los menores se descartan como transitorios (`MIN_FUERA_RANGO_MS`).
 
 ### 4.4 Relación con motor de correos
 
@@ -173,32 +177,36 @@ Presentación del hueco largo (> 2 h):
 
 ## 4.7 Detección automática de DEFROST (patrón térmico)
 
-Referencia de campo: `historial_defrost.csv` (IMEI `866262034780196`, 13/07/2026 ~16:00–16:33).
+Referencias de campo:
+- `historial_defrost.csv` (IMEI `866262034780196`, 13/07/2026 ~16:00–16:33) — episodio casi puro de defrost.
+- `historial_fuera_de ran.csv` (IMEI `868428044595035`, 4/07/2026 ~14:51–16:08) — **fuera de rango largo con defrost en medio**.
 
 ### Qué se observa en defrost
 - El **evaporador** sube mucho más que **retorno** y **suministro** (está cerca de la resistencia).
-- En el ejemplo: Evap de ≈ −8.5 °C → **+24.3 °C** mientras suministro sigue frío (≈ −7…−17) y retorno también sube (parece “fuera de rango”).
-- Duración del ciclo en el ejemplo ≈ **33 min**; regla de producto: **máximo 60 min**.
+- En el ejemplo puro: Evap de ≈ −8.5 °C → **+24.3 °C** mientras suministro sigue frío.
+- Duración del ciclo típica ≈ **15–45 min**; tope de producto: **máximo 60 min**.
 
 ### Regla en el análisis mensual
 Sobre intervalos **fuera de rango** cerrados:
 
-1. Si duración **≤ 60 min** y cumple patrón térmico (o flag `en_defrost` en telemetría) → clasificación automática **`defrost`** (`clasificado_por = sistema`).
-2. Esos eventos se cuentan **aparte** (`eventosDefrost` / `horasDefrost`) y **no suman** en horas ni estadísticas de “fuera de rango”.
-3. Si duración **> 60 min** → no se auto-clasifica como defrost (queda para revisión humana).
-4. Clasificaciones humanas (`autorizado` / `programado` / `no_previsto`) **no se pisan** en reanálisis.
+1. Si duración **≤ 60 min** y cumple patrón térmico (o flag `en_defrost`) → el intervalo completo es **`defrost`**.
+2. Si el fuera es **más largo** pero contiene un tramo de defrost → se **extrae** ese tramo (~≤ 60 min) como **DEFROST** y el fuera se **parte** en los tramos reales antes/después. Los minutos de defrost **no suman** en fuera de rango.
+3. DEFROST se cuenta aparte (`eventosDefrost` / `horasDefrost`).
+4. Remanentes de fuera **&lt; 20 min** tras el partimiento → falsos/transitorios (solo admin).
+5. Clasificaciones humanas **no se pisan** en reanálisis.
 
 ### Criterio de patrón (`server/lib/analisis/defrostPattern.js`)
-- ≥ 1 muestra con `evaporation_coil > return_air` y `evaporation_coil > temp_supply_1`.
-- Subida de evaporador ≥ 5 °C respecto al inicio del intervalo.
-- Pico de evaporador ≥ suministro + 3 °C.
-- O bien suficientes puntos con `en_defrost = true`.
+- Forma **valle → pico → bajada**: el evaporador suele bajar un poco, luego sube con fuerza y **en ≤ 5 min tras el pico debe bajar** (pendiente de enfriamiento).
+- En el pico la separación debe ser **categórica**: evap ≥ retorno + **4 °C** y evap ≥ suministro + **8 °C**.
+- Subida desde el valle ≥ **8 °C**; bajada post-pico ≥ **3 °C** dentro de 5 min.
+- Si el evaporador sube y se **queda en meseta** (`falso_defrost.csv`) → **fuera de rango**, no DEFROST.
+- Contraste: en fuera real (`si_fuera_de_rango.csv`) el evap puede ir apenas por encima del retorno sin pico categórico.
 
 ### Piezas acopladas
 | Pieza | Cambio |
 |-------|--------|
 | Enum clasificación BD/UI | + `defrost` |
-| Motor mensual | `classifyFueraIntervalsWithDefrost` |
+| Motor mensual | `classifyFueraIntervalsWithDefrost` + split embebido |
 | Semanas | columna y horas **DEFROST** aparte; **no** en fuera de rango |
 | UI | badge DEFROST + opción en selector |
 

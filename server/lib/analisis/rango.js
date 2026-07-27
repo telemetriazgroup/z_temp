@@ -1,14 +1,10 @@
-import { filaDefrostEfectivo } from '../powerState.js';
 import {
   computeRangoLimites,
   getMargenesSetpoint,
   toleranciaSetpointDefault,
 } from '../rangoTemperatura.js';
 import { resolveRangoOptsForDevice } from '../deviceAlertConfigRepository.js';
-import {
-  rowEnRangoParaAlerta,
-  timestampRegistroHistorial,
-} from '../historicalTelemetry.js';
+import { timestampRegistroHistorial } from '../historicalTelemetry.js';
 
 /** Apagados menores a esto se consideran falso apagado (no entran al análisis). */
 export const MIN_APAGADO_MS = 8 * 60 * 1000;
@@ -20,10 +16,10 @@ export const MIN_APAGADO_MS = 8 * 60 * 1000;
 export const SUMINISTRO_CERCA_SETPOINT_C = 2;
 
 /**
- * Fuera de rango menores a 30 minutos no se muestran ni suman en el análisis
- * (transitorios / ruido). Solo episodios ≥ 30 min.
+ * Fuera de rango menores a 20 minutos no se muestran ni suman en el análisis
+ * (transitorios / ruido). Solo episodios ≥ 20 min.
  */
-export const MIN_FUERA_RANGO_MS = 30 * 60 * 1000;
+export const MIN_FUERA_RANGO_MS = 20 * 60 * 1000;
 
 /**
  * Normaliza el rango que enviará el cliente para el análisis del mes.
@@ -130,26 +126,42 @@ export function rangoOptsFromSnapshot(snapshot) {
 }
 
 /**
- * En rango para análisis mensual: banda fija del informe si existe;
- * si no, misma lógica que alertas (return_air vs set_point ± márgenes).
+ * En rango para análisis mensual (episodio continuo de fuera de rango).
+ *
+ * Regla de producto: banda inclusiva sobre **return_air** (ej. −10…5):
+ * - 4.7 → en rango; 6.5 → fuera; …; 4.9 → vuelve a en rango.
+ * El evento fuera abre en el **primer** punto fuera y cierra en el **primer**
+ * punto que vuelve a estar dentro (episodio continuo).
+ *
+ * No se usa el flag `en_defrost` como “en rango”: el DEFROST se detecta
+ * después por patrón térmico y se extrae del intervalo.
+ * Equipo apagado (`power_state=0`) → sin evaluación de banda (null); el
+ * apagado se trata aparte y recorta el fuera si se solapan.
  */
 export function rowEnRangoParaAnalisis(row, rangoOpts = null) {
   if (row == null) return null;
   if (row.power_state === 0) return null;
-  if (filaDefrostEfectivo(row)) return true;
 
   const ret = row.return_air;
   if (ret == null || Number.isNaN(Number(ret))) return null;
+  const v = Number(ret);
 
   if (
     rangoOpts?.useBandaFija &&
     rangoOpts.bandaMin != null &&
     rangoOpts.bandaMax != null
   ) {
-    return Number(ret) >= rangoOpts.bandaMin && Number(ret) <= rangoOpts.bandaMax;
+    return v >= Number(rangoOpts.bandaMin) && v <= Number(rangoOpts.bandaMax);
   }
 
-  return rowEnRangoParaAlerta(row, rangoOpts);
+  // Sin banda fija: misma guía que alertas (return_air vs set point ± márgenes),
+  // pero sin tratar defrost como “en rango”.
+  const setPoint = row.set_point;
+  if (setPoint == null || Number.isNaN(Number(setPoint))) return null;
+  const { inferior, superior } = getMargenesSetpoint(Number(setPoint), rangoOpts);
+  return (
+    v >= Number(setPoint) - inferior && v <= Number(setPoint) + superior
+  );
 }
 
 export function resolveRangoParaRun(rowKey, rangoAnalisisInput, setPointFallback) {
@@ -382,7 +394,7 @@ export function partitionApagadoIntervals(intervals, openEnd = Date.now()) {
 }
 
 /**
- * Separa fuera de rango reales (≥ 30 min) de episodios cortos descartados.
+ * Separa fuera de rango reales (≥ 20 min) de episodios cortos descartados.
  */
 export function partitionFueraRangoIntervals(intervals, openEnd = Date.now()) {
   const reales = [];

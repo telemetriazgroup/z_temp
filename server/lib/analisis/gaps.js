@@ -64,3 +64,71 @@ export function shouldPreserveClassification(prev, next, openEnd = Date.now()) {
   );
   return ov / prevDur >= 0.5;
 }
+
+/**
+ * Resta `masks` de cada intervalo en `bases` (puede partir un intervalo en varios).
+ * Uso: quitar franjas de apagado de fuera-de-rango para evitar doble contabilidad.
+ *
+ * @returns {Array<{ since: string, until: string | null, durationHours: number, truncatedByMask?: boolean }>}
+ */
+export function subtractIntervals(bases, masks, openEnd = Date.now()) {
+  const maskRanges = (masks ?? [])
+    .map((m) => {
+      const a = parseTelemetryTimestamp(m.since);
+      const b =
+        m.until == null ? openEnd : parseTelemetryTimestamp(m.until);
+      return { a, b };
+    })
+    .filter((r) => !Number.isNaN(r.a) && !Number.isNaN(r.b) && r.b > r.a)
+    .sort((x, y) => x.a - y.a);
+
+  const out = [];
+  for (const base of bases ?? []) {
+    const baseA = parseTelemetryTimestamp(base.since);
+    const baseOpen = base.until == null;
+    const baseB = baseOpen ? openEnd : parseTelemetryTimestamp(base.until);
+    if (Number.isNaN(baseA) || Number.isNaN(baseB) || baseB <= baseA) continue;
+
+    let pieces = [
+      { a: baseA, b: baseB, openUntil: baseOpen, truncatedByMask: false },
+    ];
+
+    for (const mask of maskRanges) {
+      const next = [];
+      for (const p of pieces) {
+        if (mask.b <= p.a || mask.a >= p.b) {
+          next.push(p);
+          continue;
+        }
+        if (mask.a > p.a) {
+          next.push({
+            a: p.a,
+            b: mask.a,
+            openUntil: false,
+            truncatedByMask: true,
+          });
+        }
+        if (mask.b < p.b) {
+          next.push({
+            a: mask.b,
+            b: p.b,
+            openUntil: p.openUntil,
+            truncatedByMask: true,
+          });
+        }
+      }
+      pieces = next;
+    }
+
+    for (const p of pieces) {
+      if (p.b <= p.a) continue;
+      out.push({
+        since: new Date(p.a).toISOString(),
+        until: p.openUntil ? null : new Date(p.b).toISOString(),
+        durationHours: Math.round(((p.b - p.a) / MS_HORA) * 1000) / 1000,
+        truncatedByMask: p.truncatedByMask === true,
+      });
+    }
+  }
+  return out;
+}

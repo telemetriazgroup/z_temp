@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS analisis_evento (
       'falso_apagado', 'falso_fuera'
     )),
   detalle TEXT,
+  analisis TEXT,
   hash_intervalo TEXT NOT NULL,
   clasificado_por TEXT,
   clasificado_at TIMESTAMPTZ,

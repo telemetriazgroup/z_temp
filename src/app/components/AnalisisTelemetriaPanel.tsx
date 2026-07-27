@@ -153,6 +153,17 @@ function esFalsoPositivoClasif(c: AnalisisClasificacion | undefined) {
   return c === 'falso_apagado' || c === 'falso_fuera';
 }
 
+/** Misma regla que el API para monitoreo: apagado real, fuera de rango y DEFROST. */
+function esEventoVistaCliente(ev: AnalisisEvento) {
+  if (esFalsoPositivoClasif(ev.clasificacion)) return false;
+  if (ev.tipo === 'sin_transmision') return false;
+  return (
+    ev.tipo === 'apagado' ||
+    ev.tipo === 'fuera_rango' ||
+    ev.clasificacion === 'defrost'
+  );
+}
+
 export function AnalisisTelemetriaPanel({
   imei,
   codigo,
@@ -165,6 +176,10 @@ export function AnalisisTelemetriaPanel({
   const esMonitoreo = userIsMonitoreoNavigation(user);
   /** Contadores técnicos / falsos positivos: solo admin. */
   const mostrarMetaDescarte = isAdmin && !esMonitoreo;
+  /** Admin puede previsualizar la lista/resumen como el cliente (monitoreo). */
+  const [vistaCliente, setVistaCliente] = useState(false);
+  const verComoCliente = Boolean(mostrarMetaDescarte && vistaCliente);
+  const verDetalleAdmin = Boolean(mostrarMetaDescarte && !vistaCliente);
   const [ocultarFalsos, setOcultarFalsos] = useState(false);
   const initial = useMemo(() => nowGmt5Parts(), []);
   const [anio, setAnio] = useState(initial.anio);
@@ -428,19 +443,34 @@ export function AnalisisTelemetriaPanel({
 
   const eventosFiltrados = useMemo(() => {
     let all = data?.eventos ?? [];
+    if (verComoCliente || !mostrarMetaDescarte) {
+      all = all.filter(esEventoVistaCliente);
+    } else if (ocultarFalsos) {
+      all = all.filter((e) => !esFalsoPositivoClasif(e.clasificacion));
+    }
     if (ocultarDefrost) {
       all = all.filter((e) => e.clasificacion !== 'defrost');
     }
-    if (mostrarMetaDescarte && ocultarFalsos) {
-      all = all.filter((e) => !esFalsoPositivoClasif(e.clasificacion));
-    }
     return all;
-  }, [data, ocultarDefrost, ocultarFalsos, mostrarMetaDescarte]);
+  }, [data, ocultarDefrost, ocultarFalsos, mostrarMetaDescarte, verComoCliente]);
 
   const clasificacionesSelect = useMemo(() => {
-    if (!mostrarMetaDescarte) return CLASIFICACIONES;
+    if (!verDetalleAdmin) return CLASIFICACIONES;
     return [...CLASIFICACIONES, ...CLASIFICACIONES_ADMIN_EXTRA];
-  }, [mostrarMetaDescarte]);
+  }, [verDetalleAdmin]);
+
+  const resumenVista = useMemo(() => {
+    if (data == null) return null;
+    if (!verComoCliente) return data.resumen;
+    const operativos = (data.eventos ?? []).filter(esEventoVistaCliente);
+    return {
+      ...data.resumen,
+      totalEventos: operativos.length,
+      horasSinTransmision: 0,
+      eventosDefrost: operativos.filter((e) => e.clasificacion === 'defrost')
+        .length,
+    };
+  }, [data, verComoCliente]);
 
   const eventosTotal = eventosFiltrados.length;
   const eventosTotalPaginas = Math.max(
@@ -543,7 +573,8 @@ export function AnalisisTelemetriaPanel({
               {setPointDraft ? ` (SP ${setPointDraft})` : ''}
             </div>
             <p className="text-xs text-muted-foreground">
-              Si desea otro margen (ej. 12–18 en lugar de 14–16), ajústelo aquí
+              Fuera de rango continuo: primer retorno fuera de banda → hasta que
+              vuelve a estar dentro. Si desea otro margen (ej. 12–18), ajústelo
               antes de confirmar.
             </p>
           </div>
@@ -624,7 +655,7 @@ export function AnalisisTelemetriaPanel({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm font-medium">Rango normal de análisis (return air)</p>
             <p className="text-xs text-muted-foreground">
-              {mostrarMetaDescarte
+              {verDetalleAdmin
                 ? 'Admin: ve todos los eventos (incl. falsos positivos y sin TX)'
                 : 'Solo apagado real, fuera de rango y DEFROST'}
             </p>
@@ -668,6 +699,10 @@ export function AnalisisTelemetriaPanel({
             Rango normal:{' '}
             <span className="font-semibold">{rangoNormalLabel}</span>
             {setPointDraft ? ` · SP ${setPointDraft}` : ''}
+            <p className="text-xs text-muted-foreground mt-1">
+              Fuera de rango: desde el primer retorno fuera de esta banda hasta
+              que vuelve a estar dentro (límites inclusivos).
+            </p>
           </div>
         </div>
 
@@ -697,21 +732,24 @@ export function AnalisisTelemetriaPanel({
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <Badge variant="outline">
-                    Fuera {data.resumen.horasFueraRango} h
+                    Fuera {resumenVista?.horasFueraRango ?? data.resumen.horasFueraRango}{' '}
+                    h
                   </Badge>
                   <Badge variant="outline">
-                    Apagado {data.resumen.horasApagado} h
+                    Apagado {resumenVista?.horasApagado ?? data.resumen.horasApagado}{' '}
+                    h
                   </Badge>
                   <Badge className="bg-sky-600 hover:bg-sky-600">
-                    DEFROST {data.resumen.eventosDefrost ?? 0} ev ·{' '}
-                    {data.resumen.horasDefrost ?? 0} h
+                    DEFROST {resumenVista?.eventosDefrost ?? 0} ev ·{' '}
+                    {resumenVista?.horasDefrost ?? data.resumen.horasDefrost ?? 0}{' '}
+                    h
                   </Badge>
-                  {isAdmin && (
+                  {verDetalleAdmin && (
                     <Badge variant="outline">
                       Sin TX {data.resumen.horasSinTransmision} h
                     </Badge>
                   )}
-                  {mostrarMetaDescarte &&
+                  {verDetalleAdmin &&
                     (data.resumen.eventosFalsoApagado != null ||
                       data.resumen.eventosFalsoFuera != null) && (
                       <Badge variant="secondary">
@@ -727,7 +765,12 @@ export function AnalisisTelemetriaPanel({
                       Rango {data.analisis.rangoConfigSnapshot.label}
                     </Badge>
                   )}
-                  {mostrarMetaDescarte &&
+                  {verComoCliente && (
+                    <Badge className="bg-emerald-700 hover:bg-emerald-700">
+                      Vista cliente
+                    </Badge>
+                  )}
+                  {verDetalleAdmin &&
                     (lastMeta?.falsosApagadoDescartados ??
                       data.analisis.rangoConfigSnapshot
                         ?.falsosApagadoDescartados) != null && (
@@ -738,7 +781,7 @@ export function AnalisisTelemetriaPanel({
                             ?.falsosApagadoDescartados}
                       </Badge>
                     )}
-                  {mostrarMetaDescarte &&
+                  {verDetalleAdmin &&
                     (lastMeta?.falsosApagadoPorSuministro ??
                       data.analisis.rangoConfigSnapshot
                         ?.falsosApagadoPorSuministro) != null && (
@@ -750,12 +793,12 @@ export function AnalisisTelemetriaPanel({
                         pts
                       </Badge>
                     )}
-                  {mostrarMetaDescarte &&
+                  {verDetalleAdmin &&
                     (lastMeta?.fueraRangoCortosDescartados ??
                       data.analisis.rangoConfigSnapshot
                         ?.fueraRangoCortosDescartados) != null && (
                       <Badge variant="outline">
-                        Fuera de rango &lt;30 min descartados:{' '}
+                        Fuera de rango &lt;20 min descartados:{' '}
                         {lastMeta?.fueraRangoCortosDescartados ??
                           data.analisis.rangoConfigSnapshot
                             ?.fueraRangoCortosDescartados}
@@ -827,7 +870,7 @@ export function AnalisisTelemetriaPanel({
                     <TableHead>Fuera</TableHead>
                     <TableHead>Apagado</TableHead>
                     <TableHead>DEFROST</TableHead>
-                    {isAdmin && <TableHead>Sin TX</TableHead>}
+                    {verDetalleAdmin && <TableHead>Sin TX</TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -841,7 +884,7 @@ export function AnalisisTelemetriaPanel({
                       <TableCell>
                         {s.eventosDefrost ?? 0} ev · {s.horasDefrost ?? 0} h
                       </TableCell>
-                      {isAdmin && (
+                      {verDetalleAdmin && (
                         <TableCell>{s.horasSinTransmision} h</TableCell>
                       )}
                     </TableRow>
@@ -854,14 +897,34 @@ export function AnalisisTelemetriaPanel({
               <div className="flex flex-wrap items-center justify-between gap-2 px-1">
                 <p className="text-sm font-medium">
                   Eventos
-                  {!mostrarMetaDescarte && (
+                  {(verComoCliente || !mostrarMetaDescarte) && (
                     <span className="ml-2 text-xs font-normal text-muted-foreground">
-                      (operativos)
+                      (como cliente)
                     </span>
                   )}
                 </p>
                 <div className="flex flex-wrap gap-2">
                   {mostrarMetaDescarte && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={vistaCliente ? 'default' : 'outline'}
+                      onClick={() => {
+                        setVistaCliente((v) => !v);
+                        setEventosPage(1);
+                        setSelected(null);
+                        setDetalleOpen(false);
+                      }}
+                      title={
+                        vistaCliente
+                          ? 'Volver a la vista completa de admin'
+                          : 'Ver la misma lista y resumen que ve el cliente (monitoreo)'
+                      }
+                    >
+                      {vistaCliente ? 'Vista admin' : 'Ver como cliente'}
+                    </Button>
+                  )}
+                  {verDetalleAdmin && (
                     <Button
                       type="button"
                       size="sm"
@@ -1059,6 +1122,16 @@ export function AnalisisTelemetriaPanel({
                             placeholder="Motivo, orden de trabajo, observaciones…"
                           />
                         </div>
+                        {mostrarMetaDescarte && (
+                          <div className="space-y-2">
+                            <Label>Análisis</Label>
+                            <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs whitespace-pre-wrap font-mono leading-relaxed text-muted-foreground max-h-56 overflow-y-auto">
+                              {selected.analisis?.trim()
+                                ? selected.analisis
+                                : 'Sin texto de análisis del motor. Regenerar el mes para generar la lógica aplicada.'}
+                            </div>
+                          </div>
+                        )}
                         <div className="flex flex-wrap gap-2">
                           <Button
                             type="button"
