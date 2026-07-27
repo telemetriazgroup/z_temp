@@ -1,5 +1,4 @@
 import {
-  computeApagadoIntervals,
   computeOutOfRangeIntervals,
   fetchHistorialRango,
   timestampRegistroHistorial,
@@ -28,47 +27,60 @@ import { ensureAnalisisSchema } from '../db.js';
 import {
   resolveRangoParaRun,
   rowEnRangoParaAnalisis,
+  computeApagadoIntervalsAnalisis,
   partitionApagadoIntervals,
-  partitionFueraRangoIntervals,
   intervalDurationHours,
   describeRangoSnapshot,
   MIN_APAGADO_MS,
   MIN_FUERA_RANGO_MS,
+  SUMINISTRO_CERCA_SETPOINT_C,
+  esEventoFalsoPositivo,
+  esEventoOperativoParaMonitoreo,
 } from './rango.js';
+import { classifyFueraIntervalsWithDefrost } from './defrostPattern.js';
 
 function rowKeyOf(codigo, imei) {
   return `${codigo}-${imei}`;
 }
 
-function toEventos(apagados, fuera, gaps) {
+function toEventos(apagados, fuera, gaps, descartes = {}) {
   const list = [];
-  for (const i of apagados) {
-    list.push({
-      tipo: 'apagado',
-      since: i.since,
-      until: i.until,
-      durationHours: i.durationHours ?? intervalDurationHours(i.since, i.until),
-      hash: eventHash('apagado', i.since, i.until),
-    });
-  }
-  for (const i of fuera) {
-    list.push({
-      tipo: 'fuera_rango',
-      since: i.since,
-      until: i.until,
-      durationHours: i.durationHours ?? intervalDurationHours(i.since, i.until),
-      hash: eventHash('fuera_rango', i.since, i.until),
-    });
-  }
-  for (const i of gaps) {
-    list.push({
-      tipo: 'sin_transmision',
-      since: i.since,
-      until: i.until,
-      durationHours: i.durationHours ?? intervalDurationHours(i.since, i.until),
-      hash: eventHash('sin_transmision', i.since, i.until),
-    });
-  }
+  const pushMany = (items, tipo, defaults = {}) => {
+    for (const i of items ?? []) {
+      list.push({
+        tipo,
+        since: i.since,
+        until: i.until,
+        durationHours: i.durationHours ?? intervalDurationHours(i.since, i.until),
+        hash: eventHash(
+          `${tipo}:${i.clasificacion ?? defaults.clasificacion ?? 'x'}`,
+          i.since,
+          i.until
+        ),
+        clasificacion: i.clasificacion ?? defaults.clasificacion,
+        detalle: i.detalle ?? defaults.detalle ?? null,
+      });
+    }
+  };
+
+  pushMany(apagados, 'apagado');
+  pushMany(fuera, 'fuera_rango');
+  pushMany(gaps, 'sin_transmision');
+  pushMany(descartes.falsosApagadoDuracion, 'apagado', {
+    clasificacion: 'falso_apagado',
+    detalle: 'Falso apagado: duración < 8 minutos (descartado del cálculo operativo).',
+  });
+  pushMany(descartes.falsosApagadoSuministro, 'apagado', {
+    clasificacion: 'falso_apagado',
+    detalle:
+      'Falso apagado: power_state=0 con suministro cerca del set point (descartado del cálculo operativo).',
+  });
+  pushMany(descartes.fueraCortos, 'fuera_rango', {
+    clasificacion: 'falso_fuera',
+    detalle:
+      'Fuera de rango < 30 minutos (transitorio; descartado del cálculo operativo).',
+  });
+
   list.sort((a, b) => new Date(a.since) - new Date(b.since));
   return list;
 }
@@ -127,7 +139,9 @@ export async function runAnalisisMensual(input) {
     fetchFrom.getTime() > window.hastaMs &&
     existing != null
   ) {
-    return getAnalisisCompleto(existing.id, { isAdmin: true });
+    return getAnalisisCompleto(existing.id, {
+      isAdmin: input.isAdmin !== false,
+    });
   }
 
   // Siempre mes completo para detectar intervalos/rango con coherencia.
@@ -181,12 +195,20 @@ export async function runAnalisisMensual(input) {
   const lastTs = timestamps.at(-1) ?? window.hastaMs;
 
   const ref = new Date(window.hastaMs);
-  const apagadosRaw = computeApagadoIntervals(datos, ref).filter(
+  const {
+    intervals: apagadosCandidatos,
+    falsosPorSuministroPuntos,
+    falsosSuministro,
+  } = computeApagadoIntervalsAnalisis(datos, ref);
+  const apagadosRaw = apagadosCandidatos.filter(
     (i) => new Date(i.since).getTime() >= window.desdeMs
   );
   const { reales: apagados, falsos: falsosApagado } = partitionApagadoIntervals(
     apagadosRaw,
     now.getTime()
+  );
+  const falsosSuministroMes = (falsosSuministro ?? []).filter(
+    (i) => new Date(i.since).getTime() >= window.desdeMs
   );
 
   const fueraRaw = computeOutOfRangeIntervals(
@@ -195,16 +217,25 @@ export async function runAnalisisMensual(input) {
     ref,
     rowEnRangoParaAnalisis
   ).filter((i) => new Date(i.since).getTime() >= window.desdeMs);
-  const { reales: fuera, cortos: fueraCortos } = partitionFueraRangoIntervals(
-    fueraRaw,
-    now.getTime()
-  );
+  const {
+    defrost: fueraDefrost,
+    fueraReales,
+    cortos: fueraCortos,
+  } = classifyFueraIntervalsWithDefrost(fueraRaw, datos, {
+    minFueraMs: MIN_FUERA_RANGO_MS,
+    openEnd: now.getTime(),
+  });
+  const fuera = [...fueraReales, ...fueraDefrost];
 
   const gaps = computeSinTransmisionIntervals(datos).filter(
     (i) => new Date(i.since).getTime() >= window.desdeMs
   );
 
-  let eventos = toEventos(apagados, fuera, gaps);
+  let eventos = toEventos(apagados, fuera, gaps, {
+    falsosApagadoDuracion: falsosApagado,
+    falsosApagadoSuministro: falsosSuministroMes,
+    fueraCortos,
+  });
   if (!fullRecompute && existing?.analizado_hasta != null) {
     const prevEventos = await listEventos(existing.id);
     const cutoff = new Date(existing.analizado_hasta).getTime();
@@ -226,6 +257,8 @@ export async function runAnalisisMensual(input) {
             : e.until_at.toISOString?.() ?? e.until_at,
         durationHours: Number(e.duration_hours),
         hash: e.hash_intervalo,
+        clasificacion: e.clasificacion,
+        detalle: e.detalle,
       }));
     const newOnes = eventos.filter(
       (e) => new Date(e.since).getTime() >= fetchFrom.getTime() - 60000
@@ -252,8 +285,11 @@ export async function runAnalisisMensual(input) {
     label: describeRangoSnapshot(snapshot),
     minApagadoMinutos: MIN_APAGADO_MS / 60000,
     falsosApagadoDescartados: falsosApagado.length,
+    falsosApagadoPorSuministro: falsosPorSuministroPuntos,
+    suministroCercaSetpointC: SUMINISTRO_CERCA_SETPOINT_C,
     minFueraRangoMinutos: MIN_FUERA_RANGO_MS / 60000,
     fueraRangoCortosDescartados: fueraCortos.length,
+    defrostAutoDetectados: fueraDefrost.length,
   };
 
   const cabecera = await upsertAnalisisMensual({
@@ -272,11 +308,14 @@ export async function runAnalisisMensual(input) {
   const semanas = aggregateWeeks(
     anio,
     mes,
-    eventos.map((e) => ({
-      tipo: e.tipo,
-      since: e.since,
-      until: e.until,
-    })),
+    eventos
+      .filter((e) => !esEventoFalsoPositivo(e))
+      .map((e) => ({
+        tipo: e.tipo,
+        since: e.since,
+        until: e.until,
+        clasificacion: e.clasificacion,
+      })),
     now.getTime()
   );
   await replaceSemanas(cabecera.id, semanas);
@@ -284,13 +323,18 @@ export async function runAnalisisMensual(input) {
   const full = await getAnalisisCompleto(cabecera.id, {
     isAdmin: input.isAdmin !== false,
   });
+  const isAdmin = input.isAdmin !== false;
+  if (!isAdmin) return full;
   return {
     ...full,
     meta: {
       falsosApagadoDescartados: falsosApagado.length,
+      falsosApagadoPorSuministro: falsosPorSuministroPuntos,
+      suministroCercaSetpointC: SUMINISTRO_CERCA_SETPOINT_C,
       minApagadoMinutos: MIN_APAGADO_MS / 60000,
       fueraRangoCortosDescartados: fueraCortos.length,
       minFueraRangoMinutos: MIN_FUERA_RANGO_MS / 60000,
+      defrostAutoDetectados: fueraDefrost.length,
       rangoUsado: snapshotPersist,
     },
   };
@@ -319,7 +363,7 @@ export async function getAnalisisCompleto(idOrKeys, { isAdmin = true } = {}) {
   const mappedAll = eventos.map((e) => mapEventoRow(e, { isAdmin }));
   const mappedEventos = isAdmin
     ? mappedAll
-    : mappedAll.filter((e) => e.tipo !== 'sin_transmision');
+    : mappedAll.filter((e) => esEventoOperativoParaMonitoreo(e));
 
   const semanasMapped = semanas.map((s) => {
     const base = mapSemanaRow(s);
@@ -330,6 +374,13 @@ export async function getAnalisisCompleto(idOrKeys, { isAdmin = true } = {}) {
     };
   });
 
+  const falsos = mappedAll.filter((e) => esEventoFalsoPositivo(e));
+  const horasFalsos = (pred) =>
+    Math.round(
+      falsos.filter(pred).reduce((s, e) => s + Number(e.durationHours || 0), 0) *
+        10
+    ) / 10;
+
   const resumen = {
     totalEventos: mappedEventos.length,
     horasFueraRango: semanas.reduce((s, w) => s + Number(w.horas_fuera_rango), 0),
@@ -337,10 +388,26 @@ export async function getAnalisisCompleto(idOrKeys, { isAdmin = true } = {}) {
     horasSinTransmision: isAdmin
       ? semanas.reduce((s, w) => s + Number(w.horas_sin_transmision), 0)
       : 0,
+    horasDefrost: semanas.reduce((s, w) => s + Number(w.horas_defrost ?? 0), 0),
+    eventosDefrost: mappedEventos.filter((e) => e.clasificacion === 'defrost')
+      .length,
   };
 
+  const analisisMapped = mapAnalisisRow(row);
+  if (!isAdmin && analisisMapped.rangoConfigSnapshot != null) {
+    const snap = { ...analisisMapped.rangoConfigSnapshot };
+    delete snap.falsosApagadoDescartados;
+    delete snap.falsosApagadoPorSuministro;
+    delete snap.fueraRangoCortosDescartados;
+    delete snap.defrostAutoDetectados;
+    delete snap.suministroCercaSetpointC;
+    delete snap.minApagadoMinutos;
+    delete snap.minFueraRangoMinutos;
+    analisisMapped.rangoConfigSnapshot = snap;
+  }
+
   return {
-    analisis: mapAnalisisRow(row),
+    analisis: analisisMapped,
     eventos: mappedEventos,
     semanas: semanasMapped,
     resumen: {
@@ -348,13 +415,38 @@ export async function getAnalisisCompleto(idOrKeys, { isAdmin = true } = {}) {
       horasFueraRango: Math.round(resumen.horasFueraRango * 10) / 10,
       horasApagado: Math.round(resumen.horasApagado * 10) / 10,
       horasSinTransmision: Math.round(resumen.horasSinTransmision * 10) / 10,
+      horasDefrost: Math.round(resumen.horasDefrost * 10) / 10,
+      ...(isAdmin
+        ? {
+            eventosFalsoApagado: falsos.filter(
+              (e) => e.clasificacion === 'falso_apagado'
+            ).length,
+            horasFalsoApagado: horasFalsos(
+              (e) => e.clasificacion === 'falso_apagado'
+            ),
+            eventosFalsoFuera: falsos.filter(
+              (e) => e.clasificacion === 'falso_fuera'
+            ).length,
+            horasFalsoFuera: horasFalsos(
+              (e) => e.clasificacion === 'falso_fuera'
+            ),
+          }
+        : {}),
     },
   };
 }
 
 export async function patchEventoClasificacion(eventoId, body) {
   await ensureAnalisisSchema();
-  const allowed = ['autorizado', 'programado', 'no_previsto', 'sin_clasificar'];
+  const allowed = [
+    'autorizado',
+    'programado',
+    'no_previsto',
+    'sin_clasificar',
+    'defrost',
+    'falso_apagado',
+    'falso_fuera',
+  ];
   if (!allowed.includes(body.clasificacion)) {
     throw new Error('Clasificación inválida');
   }

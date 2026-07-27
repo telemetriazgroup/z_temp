@@ -2,7 +2,10 @@ export type AnalisisClasificacion =
   | 'autorizado'
   | 'programado'
   | 'no_previsto'
-  | 'sin_clasificar';
+  | 'sin_clasificar'
+  | 'defrost'
+  | 'falso_apagado'
+  | 'falso_fuera';
 
 export type AnalisisEventoTipo =
   | 'apagado'
@@ -19,9 +22,12 @@ export interface AnalisisRangoConfig {
   useRangoPersonalizado?: boolean;
   label?: string;
   falsosApagadoDescartados?: number;
+  falsosApagadoPorSuministro?: number;
+  suministroCercaSetpointC?: number;
   minApagadoMinutos?: number;
   fueraRangoCortosDescartados?: number;
   minFueraRangoMinutos?: number;
+  defrostAutoDetectados?: number;
 }
 
 export interface AnalisisMensual {
@@ -64,6 +70,8 @@ export interface AnalisisSemana {
   horasFueraRango: number;
   horasApagado: number;
   horasSinTransmision: number;
+  horasDefrost?: number;
+  eventosDefrost?: number;
 }
 
 export interface AnalisisCompleto {
@@ -75,12 +83,22 @@ export interface AnalisisCompleto {
     horasFueraRango: number;
     horasApagado: number;
     horasSinTransmision: number;
+    horasDefrost?: number;
+    eventosDefrost?: number;
+    /** Solo admin: falsos positivos detectados (no operativos). */
+    eventosFalsoApagado?: number;
+    horasFalsoApagado?: number;
+    eventosFalsoFuera?: number;
+    horasFalsoFuera?: number;
   };
   meta?: {
     falsosApagadoDescartados?: number;
+    falsosApagadoPorSuministro?: number;
+    suministroCercaSetpointC?: number;
     minApagadoMinutos?: number;
     fueraRangoCortosDescartados?: number;
     minFueraRangoMinutos?: number;
+    defrostAutoDetectados?: number;
     rangoUsado?: AnalisisRangoConfig;
   };
 }

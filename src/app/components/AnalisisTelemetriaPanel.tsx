@@ -135,10 +135,23 @@ function fmtDt(v: string | null | undefined): string {
 
 const CLASIFICACIONES: { id: AnalisisClasificacion; label: string }[] = [
   { id: 'sin_clasificar', label: 'Sin clasificar' },
+  { id: 'defrost', label: 'DEFROST' },
   { id: 'autorizado', label: 'Autorizado' },
   { id: 'programado', label: 'Programado' },
   { id: 'no_previsto', label: 'No previsto' },
 ];
+
+const CLASIFICACIONES_ADMIN_EXTRA: {
+  id: AnalisisClasificacion;
+  label: string;
+}[] = [
+  { id: 'falso_apagado', label: 'Falso apagado' },
+  { id: 'falso_fuera', label: 'Fuera corto (descartado)' },
+];
+
+function esFalsoPositivoClasif(c: AnalisisClasificacion | undefined) {
+  return c === 'falso_apagado' || c === 'falso_fuera';
+}
 
 export function AnalisisTelemetriaPanel({
   imei,
@@ -150,8 +163,9 @@ export function AnalisisTelemetriaPanel({
   const { user } = useAuth();
   const isAdmin = user?.superUser === true;
   const esMonitoreo = userIsMonitoreoNavigation(user);
-  /** Contadores técnicos de descarte: solo superusuario, nunca rol Monitoreo. */
+  /** Contadores técnicos / falsos positivos: solo admin. */
   const mostrarMetaDescarte = isAdmin && !esMonitoreo;
+  const [ocultarFalsos, setOcultarFalsos] = useState(false);
   const initial = useMemo(() => nowGmt5Parts(), []);
   const [anio, setAnio] = useState(initial.anio);
   const [mes, setMes] = useState(initial.mes);
@@ -166,6 +180,7 @@ export function AnalisisTelemetriaPanel({
   const [clasifDraft, setClasifDraft] =
     useState<AnalisisClasificacion>('sin_clasificar');
   const [eventosPage, setEventosPage] = useState(1);
+  const [ocultarDefrost, setOcultarDefrost] = useState(false);
   const initialBand = useMemo(
     () => defaultBandFromSetPoint(setPointInicial),
     [setPointInicial]
@@ -353,8 +368,8 @@ export function AnalisisTelemetriaPanel({
     );
     doc.text(
       isAdmin
-        ? `Fuera: ${data.resumen.horasFueraRango} h · Apagado: ${data.resumen.horasApagado} h · Sin TX: ${data.resumen.horasSinTransmision} h`
-        : `Fuera: ${data.resumen.horasFueraRango} h · Apagado: ${data.resumen.horasApagado} h`,
+        ? `Fuera: ${data.resumen.horasFueraRango} h · Apagado: ${data.resumen.horasApagado} h · DEFROST: ${data.resumen.eventosDefrost ?? 0} ev / ${data.resumen.horasDefrost ?? 0} h · Sin TX: ${data.resumen.horasSinTransmision} h`
+        : `Fuera: ${data.resumen.horasFueraRango} h · Apagado: ${data.resumen.horasApagado} h · DEFROST: ${data.resumen.eventosDefrost ?? 0} ev / ${data.resumen.horasDefrost ?? 0} h`,
       14,
       30
     );
@@ -411,17 +426,32 @@ export function AnalisisTelemetriaPanel({
     [serie]
   );
 
-  const eventosTotal = data?.eventos.length ?? 0;
+  const eventosFiltrados = useMemo(() => {
+    let all = data?.eventos ?? [];
+    if (ocultarDefrost) {
+      all = all.filter((e) => e.clasificacion !== 'defrost');
+    }
+    if (mostrarMetaDescarte && ocultarFalsos) {
+      all = all.filter((e) => !esFalsoPositivoClasif(e.clasificacion));
+    }
+    return all;
+  }, [data, ocultarDefrost, ocultarFalsos, mostrarMetaDescarte]);
+
+  const clasificacionesSelect = useMemo(() => {
+    if (!mostrarMetaDescarte) return CLASIFICACIONES;
+    return [...CLASIFICACIONES, ...CLASIFICACIONES_ADMIN_EXTRA];
+  }, [mostrarMetaDescarte]);
+
+  const eventosTotal = eventosFiltrados.length;
   const eventosTotalPaginas = Math.max(
     1,
     Math.ceil(eventosTotal / EVENTOS_PAGE_SIZE) || 1
   );
   const eventosPaginaSegura = Math.min(eventosPage, eventosTotalPaginas);
   const eventosPagina = useMemo(() => {
-    if (data == null) return [];
     const start = (eventosPaginaSegura - 1) * EVENTOS_PAGE_SIZE;
-    return data.eventos.slice(start, start + EVENTOS_PAGE_SIZE);
-  }, [data, eventosPaginaSegura]);
+    return eventosFiltrados.slice(start, start + EVENTOS_PAGE_SIZE);
+  }, [eventosFiltrados, eventosPaginaSegura]);
 
   const openConfirm = (mode: 'analizar' | 'regenerar') => {
     setConfirmMode(mode);
@@ -594,7 +624,9 @@ export function AnalisisTelemetriaPanel({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm font-medium">Rango normal de análisis (return air)</p>
             <p className="text-xs text-muted-foreground">
-              Apagados &lt; 6 min = falso apagado (no se listan)
+              {mostrarMetaDescarte
+                ? 'Admin: ve todos los eventos (incl. falsos positivos y sin TX)'
+                : 'Solo apagado real, fuera de rango y DEFROST'}
             </p>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -670,11 +702,25 @@ export function AnalisisTelemetriaPanel({
                   <Badge variant="outline">
                     Apagado {data.resumen.horasApagado} h
                   </Badge>
+                  <Badge className="bg-sky-600 hover:bg-sky-600">
+                    DEFROST {data.resumen.eventosDefrost ?? 0} ev ·{' '}
+                    {data.resumen.horasDefrost ?? 0} h
+                  </Badge>
                   {isAdmin && (
                     <Badge variant="outline">
                       Sin TX {data.resumen.horasSinTransmision} h
                     </Badge>
                   )}
+                  {mostrarMetaDescarte &&
+                    (data.resumen.eventosFalsoApagado != null ||
+                      data.resumen.eventosFalsoFuera != null) && (
+                      <Badge variant="secondary">
+                        Falsos: apagado {data.resumen.eventosFalsoApagado ?? 0}{' '}
+                        ({data.resumen.horasFalsoApagado ?? 0} h) · fuera corto{' '}
+                        {data.resumen.eventosFalsoFuera ?? 0} (
+                        {data.resumen.horasFalsoFuera ?? 0} h)
+                      </Badge>
+                    )}
                   <Badge>{data.analisis.estado}</Badge>
                   {data.analisis.rangoConfigSnapshot?.label != null && (
                     <Badge variant="secondary">
@@ -686,10 +732,22 @@ export function AnalisisTelemetriaPanel({
                       data.analisis.rangoConfigSnapshot
                         ?.falsosApagadoDescartados) != null && (
                       <Badge variant="outline">
-                        Falsos apagado descartados:{' '}
+                        Falsos apagado &lt;8 min:{' '}
                         {lastMeta?.falsosApagadoDescartados ??
                           data.analisis.rangoConfigSnapshot
                             ?.falsosApagadoDescartados}
+                      </Badge>
+                    )}
+                  {mostrarMetaDescarte &&
+                    (lastMeta?.falsosApagadoPorSuministro ??
+                      data.analisis.rangoConfigSnapshot
+                        ?.falsosApagadoPorSuministro) != null && (
+                      <Badge variant="outline">
+                        Falsos apagado (suministro≈SP):{' '}
+                        {lastMeta?.falsosApagadoPorSuministro ??
+                          data.analisis.rangoConfigSnapshot
+                            ?.falsosApagadoPorSuministro}{' '}
+                        pts
                       </Badge>
                     )}
                   {mostrarMetaDescarte &&
@@ -768,6 +826,7 @@ export function AnalisisTelemetriaPanel({
                     <TableHead>Hasta</TableHead>
                     <TableHead>Fuera</TableHead>
                     <TableHead>Apagado</TableHead>
+                    <TableHead>DEFROST</TableHead>
                     {isAdmin && <TableHead>Sin TX</TableHead>}
                   </TableRow>
                 </TableHeader>
@@ -779,6 +838,9 @@ export function AnalisisTelemetriaPanel({
                       <TableCell className="text-xs">{fmtDt(s.hasta)}</TableCell>
                       <TableCell>{s.horasFueraRango} h</TableCell>
                       <TableCell>{s.horasApagado} h</TableCell>
+                      <TableCell>
+                        {s.eventosDefrost ?? 0} ev · {s.horasDefrost ?? 0} h
+                      </TableCell>
                       {isAdmin && (
                         <TableCell>{s.horasSinTransmision} h</TableCell>
                       )}
@@ -789,6 +851,53 @@ export function AnalisisTelemetriaPanel({
             </div>
 
             <div className="space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+                <p className="text-sm font-medium">
+                  Eventos
+                  {!mostrarMetaDescarte && (
+                    <span className="ml-2 text-xs font-normal text-muted-foreground">
+                      (operativos)
+                    </span>
+                  )}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {mostrarMetaDescarte && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={ocultarFalsos ? 'default' : 'outline'}
+                      onClick={() => {
+                        setOcultarFalsos((v) => !v);
+                        setEventosPage(1);
+                        setSelected(null);
+                        setDetalleOpen(false);
+                      }}
+                    >
+                      {ocultarFalsos
+                        ? 'Mostrar falsos positivos'
+                        : 'Ocultar falsos positivos'}
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={ocultarDefrost ? 'default' : 'outline'}
+                    onClick={() => {
+                      setOcultarDefrost((v) => !v);
+                      setEventosPage(1);
+                      setSelected(null);
+                      setDetalleOpen(false);
+                    }}
+                    title={
+                      ocultarDefrost
+                        ? 'Mostrar también eventos DEFROST'
+                        : 'Ocultar eventos DEFROST de la lista'
+                    }
+                  >
+                    {ocultarDefrost ? 'Mostrar DEFROST' : 'Filtrar sin DEFROST'}
+                  </Button>
+                </div>
+              </div>
               <div className="overflow-x-auto border rounded-md">
                 <Table>
                   <TableHeader>
@@ -807,7 +916,9 @@ export function AnalisisTelemetriaPanel({
                           colSpan={5}
                           className="text-center text-muted-foreground"
                         >
-                          Sin eventos en el periodo analizado.
+                          {ocultarDefrost
+                            ? 'Sin eventos (filtro sin DEFROST activo).'
+                            : 'Sin eventos en el periodo analizado.'}
                         </TableCell>
                       </TableRow>
                     )}
@@ -823,9 +934,17 @@ export function AnalisisTelemetriaPanel({
                         <TableCell>
                           <Badge
                             variant={
-                              ev.tipo === 'fuera_rango'
-                                ? 'destructive'
-                                : 'outline'
+                              esFalsoPositivoClasif(ev.clasificacion)
+                                ? 'secondary'
+                                : ev.tipo === 'fuera_rango' &&
+                                    ev.clasificacion !== 'defrost'
+                                  ? 'destructive'
+                                  : 'outline'
+                            }
+                            className={
+                              ev.clasificacion === 'defrost'
+                                ? 'bg-sky-600 hover:bg-sky-600 text-white'
+                                : undefined
                             }
                           >
                             {ev.label}
@@ -834,9 +953,19 @@ export function AnalisisTelemetriaPanel({
                         <TableCell className="text-xs">{fmtDt(ev.since)}</TableCell>
                         <TableCell className="text-xs">{fmtDt(ev.until)}</TableCell>
                         <TableCell>{fmtDuracion(ev)}</TableCell>
-                        <TableCell className="text-xs">
-                          {ev.clasificacion}
-                        </TableCell>
+                      <TableCell className="text-xs">
+                        {ev.clasificacion === 'defrost' ? (
+                          <Badge className="bg-sky-600 hover:bg-sky-600">DEFROST</Badge>
+                        ) : esFalsoPositivoClasif(ev.clasificacion) ? (
+                          <Badge variant="secondary">
+                            {ev.clasificacion === 'falso_apagado'
+                              ? 'Falso apagado'
+                              : 'Fuera corto'}
+                          </Badge>
+                        ) : (
+                          ev.clasificacion
+                        )}
+                      </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -913,7 +1042,7 @@ export function AnalisisTelemetriaPanel({
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              {CLASIFICACIONES.map((c) => (
+                              {clasificacionesSelect.map((c) => (
                                 <SelectItem key={c.id} value={c.id}>
                                   {c.label}
                                 </SelectItem>

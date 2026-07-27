@@ -89,8 +89,22 @@ export function aggregateWeeks(anio, mes, eventos, openEnd = Date.now()) {
     let horasFuera = 0;
     let horasApagado = 0;
     let horasSinTx = 0;
+    let horasDefrost = 0;
+    let eventosDefrost = 0;
     for (const ev of eventos) {
       const h = hoursOverlap(ev.since, ev.until, w.desde, w.hasta, openEnd);
+      if (h <= 0) continue;
+      if (ev.clasificacion === 'defrost') {
+        horasDefrost += h;
+        eventosDefrost += 1;
+        continue;
+      }
+      if (
+        ev.clasificacion === 'falso_apagado' ||
+        ev.clasificacion === 'falso_fuera'
+      ) {
+        continue;
+      }
       if (ev.tipo === 'fuera_rango') horasFuera += h;
       else if (ev.tipo === 'apagado') horasApagado += h;
       else if (ev.tipo === 'sin_transmision') horasSinTx += h;
@@ -102,6 +116,8 @@ export function aggregateWeeks(anio, mes, eventos, openEnd = Date.now()) {
       horasFueraRango: Math.round(horasFuera * 10) / 10,
       horasApagado: Math.round(horasApagado * 10) / 10,
       horasSinTransmision: Math.round(horasSinTx * 10) / 10,
+      horasDefrost: Math.round(horasDefrost * 10) / 10,
+      eventosDefrost,
     };
   });
 }

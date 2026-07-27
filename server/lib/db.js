@@ -51,6 +51,29 @@ export async function ensureAnalisisSchema() {
     const sqlPath = path.join(__dirname, '../sql/001_analisis.sql');
     const sql = fs.readFileSync(sqlPath, 'utf8');
     await query(sql);
+    // Migración: clasificaciones del motor (defrost + falsos positivos).
+    await query(`
+      DO $$
+      BEGIN
+        ALTER TABLE analisis_evento DROP CONSTRAINT IF EXISTS analisis_evento_clasificacion_check;
+        ALTER TABLE analisis_evento
+          ADD CONSTRAINT analisis_evento_clasificacion_check
+          CHECK (clasificacion IN (
+            'autorizado', 'programado', 'no_previsto', 'sin_clasificar', 'defrost',
+            'falso_apagado', 'falso_fuera'
+          ));
+      EXCEPTION WHEN others THEN
+        NULL;
+      END $$;
+    `);
+    await query(`
+      ALTER TABLE analisis_semana
+        ADD COLUMN IF NOT EXISTS horas_defrost DOUBLE PRECISION NOT NULL DEFAULT 0
+    `);
+    await query(`
+      ALTER TABLE analisis_semana
+        ADD COLUMN IF NOT EXISTS eventos_defrost INT NOT NULL DEFAULT 0
+    `);
     migrated = true;
     console.log('[analisis] esquema PostgreSQL listo');
     return true;

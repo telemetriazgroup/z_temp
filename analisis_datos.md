@@ -16,7 +16,9 @@ Estado: **implementación iniciada** (API + motor + UI en detalle). Pendientes m
 | 2 | Huecos > 2 h | Evento de trazabilidad: admin «Sin transmisión»; monitoreo «Validar datos» (ver §4.5). |
 | 2 | Huecos ≤ 2 h | **No** generan evento de hueco: el dato se **promedia** / integra en la serie horaria (ver §4.5). |
 | 2 | Relleno huecos largos | Solo **admin**; algoritmo **PLI + LOCF** (§4.6): puntos **1/hora** con tendencia. |
-| 2b | Apagados cortos | Solo cuentan apagados **≥ 6 minutos**. Menores (p. ej. 2–3 min) = **falso apagado** (se descartan del análisis). |
+| 2b | Apagados cortos | Solo cuentan apagados **≥ 8 minutos**. Menores = **falso apagado** (se descartan del análisis). |
+| 2b | Falso apagado por suministro | Si `power_state=0` pero `|temp_supply_1 − set_point| ≤ 2 °C`, **no** es apagado real (el equipo mantiene temperatura). Se discrimina del cálculo general. |
+| 2d | Vista monitoreo vs admin | **Monitoreo** solo ve eventos operativos (**apagado real**, **fuera de rango**, **DEFROST**) y sus horas, sin falsos positivos ni sin transmisión. **Admin** ve todo lo detectado (incl. falsos, sin TX y metadatos de descarte). |
 | 2c | Fuera de rango cortos | Solo cuentan episodios **≥ 30 minutos**. Los menores de 30 min se **descartan** (no se listan ni suman horas). |
 | 2c | Rango del análisis | Al analizar/regenerar se muestra y puede editar **set point + banda min/max** (ej. 14–16 → 12–18); se recalculan eventos con esa banda. |
 | 3 | Persistencia | **PostgreSQL** (evaluación en §7.5). |
@@ -169,7 +171,38 @@ Presentación del hueco largo (> 2 h):
 
 ---
 
-## 5. Qué se muestra
+## 4.7 Detección automática de DEFROST (patrón térmico)
+
+Referencia de campo: `historial_defrost.csv` (IMEI `866262034780196`, 13/07/2026 ~16:00–16:33).
+
+### Qué se observa en defrost
+- El **evaporador** sube mucho más que **retorno** y **suministro** (está cerca de la resistencia).
+- En el ejemplo: Evap de ≈ −8.5 °C → **+24.3 °C** mientras suministro sigue frío (≈ −7…−17) y retorno también sube (parece “fuera de rango”).
+- Duración del ciclo en el ejemplo ≈ **33 min**; regla de producto: **máximo 60 min**.
+
+### Regla en el análisis mensual
+Sobre intervalos **fuera de rango** cerrados:
+
+1. Si duración **≤ 60 min** y cumple patrón térmico (o flag `en_defrost` en telemetría) → clasificación automática **`defrost`** (`clasificado_por = sistema`).
+2. Esos eventos se cuentan **aparte** (`eventosDefrost` / `horasDefrost`) y **no suman** en horas ni estadísticas de “fuera de rango”.
+3. Si duración **> 60 min** → no se auto-clasifica como defrost (queda para revisión humana).
+4. Clasificaciones humanas (`autorizado` / `programado` / `no_previsto`) **no se pisan** en reanálisis.
+
+### Criterio de patrón (`server/lib/analisis/defrostPattern.js`)
+- ≥ 1 muestra con `evaporation_coil > return_air` y `evaporation_coil > temp_supply_1`.
+- Subida de evaporador ≥ 5 °C respecto al inicio del intervalo.
+- Pico de evaporador ≥ suministro + 3 °C.
+- O bien suficientes puntos con `en_defrost = true`.
+
+### Piezas acopladas
+| Pieza | Cambio |
+|-------|--------|
+| Enum clasificación BD/UI | + `defrost` |
+| Motor mensual | `classifyFueraIntervalsWithDefrost` |
+| Semanas | columna y horas **DEFROST** aparte; **no** en fuera de rango |
+| UI | badge DEFROST + opción en selector |
+
+---
 
 ### 5.1 Cabecera
 

@@ -28,7 +28,10 @@ CREATE TABLE IF NOT EXISTS analisis_evento (
   until_at TIMESTAMPTZ,
   duration_hours DOUBLE PRECISION NOT NULL DEFAULT 0,
   clasificacion TEXT NOT NULL DEFAULT 'sin_clasificar'
-    CHECK (clasificacion IN ('autorizado', 'programado', 'no_previsto', 'sin_clasificar')),
+    CHECK (clasificacion IN (
+      'autorizado', 'programado', 'no_previsto', 'sin_clasificar', 'defrost',
+      'falso_apagado', 'falso_fuera'
+    )),
   detalle TEXT,
   hash_intervalo TEXT NOT NULL,
   clasificado_por TEXT,
@@ -49,6 +52,8 @@ CREATE TABLE IF NOT EXISTS analisis_semana (
   horas_fuera_rango DOUBLE PRECISION NOT NULL DEFAULT 0,
   horas_apagado DOUBLE PRECISION NOT NULL DEFAULT 0,
   horas_sin_transmision DOUBLE PRECISION NOT NULL DEFAULT 0,
+  horas_defrost DOUBLE PRECISION NOT NULL DEFAULT 0,
+  eventos_defrost INT NOT NULL DEFAULT 0,
   UNIQUE (analisis_id, semana_index)
 );
 

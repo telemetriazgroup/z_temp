@@ -88,10 +88,19 @@ export async function replaceEventos(analisisId, eventos, openEnd = Date.now()) 
 
       const inserted = [];
       for (const ev of eventos) {
-        let clasificacion = 'sin_clasificar';
-        let detalle = null;
+        let clasificacion = ev.clasificacion ?? 'sin_clasificar';
+        let detalle = ev.detalle ?? null;
         let clasificadoPor = null;
         let clasificadoAt = null;
+
+        if (
+          clasificacion === 'defrost' ||
+          clasificacion === 'falso_apagado' ||
+          clasificacion === 'falso_fuera'
+        ) {
+          clasificadoPor = 'sistema';
+          clasificadoAt = new Date().toISOString();
+        }
 
         const matchExact = prev.find((p) => p.hash_intervalo === ev.hash);
         const matchOverlap =
@@ -111,11 +120,23 @@ export async function replaceEventos(analisisId, eventos, openEnd = Date.now()) 
             return ov / prevDur >= 0.5;
           });
 
+        const HUMAN = new Set(['autorizado', 'programado', 'no_previsto']);
         if (matchOverlap) {
-          clasificacion = matchOverlap.clasificacion;
-          detalle = matchOverlap.detalle;
-          clasificadoPor = matchOverlap.clasificado_por;
-          clasificadoAt = matchOverlap.clasificado_at;
+          const human =
+            HUMAN.has(matchOverlap.clasificacion) ||
+            (matchOverlap.clasificado_por != null &&
+              matchOverlap.clasificado_por !== 'sistema');
+          if (human) {
+            clasificacion = matchOverlap.clasificacion;
+            detalle = matchOverlap.detalle;
+            clasificadoPor = matchOverlap.clasificado_por;
+            clasificadoAt = matchOverlap.clasificado_at;
+          } else if (clasificacion === 'sin_clasificar') {
+            clasificacion = matchOverlap.clasificacion;
+            detalle = matchOverlap.detalle;
+            clasificadoPor = matchOverlap.clasificado_por;
+            clasificadoAt = matchOverlap.clasificado_at;
+          }
         }
 
         const { rows } = await client.query(
@@ -156,8 +177,9 @@ export async function replaceSemanas(analisisId, semanas) {
     const { rows } = await query(
       `INSERT INTO analisis_semana (
          analisis_id, semana_index, desde_at, hasta_at,
-         horas_fuera_rango, horas_apagado, horas_sin_transmision
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7)
+         horas_fuera_rango, horas_apagado, horas_sin_transmision,
+         horas_defrost, eventos_defrost
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
        RETURNING *`,
       [
         analisisId,
@@ -167,6 +189,8 @@ export async function replaceSemanas(analisisId, semanas) {
         s.horasFueraRango,
         s.horasApagado,
         s.horasSinTransmision,
+        s.horasDefrost ?? 0,
+        s.eventosDefrost ?? 0,
       ]
     );
     out.push(rows[0]);
@@ -269,7 +293,7 @@ export function mapEventoRow(row, { isAdmin = true } = {}) {
   if (row == null) return null;
   const tipoUi =
     row.tipo === 'sin_transmision' && !isAdmin ? 'validar_datos' : row.tipo;
-  const label =
+  let label =
     tipoUi === 'validar_datos'
       ? 'Validar datos'
       : row.tipo === 'sin_transmision'
@@ -277,6 +301,13 @@ export function mapEventoRow(row, { isAdmin = true } = {}) {
         : row.tipo === 'apagado'
           ? 'Apagado'
           : 'Fuera de rango';
+  if (row.clasificacion === 'falso_apagado') {
+    label = 'Falso apagado';
+  } else if (row.clasificacion === 'falso_fuera') {
+    label = 'Fuera corto (descartado)';
+  } else if (row.clasificacion === 'defrost') {
+    label = 'DEFROST';
+  }
   const durationHours = Number(row.duration_hours);
   const durationMinutes =
     Math.round(durationHours * 60 * 10) / 10;
@@ -306,5 +337,7 @@ export function mapSemanaRow(row) {
     horasFueraRango: Number(row.horas_fuera_rango),
     horasApagado: Number(row.horas_apagado),
     horasSinTransmision: Number(row.horas_sin_transmision),
+    horasDefrost: Number(row.horas_defrost ?? 0),
+    eventosDefrost: Number(row.eventos_defrost ?? 0),
   };
 }
