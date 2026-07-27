@@ -64,6 +64,14 @@ export interface HistorialChartRow {
   evaporador: number | null;
   ambiente: number | null;
   humedad: number | null;
+  /** USDA1 ← cargo_1_temp */
+  usda1: number | null;
+  /** USDA2 ← cargo_2_temp */
+  usda2: number | null;
+  /** USDA3 ← cargo_3_temp */
+  usda3: number | null;
+  /** USDA4 ← cargo_4_temp */
+  usda4: number | null;
 }
 
 export function datosAGrafica(datos: DatoOficialHistorial[]): HistorialChartRow[] {
@@ -91,6 +99,10 @@ export function datosAGrafica(datos: DatoOficialHistorial[]): HistorialChartRow[
         evaporador: num(row.evaporation_coil),
         ambiente: num(row.ambient_air),
         humedad: num(row.relative_humidity),
+        usda1: cargoTempValida(row.cargo_1_temp),
+        usda2: cargoTempValida(row.cargo_2_temp),
+        usda3: cargoTempValida(row.cargo_3_temp),
+        usda4: cargoTempValida(row.cargo_4_temp),
       };
     })
     .filter((r): r is HistorialChartRow => r != null);
@@ -111,10 +123,10 @@ export const TABLA_HISTORIAL_COLUMNAS: {
   { key: 'return_air', header: 'Retorno' },
   { key: 'evaporation_coil', header: 'Evaporador' },
   { key: 'ambient_air', header: 'Aire ambiente' },
-  { key: 'cargo_1_temp', header: 'Carga 1' },
-  { key: 'cargo_2_temp', header: 'Carga 2' },
-  { key: 'cargo_3_temp', header: 'Carga 3' },
-  { key: 'cargo_4_temp', header: 'Carga 4' },
+  { key: 'cargo_1_temp', header: 'USDA1' },
+  { key: 'cargo_2_temp', header: 'USDA2' },
+  { key: 'cargo_3_temp', header: 'USDA3' },
+  { key: 'cargo_4_temp', header: 'USDA4' },
   { key: 'line_voltage', header: 'Voltaje línea' },
   { key: 'line_frequency', header: 'Frecuencia línea' },
   { key: 'consumption_ph_1', header: 'Consumo fase 1' },

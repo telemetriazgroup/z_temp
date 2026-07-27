@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { fetchUltimoEstadoDispositivos } from '../api/termoking';
 import { dispositivoTieneHistorialOficial } from '../api/datosOficiales';
 import { HistorialOficialDetalle } from '../components/HistorialOficialDetalle';
+import { AnalisisTelemetriaPanel } from '../components/AnalisisTelemetriaPanel';
 import type {
   DispositivoUltimoEstado,
   UltimoDatoDispositivo,
@@ -677,11 +678,19 @@ export default function EquipoDetalle() {
       </div>
 
       {dispositivoTieneHistorialOficial(dispositivo.codigo) && (
-        <HistorialOficialDetalle
-          imei={dispositivo.imei}
-          codigo={dispositivo.codigo}
-          nombreContenedor={tituloPrincipal}
-        />
+        <>
+          <HistorialOficialDetalle
+            imei={dispositivo.imei}
+            codigo={dispositivo.codigo}
+            nombreContenedor={tituloPrincipal}
+          />
+          <AnalisisTelemetriaPanel
+            imei={dispositivo.imei}
+            codigo={dispositivo.codigo}
+            nombreContenedor={tituloPrincipal}
+            setPointInicial={dispositivo.ultimo_dato?.set_point ?? null}
+          />
+        </>
       )}
         </>
       )}

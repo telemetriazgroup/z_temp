@@ -1,6 +1,8 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Brush,
   CartesianGrid,
+  LabelList,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -11,11 +13,14 @@ import {
 import type { HistorialChartRow } from '../lib/historialOficial';
 import {
   HISTORIAL_CHART_SERIES,
+  serieVisiblePorDefecto,
   seriesConDatos,
   valorSerieFormateado,
   type HistorialChartSerie,
 } from '../lib/historialChartConfig';
+import { Button } from './ui/button';
 import { cn } from './ui/utils';
+import { ZoomOut } from 'lucide-react';
 
 interface Props {
   data: HistorialChartRow[];
@@ -79,24 +84,85 @@ function ReeferTooltip({
   );
 }
 
+type BrushRange = { startIndex: number; endIndex: number };
+
+function SparseTempLabel({
+  x,
+  y,
+  value,
+  index,
+  brush,
+  color,
+  offsetY = -8,
+}: {
+  x?: number;
+  y?: number;
+  value?: number | null;
+  index?: number;
+  brush: BrushRange;
+  color: string;
+  offsetY?: number;
+}) {
+  if (x == null || y == null || index == null) return null;
+  if (value == null || Number.isNaN(value)) return null;
+  if (index < brush.startIndex || index > brush.endIndex) return null;
+
+  const visibleCount = brush.endIndex - brush.startIndex + 1;
+  if (visibleCount > 60) return null;
+
+  const step = Math.max(1, Math.ceil(visibleCount / 10));
+  const rel = index - brush.startIndex;
+  const isEdge = index === brush.startIndex || index === brush.endIndex;
+  if (!isEdge && rel % step !== 0) return null;
+
+  return (
+    <text
+      x={x}
+      y={y + offsetY}
+      fill={color}
+      fontSize={10}
+      fontWeight={600}
+      textAnchor="middle"
+      className="pointer-events-none select-none"
+    >
+      {Number(value).toFixed(1)}
+    </text>
+  );
+}
+
 export function HistorialReeferChart({ data, imei, nombreContenedor, rangoLabel }: Props) {
   const disponibles = useMemo(() => seriesConDatos(data), [data]);
   const tienePct = disponibles.some((s) => s.axis === 'pct');
 
   const [visible, setVisible] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(HISTORIAL_CHART_SERIES.map((s) => [s.key, true]))
+    Object.fromEntries(
+      HISTORIAL_CHART_SERIES.map((s) => [s.key, serieVisiblePorDefecto(s)])
+    )
   );
+
+  const [brush, setBrush] = useState<BrushRange>({
+    startIndex: 0,
+    endIndex: Math.max(0, data.length - 1),
+  });
+
+  useEffect(() => {
+    setBrush({ startIndex: 0, endIndex: Math.max(0, data.length - 1) });
+  }, [data]);
 
   const activas = useMemo(
     () => disponibles.filter((s) => visible[s.key] !== false),
     [disponibles, visible]
   );
 
+  const zoomActivo =
+    brush.startIndex > 0 || brush.endIndex < Math.max(0, data.length - 1);
+
   const rangoMs = useMemo(() => {
     if (data.length < 2) return 0;
-    const ts = data.map((r) => r.ts);
-    return Math.max(...ts) - Math.min(...ts);
-  }, [data]);
+    const from = data[brush.startIndex]?.ts ?? data[0].ts;
+    const to = data[brush.endIndex]?.ts ?? data[data.length - 1].ts;
+    return Math.max(0, to - from);
+  }, [data, brush]);
 
   const tickFormateador = useCallback(
     (ts: number) => {
@@ -124,6 +190,15 @@ export function HistorialReeferChart({ data, imei, nombreContenedor, rangoLabel 
     setVisible((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
+  const resetZoom = () => {
+    setBrush({ startIndex: 0, endIndex: Math.max(0, data.length - 1) });
+  };
+
+  const onBrushChange = (range: { startIndex?: number; endIndex?: number } | null) => {
+    if (range?.startIndex == null || range?.endIndex == null) return;
+    setBrush({ startIndex: range.startIndex, endIndex: range.endIndex });
+  };
+
   if (data.length === 0) {
     return (
       <p className="text-sm text-muted-foreground py-8 text-center">
@@ -141,67 +216,102 @@ export function HistorialReeferChart({ data, imei, nombreContenedor, rangoLabel 
         {rangoLabel != null && rangoLabel !== '' && (
           <p className="text-xs text-muted-foreground">Search by Date: {rangoLabel}</p>
         )}
+        <p className="text-[11px] text-muted-foreground">
+          Use la barra inferior para zoom · etiquetas de Suministro / Retorno al acercar
+        </p>
       </div>
 
       <div className="flex flex-col lg:flex-row gap-3">
-        <div className="flex-1 min-w-0 h-[420px]">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={data} margin={{ top: 12, right: 8, left: 4, bottom: 48 }}>
-              <CartesianGrid stroke="#e0e0e0" strokeDasharray="3 3" />
-              <XAxis
-                dataKey="ts"
-                type="number"
-                domain={['dataMin', 'dataMax']}
-                tickFormatter={tickFormateador}
-                angle={-35}
-                textAnchor="end"
-                height={56}
-                tick={{ fontSize: 10, fill: '#616161' }}
-              />
-              <YAxis
-                yAxisId="temp"
-                tick={{ fontSize: 10, fill: '#616161' }}
-                label={{
-                  value: 'Temperature (C°)',
-                  angle: -90,
-                  position: 'insideLeft',
-                  style: { fontSize: 11, fill: '#424242' },
-                }}
-              />
-              {tienePct && (
+        <div className="flex-1 min-w-0 space-y-2">
+          {zoomActivo && (
+            <div className="flex justify-end">
+              <Button type="button" variant="outline" size="sm" onClick={resetZoom}>
+                <ZoomOut className="h-3.5 w-3.5 mr-1.5" />
+                Restablecer zoom
+              </Button>
+            </div>
+          )}
+          <div className="h-[460px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={data} margin={{ top: 20, right: 8, left: 4, bottom: 8 }}>
+                <CartesianGrid stroke="#e0e0e0" strokeDasharray="3 3" />
+                <XAxis
+                  dataKey="ts"
+                  type="number"
+                  domain={['dataMin', 'dataMax']}
+                  tickFormatter={tickFormateador}
+                  angle={-35}
+                  textAnchor="end"
+                  height={56}
+                  tick={{ fontSize: 10, fill: '#616161' }}
+                  allowDataOverflow
+                />
                 <YAxis
-                  yAxisId="pct"
-                  orientation="right"
+                  yAxisId="temp"
                   tick={{ fontSize: 10, fill: '#616161' }}
                   label={{
-                    value: 'Percentage (%)',
-                    angle: 90,
-                    position: 'insideRight',
+                    value: 'Temperature (C°)',
+                    angle: -90,
+                    position: 'insideLeft',
                     style: { fontSize: 11, fill: '#424242' },
                   }}
                 />
-              )}
-              <Tooltip
-                content={
-                  <ReeferTooltip series={activas} />
-                }
-              />
-              {activas.map((s) => (
-                <Line
-                  key={s.key}
-                  yAxisId={s.axis === 'pct' ? 'pct' : 'temp'}
-                  type="monotone"
-                  dataKey={s.key}
-                  name={s.label}
-                  stroke={s.color}
-                  strokeWidth={s.strokeWidth ?? 1.75}
-                  dot={false}
-                  connectNulls
-                  isAnimationActive={false}
+                {tienePct && (
+                  <YAxis
+                    yAxisId="pct"
+                    orientation="right"
+                    tick={{ fontSize: 10, fill: '#616161' }}
+                    label={{
+                      value: 'Percentage (%)',
+                      angle: 90,
+                      position: 'insideRight',
+                      style: { fontSize: 11, fill: '#424242' },
+                    }}
+                  />
+                )}
+                <Tooltip content={<ReeferTooltip series={activas} />} />
+                {activas.map((s) => (
+                  <Line
+                    key={s.key}
+                    yAxisId={s.axis === 'pct' ? 'pct' : 'temp'}
+                    type="monotone"
+                    dataKey={s.key}
+                    name={s.label}
+                    stroke={s.color}
+                    strokeWidth={s.strokeWidth ?? 1.75}
+                    dot={false}
+                    connectNulls
+                    isAnimationActive={false}
+                  >
+                    {s.showValueLabels === true && (
+                      <LabelList
+                        dataKey={s.key}
+                        content={(props) => (
+                          <SparseTempLabel
+                            {...props}
+                            brush={brush}
+                            color={s.color}
+                            offsetY={s.key === 'retorno' ? -10 : 14}
+                          />
+                        )}
+                      />
+                    )}
+                  </Line>
+                ))}
+                <Brush
+                  dataKey="ts"
+                  height={32}
+                  stroke="#757575"
+                  fill="#f5f5f5"
+                  travellerWidth={10}
+                  startIndex={brush.startIndex}
+                  endIndex={brush.endIndex}
+                  onChange={onBrushChange}
+                  tickFormatter={tickFormateador}
                 />
-              ))}
-            </LineChart>
-          </ResponsiveContainer>
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
         </div>
 
         <aside className="lg:w-[148px] shrink-0 rounded-md border bg-muted/20 px-2 py-3">

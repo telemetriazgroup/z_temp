@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import type { DispositivoUltimoEstado } from '../types';
 import { HistorialOficialDetalle } from './HistorialOficialDetalle';
+import { AnalisisTelemetriaPanel } from './AnalisisTelemetriaPanel';
 import { EquipoEstatusCards } from './EquipoEstatusCards';
 import { IffControlPanel } from './IffControlPanel';
 import { DeviceAlarmasPanel } from './DeviceAlarmasPanel';
@@ -134,7 +135,7 @@ export function EquipoDetalleIffLayout({
             refreshKey={commandLogKey}
           />
         </div>
-        <div className="xl:col-span-8 min-w-0">
+        <div className="xl:col-span-8 min-w-0 space-y-6">
           <HistorialOficialDetalle
             imei={dispositivo.imei}
             codigo={dispositivo.codigo!}
@@ -142,6 +143,14 @@ export function EquipoDetalleIffLayout({
             embedded
             defaultTab="grafica"
           />
+          {dispositivo.codigo != null && (
+            <AnalisisTelemetriaPanel
+              imei={dispositivo.imei}
+              codigo={dispositivo.codigo}
+              nombreContenedor={tituloPrincipal}
+              setPointInicial={dispositivo.ultimo_dato?.set_point ?? null}
+            />
+          )}
         </div>
       </div>
     </div>

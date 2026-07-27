@@ -1,11 +1,35 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ztrack
+      POSTGRES_PASSWORD: ztrack
+      POSTGRES_DB: ztrack_analisis
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres-analisis:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ztrack -d ztrack_analisis"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
   app:
     build: .
     ports:
       - "3002:80"
     restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://ztrack:ztrack@postgres:5432/ztrack_analisis
+      TZ: America/Lima
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       - correo-data:/app/server/data
 
 volumes:
   correo-data:
+  postgres-analisis:

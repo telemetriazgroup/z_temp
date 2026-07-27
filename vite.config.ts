@@ -20,6 +20,10 @@ const telemetriaProxy = {
     target: 'http://127.0.0.1:3003',
     changeOrigin: true,
   },
+  '/reefer/api/analisis': {
+    target: 'http://127.0.0.1:3003',
+    changeOrigin: true,
+  },
 } as const
 
 export default defineConfig({

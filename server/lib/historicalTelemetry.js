@@ -169,14 +169,21 @@ function sortHistorialConEffective(datos, evalFn, rangoOpts) {
 
 /**
  * Intervalos fuera de rango (menor → mayor) para trazabilidad de incidentes.
+ * @param {Function} [evalFn] evaluador en_rango (default: alertas correo)
  * @returns {{ since: string, until: string | null, durationHours: number }[]}
  */
-export function computeOutOfRangeIntervals(datos, rangoOpts = null, referencia = new Date()) {
-  const sorted = sortHistorialConEffective(datos, rowEnRangoParaAlerta, rangoOpts);
+export function computeOutOfRangeIntervals(
+  datos,
+  rangoOpts = null,
+  referencia = new Date(),
+  evalFn = rowEnRangoParaAlerta
+) {
+  const sorted = sortHistorialConEffective(datos, evalFn, rangoOpts);
   const intervals = [];
   let open = null;
+  const MS_HORA_LOCAL = 60 * 60 * 1000;
 
-  for (const { ts, effective, row } of sorted) {
+  for (const { ts, effective } of sorted) {
     if (effective === false) {
       if (open == null) {
         open = { sinceTs: ts, sinceIso: new Date(ts).toISOString() };
@@ -188,7 +195,7 @@ export function computeOutOfRangeIntervals(datos, rangoOpts = null, referencia =
         since: open.sinceIso,
         until: new Date(ts).toISOString(),
         durationHours:
-          Math.round(((ts - open.sinceTs) / MS_HORA) * 10) / 10,
+          Math.round(((ts - open.sinceTs) / MS_HORA_LOCAL) * 1000) / 1000,
       });
       open = null;
     }
@@ -200,7 +207,7 @@ export function computeOutOfRangeIntervals(datos, rangoOpts = null, referencia =
       since: open.sinceIso,
       until: null,
       durationHours:
-        Math.round(((untilTs - open.sinceTs) / MS_HORA) * 10) / 10,
+        Math.round(((untilTs - open.sinceTs) / MS_HORA_LOCAL) * 1000) / 1000,
     });
   }
 
@@ -260,14 +267,7 @@ export function reconcileEpisodeReference(episode, datos, now = new Date(), rang
   return { since: episode.since, resetUmbrales: false };
 }
 
-export async function fetchHistorialUltimasHoras(
-  codigo,
-  imei,
-  horas = HISTORICAL_WINDOW_HOURS,
-  referencia = new Date()
-) {
-  const fechaFinal = referencia;
-  const fechaInicial = new Date(referencia.getTime() - horas * MS_HORA);
+export async function fetchHistorialRango(codigo, imei, fechaInicial, fechaFinal) {
   let url = buildHistorialUrl(codigo, imei);
   const params = new URLSearchParams({
     fecha_inicial: formatoFechaQueryApi(fechaInicial),
@@ -282,6 +282,22 @@ export async function fetchHistorialUltimasHoras(
     throw new Error(json?.message ?? 'Respuesta de historial inválida');
   }
   return json.data;
+}
+
+export async function fetchHistorialUltimasHoras(
+  codigo,
+  imei,
+  horas = HISTORICAL_WINDOW_HOURS,
+  referencia = new Date()
+) {
+  const fechaFinal = referencia;
+  const fechaInicial = new Date(referencia.getTime() - horas * MS_HORA);
+  return fetchHistorialRango(codigo, imei, fechaInicial, fechaFinal);
+}
+
+/** Timestamp ms de un registro de historial (`created_at` | `fecha`). */
+export function timestampRegistroHistorial(row) {
+  return timestampRegistro(row);
 }
 
 /**
@@ -311,7 +327,7 @@ export function computeApagadoIntervals(datos, referencia = new Date()) {
       intervals.push({
         since: open.sinceIso,
         until: new Date(ts).toISOString(),
-        durationHours: Math.round(((ts - open.sinceTs) / MS_HORA) * 10) / 10,
+        durationHours: Math.round(((ts - open.sinceTs) / MS_HORA) * 1000) / 1000,
       });
       open = null;
     }
@@ -322,7 +338,7 @@ export function computeApagadoIntervals(datos, referencia = new Date()) {
     intervals.push({
       since: open.sinceIso,
       until: null,
-      durationHours: Math.round(((untilTs - open.sinceTs) / MS_HORA) * 10) / 10,
+      durationHours: Math.round(((untilTs - open.sinceTs) / MS_HORA) * 1000) / 1000,
     });
   }
 

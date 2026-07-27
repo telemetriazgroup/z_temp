@@ -1,0 +1,910 @@
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import type { DispositivoOrigenCodigo } from '../types';
+import { useAuth } from '../AuthContext';
+import {
+  fetchAnalisisMensual,
+  runAnalisisMensual,
+  patchAnalisisEvento,
+  fetchEventoSerie,
+  interpolarHuecoEvento,
+  analisisExportUrl,
+} from '../modules/analisis/analisisApi';
+import type {
+  AnalisisClasificacion,
+  AnalisisCompleto,
+  AnalisisEvento,
+  AnalisisRangoConfig,
+  AnalisisSeriePunto,
+} from '../modules/analisis/types';
+import { Button } from './ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
+import { Badge } from './ui/badge';
+import { Label } from './ui/label';
+import { Input } from './ui/input';
+import { Textarea } from './ui/textarea';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from './ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from './ui/table';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+} from 'recharts';
+import {
+  RefreshCw,
+  Play,
+  RotateCcw,
+  FileSpreadsheet,
+  FileText,
+  Wand2,
+  Loader2,
+} from 'lucide-react';
+import { cn } from './ui/utils';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from './ui/dialog';
+
+interface Props {
+  imei: string;
+  codigo: DispositivoOrigenCodigo;
+  nombreContenedor: string;
+  /** Set point actual del equipo (para precargar banda del análisis). */
+  setPointInicial?: number | null;
+}
+
+function defaultBandFromSetPoint(sp: number | null | undefined): {
+  setPoint: string;
+  bandaMin: string;
+  bandaMax: string;
+} {
+  if (sp == null || Number.isNaN(sp)) {
+    return { setPoint: '', bandaMin: '', bandaMax: '' };
+  }
+  const t = sp === 0 ? 0.5 : Math.abs(sp) * 0.1;
+  const min = Math.round((sp - t) * 100) / 100;
+  const max = Math.round((sp + t) * 100) / 100;
+  return {
+    setPoint: String(sp),
+    bandaMin: String(min),
+    bandaMax: String(max),
+  };
+}
+
+function fmtDuracion(ev: { durationHours: number; durationMinutes?: number }): string {
+  const mins =
+    ev.durationMinutes ?? Math.round(ev.durationHours * 60 * 10) / 10;
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
+  const m = Math.round((mins % 60) * 10) / 10;
+  return m > 0 ? `${h} h ${m} min` : `${h} h`;
+}
+
+function nowGmt5Parts() {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Lima',
+    year: 'numeric',
+    month: 'numeric',
+  });
+  const parts = Object.fromEntries(
+    fmt.formatToParts(new Date()).map((p) => [p.type, p.value])
+  );
+  return { anio: Number(parts.year), mes: Number(parts.month) };
+}
+
+function fmtDt(v: string | null | undefined): string {
+  if (v == null) return '—';
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString('es-PE', { timeZone: 'America/Lima' });
+}
+
+const CLASIFICACIONES: { id: AnalisisClasificacion; label: string }[] = [
+  { id: 'sin_clasificar', label: 'Sin clasificar' },
+  { id: 'autorizado', label: 'Autorizado' },
+  { id: 'programado', label: 'Programado' },
+  { id: 'no_previsto', label: 'No previsto' },
+];
+
+export function AnalisisTelemetriaPanel({
+  imei,
+  codigo,
+  nombreContenedor,
+  setPointInicial = null,
+}: Props) {
+  const { user } = useAuth();
+  const isAdmin = user?.superUser === true;
+  const initial = useMemo(() => nowGmt5Parts(), []);
+  const [anio, setAnio] = useState(initial.anio);
+  const [mes, setMes] = useState(initial.mes);
+  const [data, setData] = useState<AnalisisCompleto | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<AnalisisEvento | null>(null);
+  const [serie, setSerie] = useState<AnalisisSeriePunto[]>([]);
+  const [detalleDraft, setDetalleDraft] = useState('');
+  const [clasifDraft, setClasifDraft] =
+    useState<AnalisisClasificacion>('sin_clasificar');
+  const initialBand = useMemo(
+    () => defaultBandFromSetPoint(setPointInicial),
+    [setPointInicial]
+  );
+  const [setPointDraft, setSetPointDraft] = useState(initialBand.setPoint);
+  const [bandaMinDraft, setBandaMinDraft] = useState(initialBand.bandaMin);
+  const [bandaMaxDraft, setBandaMaxDraft] = useState(initialBand.bandaMax);
+  const [lastMeta, setLastMeta] = useState<AnalisisCompleto['meta']>(undefined);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmMode, setConfirmMode] = useState<'analizar' | 'regenerar'>(
+    'analizar'
+  );
+
+  const syncRangoFromSnapshot = useCallback((snap: AnalisisRangoConfig | null | undefined) => {
+    if (snap == null) return;
+    if (snap.setPoint != null) setSetPointDraft(String(snap.setPoint));
+    if (snap.bandaMin != null) setBandaMinDraft(String(snap.bandaMin));
+    if (snap.bandaMax != null) setBandaMaxDraft(String(snap.bandaMax));
+  }, []);
+
+  const buildRangoPayload = (): AnalisisRangoConfig => {
+    const sp = setPointDraft.trim() === '' ? null : Number(setPointDraft);
+    const min = bandaMinDraft.trim() === '' ? null : Number(bandaMinDraft);
+    const max = bandaMaxDraft.trim() === '' ? null : Number(bandaMaxDraft);
+    return {
+      useRangoPersonalizado: true,
+      setPoint: sp != null && !Number.isNaN(sp) ? sp : null,
+      bandaMin: min != null && !Number.isNaN(min) ? min : null,
+      bandaMax: max != null && !Number.isNaN(max) ? max : null,
+    };
+  };
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await fetchAnalisisMensual({
+        imei,
+        codigo,
+        anio,
+        mes,
+        user: user?.username,
+        superUser: isAdmin,
+      });
+      setData(result);
+      setSelected(null);
+      setSerie([]);
+      if (result?.analisis.rangoConfigSnapshot != null) {
+        syncRangoFromSnapshot(result.analisis.rangoConfigSnapshot);
+      } else {
+        const band = defaultBandFromSetPoint(setPointInicial);
+        setSetPointDraft(band.setPoint);
+        setBandaMinDraft(band.bandaMin);
+        setBandaMaxDraft(band.bandaMax);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error al cargar análisis');
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [imei, codigo, anio, mes, user?.username, isAdmin, setPointInicial, syncRangoFromSnapshot]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const run = async (regenerar = false) => {
+    setRunning(true);
+    setError(null);
+    try {
+      const result = await runAnalisisMensual({
+        imei,
+        codigo,
+        anio,
+        mes,
+        regenerar,
+        rangoAnalisis: buildRangoPayload(),
+        user: user?.username,
+        superUser: isAdmin,
+      });
+      setData(result);
+      setLastMeta(result.meta);
+      setSelected(null);
+      setSerie([]);
+      syncRangoFromSnapshot(
+        result.meta?.rangoUsado ?? result.analisis.rangoConfigSnapshot
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error al analizar');
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const openEvento = async (ev: AnalisisEvento) => {
+    setSelected(ev);
+    setDetalleDraft(ev.detalle ?? '');
+    setClasifDraft(ev.clasificacion);
+    try {
+      const result = await fetchEventoSerie({
+        eventoId: ev.id,
+        user: user?.username,
+        superUser: isAdmin,
+      });
+      setSerie(result.serie);
+    } catch (e) {
+      setSerie([]);
+      setError(e instanceof Error ? e.message : 'Error al cargar serie');
+    }
+  };
+
+  const saveClasificacion = async () => {
+    if (selected == null) return;
+    try {
+      const updated = await patchAnalisisEvento({
+        eventoId: selected.id,
+        clasificacion: clasifDraft,
+        detalle: detalleDraft,
+        user: user?.username,
+        superUser: isAdmin,
+      });
+      setSelected(updated);
+      setData((prev) =>
+        prev == null
+          ? prev
+          : {
+              ...prev,
+              eventos: prev.eventos.map((e) =>
+                e.id === updated.id ? updated : e
+              ),
+            }
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error al guardar');
+    }
+  };
+
+  const doInterpolar = async () => {
+    if (selected == null || !isAdmin) return;
+    try {
+      await interpolarHuecoEvento({
+        eventoId: selected.id,
+        user: user?.username,
+        superUser: true,
+      });
+      await openEvento(selected);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error al interpolar');
+    }
+  };
+
+  const exportPdf = () => {
+    if (data == null) return;
+    const doc = new jsPDF();
+    doc.setFontSize(14);
+    doc.text(`Análisis telemetría — ${nombreContenedor}`, 14, 16);
+    doc.setFontSize(10);
+    doc.text(
+      `${data.analisis.codigo} · ${data.analisis.imei} · ${data.analisis.mes}/${data.analisis.anio}`,
+      14,
+      24
+    );
+    doc.text(
+      isAdmin
+        ? `Fuera: ${data.resumen.horasFueraRango} h · Apagado: ${data.resumen.horasApagado} h · Sin TX: ${data.resumen.horasSinTransmision} h`
+        : `Fuera: ${data.resumen.horasFueraRango} h · Apagado: ${data.resumen.horasApagado} h`,
+      14,
+      30
+    );
+    autoTable(doc, {
+      startY: 36,
+      head: [['Tipo', 'Desde', 'Hasta', 'Horas', 'Clasificación']],
+      body: data.eventos.map((e) => [
+        e.label,
+        fmtDt(e.since),
+        fmtDt(e.until),
+        fmtDuracion(e),
+        e.clasificacion,
+      ]),
+    });
+    doc.save(`analisis_${anio}_${mes}_${imei}.pdf`);
+  };
+
+  const download = async (format: 'csv' | 'xlsx') => {
+    if (data?.analisis.id == null) return;
+    try {
+      const url = analisisExportUrl(data.analisis.id, format);
+      const res = await fetch(url, {
+        headers: {
+          ...(user?.username ? { 'X-ZTrack-User': user.username } : {}),
+          ...(isAdmin ? { 'X-ZTrack-Super-User': 'true' } : {}),
+        },
+      });
+      if (!res.ok) throw new Error(`Export ${res.status}`);
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `analisis_${anio}_${mes}_${imei}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(a.href);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error al exportar');
+    }
+  };
+
+  const anios = [initial.anio, initial.anio - 1, initial.anio - 2];
+
+  const chartData = useMemo(
+    () =>
+      serie.map((p) => ({
+        ts: new Date(p.ts).getTime(),
+        label: fmtDt(p.ts),
+        setPoint: p.set_point ?? null,
+        suministro: p.temp_supply_1 ?? null,
+        retorno: p.return_air ?? null,
+        fuente: p.fuente,
+      })),
+    [serie]
+  );
+
+  const openConfirm = (mode: 'analizar' | 'regenerar') => {
+    setConfirmMode(mode);
+    setConfirmOpen(true);
+  };
+
+  const confirmAndRun = async () => {
+    setConfirmOpen(false);
+    await run(confirmMode === 'regenerar');
+  };
+
+  const rangoNormalLabel =
+    bandaMinDraft && bandaMaxDraft
+      ? `${bandaMinDraft} … ${bandaMaxDraft} °C`
+      : '—';
+
+  return (
+    <Card className="relative">
+      {running && (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 rounded-xl bg-background/80 backdrop-blur-sm">
+          <Loader2 className="h-10 w-10 animate-spin text-primary" />
+          <div className="text-center px-4">
+            <p className="font-medium">Cargando análisis…</p>
+            <p className="text-sm text-muted-foreground mt-1">
+              Rango normal: {rangoNormalLabel}
+              {setPointDraft ? ` · SP ${setPointDraft}` : ''}
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              {confirmMode === 'regenerar'
+                ? 'Regenerando el mes completo'
+                : 'Procesando telemetría del mes'}
+            </p>
+          </div>
+        </div>
+      )}
+
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {confirmMode === 'regenerar'
+                ? 'Regenerar análisis del mes'
+                : 'Confirmar análisis del mes'}
+            </DialogTitle>
+            <DialogDescription>
+              Se usará el rango normal indicado. Puede modificarlo antes de
+              continuar.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <p className="text-sm font-medium">
+              Rango normal a analizar (return air)
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="space-y-1">
+                <Label htmlFor="confirm-sp">Set point (°C)</Label>
+                <Input
+                  id="confirm-sp"
+                  type="number"
+                  step="0.1"
+                  value={setPointDraft}
+                  onChange={(e) => setSetPointDraft(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="confirm-min">Límite inferior</Label>
+                <Input
+                  id="confirm-min"
+                  type="number"
+                  step="0.1"
+                  value={bandaMinDraft}
+                  onChange={(e) => setBandaMinDraft(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="confirm-max">Límite superior</Label>
+                <Input
+                  id="confirm-max"
+                  type="number"
+                  step="0.1"
+                  value={bandaMaxDraft}
+                  onChange={(e) => setBandaMaxDraft(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm">
+              Rango normal:{' '}
+              <span className="font-semibold">{rangoNormalLabel}</span>
+              {setPointDraft ? ` (SP ${setPointDraft})` : ''}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Si desea otro margen (ej. 12–18 en lugar de 14–16), ajústelo aquí
+              antes de confirmar.
+            </p>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setConfirmOpen(false)}
+            >
+              Cancelar
+            </Button>
+            <Button type="button" onClick={() => void confirmAndRun()}>
+              {confirmMode === 'regenerar'
+                ? 'Regenerar con este rango'
+                : 'Analizar con este rango'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <CardHeader className="pb-3">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <CardTitle className="text-lg">Análisis de telemetría</CardTitle>
+          <div className="flex flex-wrap items-center gap-2">
+            <Select
+              value={String(mes)}
+              onValueChange={(v) => setMes(Number(v))}
+            >
+              <SelectTrigger className="w-[120px]">
+                <SelectValue placeholder="Mes" />
+              </SelectTrigger>
+              <SelectContent>
+                {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                  <SelectItem key={m} value={String(m)}>
+                    {m.toString().padStart(2, '0')}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              value={String(anio)}
+              onValueChange={(v) => setAnio(Number(v))}
+            >
+              <SelectTrigger className="w-[100px]">
+                <SelectValue placeholder="Año" />
+              </SelectTrigger>
+              <SelectContent>
+                {anios.map((y) => (
+                  <SelectItem key={y} value={String(y)}>
+                    {y}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void load()}
+              disabled={loading || running}
+            >
+              <RefreshCw
+                className={cn('h-4 w-4 mr-1', loading && 'animate-spin')}
+              />
+              Recargar
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {error != null && (
+          <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">
+            {error}
+          </p>
+        )}
+
+        <div className="rounded-lg border bg-muted/20 p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-medium">Rango normal de análisis (return air)</p>
+            <p className="text-xs text-muted-foreground">
+              Apagados &lt; 6 min = falso apagado (no se listan)
+            </p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="space-y-1">
+              <Label htmlFor="analisis-sp">Set point (°C)</Label>
+              <Input
+                id="analisis-sp"
+                type="number"
+                step="0.1"
+                value={setPointDraft}
+                onChange={(e) => setSetPointDraft(e.target.value)}
+                disabled={running}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="analisis-min">Límite inferior (°C)</Label>
+              <Input
+                id="analisis-min"
+                type="number"
+                step="0.1"
+                value={bandaMinDraft}
+                onChange={(e) => setBandaMinDraft(e.target.value)}
+                disabled={running}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="analisis-max">Límite superior (°C)</Label>
+              <Input
+                id="analisis-max"
+                type="number"
+                step="0.1"
+                value={bandaMaxDraft}
+                onChange={(e) => setBandaMaxDraft(e.target.value)}
+                disabled={running}
+              />
+            </div>
+          </div>
+          <div className="rounded-md border bg-background px-3 py-2 text-sm">
+            Rango normal:{' '}
+            <span className="font-semibold">{rangoNormalLabel}</span>
+            {setPointDraft ? ` · SP ${setPointDraft}` : ''}
+          </div>
+        </div>
+
+        {data == null && !loading && (
+          <div className="rounded-lg border border-dashed p-6 text-center space-y-3">
+            <p className="text-sm text-muted-foreground">
+              No hay análisis para {String(mes).padStart(2, '0')}/{anio}.
+            </p>
+            <Button
+              type="button"
+              onClick={() => openConfirm('analizar')}
+              disabled={running}
+            >
+              <Play className="h-4 w-4 mr-2" />
+              Analizar este mes
+            </Button>
+          </div>
+        )}
+
+        {data != null && (
+          <>
+            <div className="flex flex-wrap gap-2 items-center justify-between">
+              <div className="text-sm text-muted-foreground space-y-0.5">
+                <div>
+                  Analizado desde {fmtDt(data.analisis.analizadoDesde)} · hasta{' '}
+                  {fmtDt(data.analisis.analizadoHasta)}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="outline">
+                    Fuera {data.resumen.horasFueraRango} h
+                  </Badge>
+                  <Badge variant="outline">
+                    Apagado {data.resumen.horasApagado} h
+                  </Badge>
+                  {isAdmin && (
+                    <Badge variant="outline">
+                      Sin TX {data.resumen.horasSinTransmision} h
+                    </Badge>
+                  )}
+                  <Badge>{data.analisis.estado}</Badge>
+                  {data.analisis.rangoConfigSnapshot?.label != null && (
+                    <Badge variant="secondary">
+                      Rango {data.analisis.rangoConfigSnapshot.label}
+                    </Badge>
+                  )}
+                  {isAdmin &&
+                    (lastMeta?.falsosApagadoDescartados ??
+                      data.analisis.rangoConfigSnapshot
+                        ?.falsosApagadoDescartados) != null && (
+                      <Badge variant="outline">
+                        Falsos apagado descartados:{' '}
+                        {lastMeta?.falsosApagadoDescartados ??
+                          data.analisis.rangoConfigSnapshot
+                            ?.falsosApagadoDescartados}
+                      </Badge>
+                    )}
+                  {isAdmin &&
+                    (lastMeta?.fueraRangoCortosDescartados ??
+                      data.analisis.rangoConfigSnapshot
+                        ?.fueraRangoCortosDescartados) != null && (
+                      <Badge variant="outline">
+                        Fuera de rango &lt;30 min descartados:{' '}
+                        {lastMeta?.fueraRangoCortosDescartados ??
+                          data.analisis.rangoConfigSnapshot
+                            ?.fueraRangoCortosDescartados}
+                      </Badge>
+                    )}
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => openConfirm('analizar')}
+                  disabled={running}
+                >
+                  <Play className="h-4 w-4 mr-1" />
+                  Actualizar
+                </Button>
+                {isAdmin && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="destructive"
+                    onClick={() => openConfirm('regenerar')}
+                    disabled={running}
+                  >
+                    <RotateCcw className="h-4 w-4 mr-1" />
+                    Regenerar mes
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={exportPdf}
+                  disabled={running}
+                >
+                  <FileText className="h-4 w-4 mr-1" />
+                  PDF
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void download('csv')}
+                  disabled={running}
+                >
+                  CSV
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void download('xlsx')}
+                  disabled={running}
+                >
+                  <FileSpreadsheet className="h-4 w-4 mr-1" />
+                  Excel
+                </Button>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto border rounded-md">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Semana</TableHead>
+                    <TableHead>Desde</TableHead>
+                    <TableHead>Hasta</TableHead>
+                    <TableHead>Fuera</TableHead>
+                    <TableHead>Apagado</TableHead>
+                    {isAdmin && <TableHead>Sin TX</TableHead>}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data.semanas.map((s) => (
+                    <TableRow key={s.semanaIndex}>
+                      <TableCell>S{s.semanaIndex}</TableCell>
+                      <TableCell className="text-xs">{fmtDt(s.desde)}</TableCell>
+                      <TableCell className="text-xs">{fmtDt(s.hasta)}</TableCell>
+                      <TableCell>{s.horasFueraRango} h</TableCell>
+                      <TableCell>{s.horasApagado} h</TableCell>
+                      {isAdmin && (
+                        <TableCell>{s.horasSinTransmision} h</TableCell>
+                      )}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+
+            <div className="overflow-x-auto border rounded-md">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Evento</TableHead>
+                    <TableHead>Desde</TableHead>
+                    <TableHead>Hasta</TableHead>
+                    <TableHead>Horas</TableHead>
+                    <TableHead>Clasificación</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data.eventos.length === 0 && (
+                    <TableRow>
+                      <TableCell
+                        colSpan={5}
+                        className="text-center text-muted-foreground"
+                      >
+                        Sin eventos en el periodo analizado.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {data.eventos.map((ev) => (
+                    <TableRow
+                      key={ev.id}
+                      className={cn(
+                        'cursor-pointer',
+                        selected?.id === ev.id && 'bg-muted/60'
+                      )}
+                      onClick={() => void openEvento(ev)}
+                    >
+                      <TableCell>
+                        <Badge
+                          variant={
+                            ev.tipo === 'fuera_rango'
+                              ? 'destructive'
+                              : 'outline'
+                          }
+                        >
+                          {ev.label}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-xs">{fmtDt(ev.since)}</TableCell>
+                      <TableCell className="text-xs">{fmtDt(ev.until)}</TableCell>
+                      <TableCell>{fmtDuracion(ev)}</TableCell>
+                      <TableCell className="text-xs">
+                        {ev.clasificacion}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+
+            {selected != null && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 border rounded-lg p-4">
+                <div className="space-y-3">
+                  <h4 className="font-medium text-sm">
+                    Detalle · {selected.label}
+                  </h4>
+                  <div className="space-y-2">
+                    <Label>Clasificación</Label>
+                    <Select
+                      value={clasifDraft}
+                      onValueChange={(v) =>
+                        setClasifDraft(v as AnalisisClasificacion)
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {CLASIFICACIONES.map((c) => (
+                          <SelectItem key={c.id} value={c.id}>
+                            {c.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Detalle</Label>
+                    <Textarea
+                      value={detalleDraft}
+                      onChange={(e) => setDetalleDraft(e.target.value)}
+                      rows={4}
+                      placeholder="Motivo, orden de trabajo, observaciones…"
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" size="sm" onClick={() => void saveClasificacion()}>
+                      Guardar clasificación
+                    </Button>
+                    {isAdmin && selected.tipo === 'sin_transmision' && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => void doInterpolar()}
+                      >
+                        <Wand2 className="h-4 w-4 mr-1" />
+                        Interpolar hueco (PLI+LOCF)
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                <div className="h-[280px]">
+                  {chartData.length === 0 ? (
+                    <p className="text-sm text-muted-foreground py-10 text-center">
+                      Sin puntos horarios en este rango.
+                    </p>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={chartData}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis
+                          dataKey="ts"
+                          type="number"
+                          domain={['dataMin', 'dataMax']}
+                          tickFormatter={(v) =>
+                            new Date(v).toLocaleString('es-PE', {
+                              timeZone: 'America/Lima',
+                              day: '2-digit',
+                              month: '2-digit',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })
+                          }
+                          tick={{ fontSize: 10 }}
+                        />
+                        <YAxis tick={{ fontSize: 10 }} />
+                        <Tooltip
+                          labelFormatter={(v) => fmtDt(new Date(Number(v)).toISOString())}
+                        />
+                        <Legend />
+                        <Line
+                          type="monotone"
+                          dataKey="setPoint"
+                          name="SetPoint"
+                          stroke="#FDD835"
+                          dot={false}
+                          connectNulls
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="suministro"
+                          name="Suministro"
+                          stroke="#1B5E20"
+                          dot={false}
+                          connectNulls
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="retorno"
+                          name="Retorno"
+                          stroke="#E53935"
+                          dot={false}
+                          connectNulls
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}

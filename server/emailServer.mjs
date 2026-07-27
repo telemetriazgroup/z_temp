@@ -40,12 +40,15 @@ import {
   getUserByUsername,
   getUserByIdPublic,
 } from './lib/usersRepository.js';
+import { createAnalisisRouter } from './lib/analisis/routes.js';
+import { ensureAnalisisSchema } from './lib/db.js';
 
 const PORT = Number(process.env.CORREO_PORT ?? 3003);
 const POLL_MS = Number(process.env.CORREO_POLL_MS ?? 2 * 60 * 1000);
 const app = express();
 
 app.use(express.json({ limit: '512kb' }));
+app.use('/reefer/api/analisis', createAnalisisRouter());
 
 function isValidEmail(s) {
   return typeof s === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -546,6 +549,9 @@ app.post('/reefer/api/correo/send', async (req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
   ensureUserRegistry();
   console.log(`ZTRACK correo API :${PORT} · ciclo cada ${POLL_MS / 1000}s`);
+  ensureAnalisisSchema().catch((e) =>
+    console.warn('[analisis] esquema diferido:', e.message)
+  );
   setTimeout(() => {
     runAlertCycle({ trigger: 'automatic' }).catch((e) =>
       console.error('[correo] ciclo inicial', e.message)
