@@ -1,6 +1,9 @@
 import React, { useState } from 'react';
 import type { DispositivoUltimoEstado } from '../types';
-import { HistorialOficialDetalle } from './HistorialOficialDetalle';
+import {
+  HistorialOficialDetalle,
+  type HistorialFocusRango,
+} from './HistorialOficialDetalle';
 import { AnalisisTelemetriaPanel } from './AnalisisTelemetriaPanel';
 import { EquipoEstatusCards } from './EquipoEstatusCards';
 import { IffControlPanel } from './IffControlPanel';
@@ -19,6 +22,8 @@ interface Props {
   refreshMensaje?: string | null;
   onMapa?: () => void;
   tieneUbicacion?: boolean;
+  historialFocus?: HistorialFocusRango | null;
+  onVerEventoEnGrafica?: (rango: { since: string; until: string }) => void;
 }
 
 export function EquipoDetalleIffLayout({
@@ -28,6 +33,8 @@ export function EquipoDetalleIffLayout({
   refreshMensaje,
   onMapa,
   tieneUbicacion,
+  historialFocus = null,
+  onVerEventoEnGrafica,
 }: Props) {
   const ud = dispositivo.ultimo_dato;
   const powerOn = dispositivo.power_state_texto === 'on';
@@ -142,6 +149,7 @@ export function EquipoDetalleIffLayout({
             nombreContenedor={tituloPrincipal}
             embedded
             defaultTab="grafica"
+            focusRango={historialFocus}
           />
           {dispositivo.codigo != null && (
             <AnalisisTelemetriaPanel
@@ -149,6 +157,7 @@ export function EquipoDetalleIffLayout({
               codigo={dispositivo.codigo}
               nombreContenedor={tituloPrincipal}
               setPointInicial={dispositivo.ultimo_dato?.set_point ?? null}
+              onVerEnGraficaPrincipal={onVerEventoEnGrafica}
             />
           )}
         </div>

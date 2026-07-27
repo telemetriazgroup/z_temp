@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { DispositivoOrigenCodigo } from '../types';
 import { useAuth } from '../AuthContext';
+import { userIsMonitoreoNavigation } from '../modules/usuario';
 import {
   fetchAnalisisMensual,
   runAnalisisMensual,
@@ -55,6 +56,9 @@ import {
   FileText,
   Wand2,
   Loader2,
+  ChevronLeft,
+  ChevronRight,
+  ExternalLink,
 } from 'lucide-react';
 import { cn } from './ui/utils';
 import jsPDF from 'jspdf';
@@ -68,12 +72,19 @@ import {
   DialogTitle,
 } from './ui/dialog';
 
+const EVENTOS_PAGE_SIZE = 10;
+
 interface Props {
   imei: string;
   codigo: DispositivoOrigenCodigo;
   nombreContenedor: string;
   /** Set point actual del equipo (para precargar banda del análisis). */
   setPointInicial?: number | null;
+  /** Abre la gráfica principal del historial con el rango del evento (detalle completo). */
+  onVerEnGraficaPrincipal?: (rango: {
+    since: string;
+    until: string;
+  }) => void;
 }
 
 function defaultBandFromSetPoint(sp: number | null | undefined): {
@@ -134,9 +145,13 @@ export function AnalisisTelemetriaPanel({
   codigo,
   nombreContenedor,
   setPointInicial = null,
+  onVerEnGraficaPrincipal,
 }: Props) {
   const { user } = useAuth();
   const isAdmin = user?.superUser === true;
+  const esMonitoreo = userIsMonitoreoNavigation(user);
+  /** Contadores técnicos de descarte: solo superusuario, nunca rol Monitoreo. */
+  const mostrarMetaDescarte = isAdmin && !esMonitoreo;
   const initial = useMemo(() => nowGmt5Parts(), []);
   const [anio, setAnio] = useState(initial.anio);
   const [mes, setMes] = useState(initial.mes);
@@ -145,10 +160,12 @@ export function AnalisisTelemetriaPanel({
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<AnalisisEvento | null>(null);
+  const [detalleOpen, setDetalleOpen] = useState(false);
   const [serie, setSerie] = useState<AnalisisSeriePunto[]>([]);
   const [detalleDraft, setDetalleDraft] = useState('');
   const [clasifDraft, setClasifDraft] =
     useState<AnalisisClasificacion>('sin_clasificar');
+  const [eventosPage, setEventosPage] = useState(1);
   const initialBand = useMemo(
     () => defaultBandFromSetPoint(setPointInicial),
     [setPointInicial]
@@ -195,7 +212,9 @@ export function AnalisisTelemetriaPanel({
       });
       setData(result);
       setSelected(null);
+      setDetalleOpen(false);
       setSerie([]);
+      setEventosPage(1);
       if (result?.analisis.rangoConfigSnapshot != null) {
         syncRangoFromSnapshot(result.analisis.rangoConfigSnapshot);
       } else {
@@ -233,7 +252,9 @@ export function AnalisisTelemetriaPanel({
       setData(result);
       setLastMeta(result.meta);
       setSelected(null);
+      setDetalleOpen(false);
       setSerie([]);
+      setEventosPage(1);
       syncRangoFromSnapshot(
         result.meta?.rangoUsado ?? result.analisis.rangoConfigSnapshot
       );
@@ -246,8 +267,10 @@ export function AnalisisTelemetriaPanel({
 
   const openEvento = async (ev: AnalisisEvento) => {
     setSelected(ev);
+    setDetalleOpen(true);
     setDetalleDraft(ev.detalle ?? '');
     setClasifDraft(ev.clasificacion);
+    setSerie([]);
     try {
       const result = await fetchEventoSerie({
         eventoId: ev.id,
@@ -259,6 +282,22 @@ export function AnalisisTelemetriaPanel({
       setSerie([]);
       setError(e instanceof Error ? e.message : 'Error al cargar serie');
     }
+  };
+
+  const closeDetalle = (open: boolean) => {
+    setDetalleOpen(open);
+    if (!open) {
+      setSelected(null);
+      setSerie([]);
+    }
+  };
+
+  const irAGraficaPrincipal = () => {
+    if (selected == null || onVerEnGraficaPrincipal == null) return;
+    const until =
+      selected.until ?? new Date().toISOString();
+    onVerEnGraficaPrincipal({ since: selected.since, until });
+    closeDetalle(false);
   };
 
   const saveClasificacion = async () => {
@@ -371,6 +410,18 @@ export function AnalisisTelemetriaPanel({
       })),
     [serie]
   );
+
+  const eventosTotal = data?.eventos.length ?? 0;
+  const eventosTotalPaginas = Math.max(
+    1,
+    Math.ceil(eventosTotal / EVENTOS_PAGE_SIZE) || 1
+  );
+  const eventosPaginaSegura = Math.min(eventosPage, eventosTotalPaginas);
+  const eventosPagina = useMemo(() => {
+    if (data == null) return [];
+    const start = (eventosPaginaSegura - 1) * EVENTOS_PAGE_SIZE;
+    return data.eventos.slice(start, start + EVENTOS_PAGE_SIZE);
+  }, [data, eventosPaginaSegura]);
 
   const openConfirm = (mode: 'analizar' | 'regenerar') => {
     setConfirmMode(mode);
@@ -630,7 +681,7 @@ export function AnalisisTelemetriaPanel({
                       Rango {data.analisis.rangoConfigSnapshot.label}
                     </Badge>
                   )}
-                  {isAdmin &&
+                  {mostrarMetaDescarte &&
                     (lastMeta?.falsosApagadoDescartados ??
                       data.analisis.rangoConfigSnapshot
                         ?.falsosApagadoDescartados) != null && (
@@ -641,7 +692,7 @@ export function AnalisisTelemetriaPanel({
                             ?.falsosApagadoDescartados}
                       </Badge>
                     )}
-                  {isAdmin &&
+                  {mostrarMetaDescarte &&
                     (lastMeta?.fueraRangoCortosDescartados ??
                       data.analisis.rangoConfigSnapshot
                         ?.fueraRangoCortosDescartados) != null && (
@@ -737,171 +788,252 @@ export function AnalisisTelemetriaPanel({
               </Table>
             </div>
 
-            <div className="overflow-x-auto border rounded-md">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Evento</TableHead>
-                    <TableHead>Desde</TableHead>
-                    <TableHead>Hasta</TableHead>
-                    <TableHead>Horas</TableHead>
-                    <TableHead>Clasificación</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data.eventos.length === 0 && (
+            <div className="space-y-2">
+              <div className="overflow-x-auto border rounded-md">
+                <Table>
+                  <TableHeader>
                     <TableRow>
-                      <TableCell
-                        colSpan={5}
-                        className="text-center text-muted-foreground"
-                      >
-                        Sin eventos en el periodo analizado.
-                      </TableCell>
+                      <TableHead>Evento</TableHead>
+                      <TableHead>Desde</TableHead>
+                      <TableHead>Hasta</TableHead>
+                      <TableHead>Horas</TableHead>
+                      <TableHead>Clasificación</TableHead>
                     </TableRow>
-                  )}
-                  {data.eventos.map((ev) => (
-                    <TableRow
-                      key={ev.id}
-                      className={cn(
-                        'cursor-pointer',
-                        selected?.id === ev.id && 'bg-muted/60'
-                      )}
-                      onClick={() => void openEvento(ev)}
-                    >
-                      <TableCell>
-                        <Badge
-                          variant={
-                            ev.tipo === 'fuera_rango'
-                              ? 'destructive'
-                              : 'outline'
-                          }
+                  </TableHeader>
+                  <TableBody>
+                    {eventosTotal === 0 && (
+                      <TableRow>
+                        <TableCell
+                          colSpan={5}
+                          className="text-center text-muted-foreground"
                         >
-                          {ev.label}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-xs">{fmtDt(ev.since)}</TableCell>
-                      <TableCell className="text-xs">{fmtDt(ev.until)}</TableCell>
-                      <TableCell>{fmtDuracion(ev)}</TableCell>
-                      <TableCell className="text-xs">
-                        {ev.clasificacion}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-
-            {selected != null && (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 border rounded-lg p-4">
-                <div className="space-y-3">
-                  <h4 className="font-medium text-sm">
-                    Detalle · {selected.label}
-                  </h4>
-                  <div className="space-y-2">
-                    <Label>Clasificación</Label>
-                    <Select
-                      value={clasifDraft}
-                      onValueChange={(v) =>
-                        setClasifDraft(v as AnalisisClasificacion)
+                          Sin eventos en el periodo analizado.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {eventosPagina.map((ev) => (
+                      <TableRow
+                        key={ev.id}
+                        className={cn(
+                          'cursor-pointer hover:bg-muted/50',
+                          selected?.id === ev.id && 'bg-muted/60'
+                        )}
+                        onClick={() => void openEvento(ev)}
+                      >
+                        <TableCell>
+                          <Badge
+                            variant={
+                              ev.tipo === 'fuera_rango'
+                                ? 'destructive'
+                                : 'outline'
+                            }
+                          >
+                            {ev.label}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-xs">{fmtDt(ev.since)}</TableCell>
+                        <TableCell className="text-xs">{fmtDt(ev.until)}</TableCell>
+                        <TableCell>{fmtDuracion(ev)}</TableCell>
+                        <TableCell className="text-xs">
+                          {ev.clasificacion}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              {eventosTotal > 0 && (
+                <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground px-1">
+                  <span>
+                    {(eventosPaginaSegura - 1) * EVENTOS_PAGE_SIZE + 1}–
+                    {Math.min(
+                      eventosPaginaSegura * EVENTOS_PAGE_SIZE,
+                      eventosTotal
+                    )}{' '}
+                    de {eventosTotal}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={eventosPaginaSegura <= 1}
+                      onClick={() =>
+                        setEventosPage((p) => Math.max(1, p - 1))
                       }
                     >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {CLASIFICACIONES.map((c) => (
-                          <SelectItem key={c.id} value={c.id}>
-                            {c.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Detalle</Label>
-                    <Textarea
-                      value={detalleDraft}
-                      onChange={(e) => setDetalleDraft(e.target.value)}
-                      rows={4}
-                      placeholder="Motivo, orden de trabajo, observaciones…"
-                    />
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Button type="button" size="sm" onClick={() => void saveClasificacion()}>
-                      Guardar clasificación
+                      <ChevronLeft className="h-4 w-4" />
                     </Button>
-                    {isAdmin && selected.tipo === 'sin_transmision' && (
+                    <span>
+                      Página {eventosPaginaSegura} / {eventosTotalPaginas}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={eventosPaginaSegura >= eventosTotalPaginas}
+                      onClick={() =>
+                        setEventosPage((p) =>
+                          Math.min(eventosTotalPaginas, p + 1)
+                        )
+                      }
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <Dialog open={detalleOpen} onOpenChange={closeDetalle}>
+              <DialogContent className="sm:max-w-4xl max-h-[90vh] overflow-y-auto">
+                {selected != null && (
+                  <>
+                    <DialogHeader>
+                      <DialogTitle>
+                        Detalle · {selected.label}
+                      </DialogTitle>
+                      <DialogDescription>
+                        Gráfica resumida por hora ({fmtDt(selected.since)} –{' '}
+                        {fmtDt(selected.until)}). Para ver todos los puntos del
+                        evento use la gráfica principal.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                      <div className="space-y-3">
+                        <div className="space-y-2">
+                          <Label>Clasificación</Label>
+                          <Select
+                            value={clasifDraft}
+                            onValueChange={(v) =>
+                              setClasifDraft(v as AnalisisClasificacion)
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {CLASIFICACIONES.map((c) => (
+                                <SelectItem key={c.id} value={c.id}>
+                                  {c.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Detalle</Label>
+                          <Textarea
+                            value={detalleDraft}
+                            onChange={(e) => setDetalleDraft(e.target.value)}
+                            rows={4}
+                            placeholder="Motivo, orden de trabajo, observaciones…"
+                          />
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => void saveClasificacion()}
+                          >
+                            Guardar clasificación
+                          </Button>
+                          {isAdmin && selected.tipo === 'sin_transmision' && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => void doInterpolar()}
+                            >
+                              <Wand2 className="h-4 w-4 mr-1" />
+                              Interpolar hueco (PLI+LOCF)
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="h-[280px]">
+                        {chartData.length === 0 ? (
+                          <p className="text-sm text-muted-foreground py-10 text-center">
+                            Sin puntos horarios en este rango.
+                          </p>
+                        ) : (
+                          <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={chartData}>
+                              <CartesianGrid strokeDasharray="3 3" />
+                              <XAxis
+                                dataKey="ts"
+                                type="number"
+                                domain={['dataMin', 'dataMax']}
+                                tickFormatter={(v) =>
+                                  new Date(v).toLocaleString('es-PE', {
+                                    timeZone: 'America/Lima',
+                                    day: '2-digit',
+                                    month: '2-digit',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  })
+                                }
+                                tick={{ fontSize: 10 }}
+                              />
+                              <YAxis tick={{ fontSize: 10 }} />
+                              <Tooltip
+                                labelFormatter={(v) =>
+                                  fmtDt(new Date(Number(v)).toISOString())
+                                }
+                              />
+                              <Legend />
+                              <Line
+                                type="monotone"
+                                dataKey="setPoint"
+                                name="SetPoint"
+                                stroke="#FDD835"
+                                dot={false}
+                                connectNulls
+                              />
+                              <Line
+                                type="monotone"
+                                dataKey="suministro"
+                                name="Suministro"
+                                stroke="#1B5E20"
+                                dot={false}
+                                connectNulls
+                              />
+                              <Line
+                                type="monotone"
+                                dataKey="retorno"
+                                name="Retorno"
+                                stroke="#E53935"
+                                dot={false}
+                                connectNulls
+                              />
+                            </LineChart>
+                          </ResponsiveContainer>
+                        )}
+                      </div>
+                    </div>
+                    <DialogFooter className="gap-2 sm:gap-0">
+                      {onVerEnGraficaPrincipal != null && (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={irAGraficaPrincipal}
+                        >
+                          <ExternalLink className="h-4 w-4 mr-2" />
+                          Ver en gráfica principal
+                        </Button>
+                      )}
                       <Button
                         type="button"
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => void doInterpolar()}
+                        variant="outline"
+                        onClick={() => closeDetalle(false)}
                       >
-                        <Wand2 className="h-4 w-4 mr-1" />
-                        Interpolar hueco (PLI+LOCF)
+                        Cerrar
                       </Button>
-                    )}
-                  </div>
-                </div>
-                <div className="h-[280px]">
-                  {chartData.length === 0 ? (
-                    <p className="text-sm text-muted-foreground py-10 text-center">
-                      Sin puntos horarios en este rango.
-                    </p>
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={chartData}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis
-                          dataKey="ts"
-                          type="number"
-                          domain={['dataMin', 'dataMax']}
-                          tickFormatter={(v) =>
-                            new Date(v).toLocaleString('es-PE', {
-                              timeZone: 'America/Lima',
-                              day: '2-digit',
-                              month: '2-digit',
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })
-                          }
-                          tick={{ fontSize: 10 }}
-                        />
-                        <YAxis tick={{ fontSize: 10 }} />
-                        <Tooltip
-                          labelFormatter={(v) => fmtDt(new Date(Number(v)).toISOString())}
-                        />
-                        <Legend />
-                        <Line
-                          type="monotone"
-                          dataKey="setPoint"
-                          name="SetPoint"
-                          stroke="#FDD835"
-                          dot={false}
-                          connectNulls
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="suministro"
-                          name="Suministro"
-                          stroke="#1B5E20"
-                          dot={false}
-                          connectNulls
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="retorno"
-                          name="Retorno"
-                          stroke="#E53935"
-                          dot={false}
-                          connectNulls
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  )}
-                </div>
-              </div>
-            )}
+                    </DialogFooter>
+                  </>
+                )}
+              </DialogContent>
+            </Dialog>
           </>
         )}
       </CardContent>

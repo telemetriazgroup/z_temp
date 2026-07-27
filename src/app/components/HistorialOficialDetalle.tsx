@@ -28,6 +28,7 @@ import {
   datosAGrafica,
   ordenarTablaDesc,
   rangoUltimasHorasDatetimeLocal,
+  dateToDatetimeLocalValue,
   TABLA_HISTORIAL_COLUMNAS,
   celdaHistorial,
   claveFilaHistorial,
@@ -57,6 +58,13 @@ import {
 const HORAS_DEFECTO = 12;
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 
+export type HistorialFocusRango = {
+  /** Cambia en cada solicitud para re-disparar el efecto. */
+  token: number;
+  desdeIso: string;
+  hastaIso: string;
+};
+
 interface Props {
   imei: string;
   codigo: DispositivoOrigenCodigo;
@@ -65,6 +73,10 @@ interface Props {
   /** Layout compacto junto al panel de control IFF. */
   embedded?: boolean;
   defaultTab?: 'datos' | 'grafica';
+  /** Solicitud externa para cargar un rango (p. ej. desde un evento de análisis). */
+  focusRango?: HistorialFocusRango | null;
+  /** id del contenedor para scrollIntoView. */
+  sectionId?: string;
 }
 
 function parseDatetimeLocal(s: string): Date | null {
@@ -79,6 +91,8 @@ export function HistorialOficialDetalle({
   nombreContenedor,
   embedded = false,
   defaultTab = 'datos',
+  focusRango = null,
+  sectionId = 'historial-oficial',
 }: Props) {
   const { user } = useAuth();
   const esSuperUser = user?.superUser === true;
@@ -87,6 +101,7 @@ export function HistorialOficialDetalle({
   const initRango = rangoUltimasHorasDatetimeLocal(HORAS_DEFECTO);
   const [desdeStr, setDesdeStr] = useState(initRango.desde);
   const [hastaStr, setHastaStr] = useState(initRango.hasta);
+  const [tab, setTab] = useState<'datos' | 'grafica'>(defaultTab);
 
   const [respuesta, setRespuesta] = useState<BuscarDatosOficialesResponse | null>(
     null
@@ -167,6 +182,53 @@ export function HistorialOficialDetalle({
     setPage(1);
   }, [respuesta?.data.datos.length, pageSize]);
 
+  useEffect(() => {
+    if (focusRango == null) return;
+    const fi = new Date(focusRango.desdeIso);
+    const ff = new Date(focusRango.hastaIso);
+    if (Number.isNaN(fi.getTime()) || Number.isNaN(ff.getTime())) return;
+    if (fi.getTime() >= ff.getTime()) return;
+
+    const desde = dateToDatetimeLocalValue(fi);
+    const hasta = dateToDatetimeLocalValue(ff);
+    setDesdeStr(desde);
+    setHastaStr(hasta);
+    setTab('grafica');
+    setPage(1);
+
+    let cancelled = false;
+    (async () => {
+      setError(null);
+      setCargando(true);
+      try {
+        const r = await fetchBuscarDatosOficiales(codigo, imei, {
+          fechaInicial: fi,
+          fechaFinal: ff,
+        });
+        if (!cancelled) setRespuesta(r);
+      } catch (e) {
+        if (!cancelled) {
+          setError(
+            e instanceof Error ? e.message : 'Error al cargar historial'
+          );
+          setRespuesta(null);
+        }
+      } finally {
+        if (!cancelled) setCargando(false);
+      }
+    })();
+
+    requestAnimationFrame(() => {
+      document
+        .getElementById(sectionId)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [focusRango, codigo, imei, sectionId]);
+
   const datosCompletos = respuesta?.data.datos ?? [];
   const filasTabla = useMemo(
     () => ordenarTablaDesc(datosCompletos),
@@ -230,7 +292,10 @@ export function HistorialOficialDetalle({
 
   return (
     <>
-      <Card className={embedded ? 'shadow-sm h-full' : 'mt-8'}>
+      <Card
+        id={sectionId}
+        className={embedded ? 'shadow-sm h-full scroll-mt-20' : 'mt-8 scroll-mt-20'}
+      >
       <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between space-y-0">
         <div>
           <CardTitle className="text-lg">
@@ -430,7 +495,11 @@ export function HistorialOficialDetalle({
                 No hay datos oficiales para el rango seleccionado.
               </p>
             ) : (
-              <Tabs defaultValue={defaultTab} className="w-full">
+              <Tabs
+                value={tab}
+                onValueChange={(v) => setTab(v as 'datos' | 'grafica')}
+                className="w-full"
+              >
                 <TabsList className="w-full sm:w-auto">
                   <TabsTrigger value="grafica" className="flex-1 sm:flex-initial">
                     Gráfica histórica

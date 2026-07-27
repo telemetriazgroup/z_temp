@@ -151,48 +151,19 @@ export default function Layout() {
           })}
         </nav>
 
-        {/* User Info */}
-        <div className="border-t p-4">
-          {sidebarOpen ? (
-            <div className="space-y-2">
-              <div className="text-sm">
-                <div className="font-medium">{user?.username}</div>
-                <div className="text-xs text-gray-500">
-              {user?.superUser === true ? 'Superusuario' : user?.role}
-            </div>
-              </div>
-              <Button 
-                onClick={handleLogout}
-                variant="outline"
-                size="sm"
-                className="w-full"
-              >
-                <LogOut className="h-4 w-4 mr-2" />
-                Cerrar Sesión
-              </Button>
-            </div>
-          ) : (
-            <button
-              onClick={handleLogout}
-              className="p-2 hover:bg-gray-100 rounded-lg w-full flex justify-center"
-            >
-              <LogOut className="h-5 w-5" />
-            </button>
-          )}
-        </div>
       </aside>
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col">
         {/* Top Bar */}
-        <header className="h-16 bg-white border-b flex items-center justify-between px-6">
-          <div>
-            <h2 className="text-lg font-semibold">
+        <header className="h-16 bg-white border-b flex items-center justify-between gap-4 px-4 sm:px-6">
+          <div className="min-w-0">
+            <h2 className="text-lg font-semibold truncate">
               Plataforma de Monitoreo de Temperaturas
             </h2>
           </div>
-          <div className="flex items-center gap-4">
-            <div className="text-sm text-gray-600">
+          <div className="flex items-center gap-3 sm:gap-4 shrink-0">
+            <div className="text-sm text-gray-600 hidden md:block">
               {new Date().toLocaleDateString('es-ES', { 
                 weekday: 'long', 
                 year: 'numeric', 
@@ -200,6 +171,23 @@ export default function Layout() {
                 day: 'numeric' 
               })}
             </div>
+            <div className="hidden sm:block text-right leading-tight">
+              <div className="text-sm font-medium text-gray-900">
+                {user?.username}
+              </div>
+              <div className="text-xs text-gray-500">
+                {user?.superUser === true ? 'Superusuario' : user?.role}
+              </div>
+            </div>
+            <Button
+              onClick={handleLogout}
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+            >
+              <LogOut className="h-4 w-4 sm:mr-2" />
+              <span className="hidden sm:inline">Cerrar sesión</span>
+            </Button>
           </div>
         </header>
 

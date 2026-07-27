@@ -306,6 +306,22 @@ export default function EquipoDetalle() {
   const [error, setError] = useState<string | null>(null);
   const [refreshMensaje, setRefreshMensaje] = useState<string | null>(null);
   const [verMasAbierto, setVerMasAbierto] = useState(false);
+  const [historialFocus, setHistorialFocus] = useState<{
+    token: number;
+    desdeIso: string;
+    hastaIso: string;
+  } | null>(null);
+
+  const verEventoEnGraficaPrincipal = useCallback(
+    (rango: { since: string; until: string }) => {
+      setHistorialFocus({
+        token: Date.now(),
+        desdeIso: rango.since,
+        hastaIso: rango.until,
+      });
+    },
+    []
+  );
 
   const fetchDispositivoActual = useCallback(
     async (): Promise<DispositivoUltimoEstado | null> => {
@@ -585,6 +601,8 @@ export default function EquipoDetalle() {
           tieneUbicacion={tieneUbicacion}
           onMapa={() => navigate(`/ubicanos?lat=${ud.latitud}&lng=${ud.longitud}`)}
           onRefresh={() => void consultarActualizacion(false)}
+          historialFocus={historialFocus}
+          onVerEventoEnGrafica={verEventoEnGraficaPrincipal}
         />
       ) : (
         <>
@@ -683,12 +701,14 @@ export default function EquipoDetalle() {
             imei={dispositivo.imei}
             codigo={dispositivo.codigo}
             nombreContenedor={tituloPrincipal}
+            focusRango={historialFocus}
           />
           <AnalisisTelemetriaPanel
             imei={dispositivo.imei}
             codigo={dispositivo.codigo}
             nombreContenedor={tituloPrincipal}
             setPointInicial={dispositivo.ultimo_dato?.set_point ?? null}
+            onVerEnGraficaPrincipal={verEventoEnGraficaPrincipal}
           />
         </>
       )}
