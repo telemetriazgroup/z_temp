@@ -517,7 +517,7 @@ export async function runAlertCycle(options = {}) {
           accion: 'ninguna',
           enRango: null,
           criterio:
-            'No aparece en la telemetría actual (TUNEL/STARCOOL/TERMOKING). No se puede evaluar en_rango.',
+            'No aparece en la telemetría actual (TUNEL/STARCOOL/STARCOOL2/TERMOKING). No se puede evaluar en_rango.',
         });
         result.resumen.sinTelemetria++;
         continue;

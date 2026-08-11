@@ -4,6 +4,10 @@ import {
   formatearNumero,
   textoEstadoPowerState,
 } from './telemetriaDetalle';
+import {
+  formatDateTimeInTz,
+  resolveDisplayTimeZone,
+} from './telemetryTimezone';
 
 export interface ReeferDatoItem {
   id: string;
@@ -112,7 +116,10 @@ export function buildReeferDetalleItems(
     {
       id: 'ultima_actualizacion',
       label: 'Última telemetría',
-      value: formatFechaEquipo(ud.created_at ?? d.ultima_actualizacion),
+      value: formatFechaEquipo(
+        ud.created_at ?? d.ultima_actualizacion,
+        d.zona_horaria
+      ),
     },
     {
       id: 'telemetria_id',
@@ -129,16 +136,13 @@ export function buildReeferDetalleItems(
   return { principal, sensores, meta };
 }
 
-function formatFechaEquipo(iso: string | null | undefined): string {
+function formatFechaEquipo(
+  iso: string | null | undefined,
+  zonaHoraria?: string | null
+): string {
   if (iso == null) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString('es-ES', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
+  return formatDateTimeInTz(iso, resolveDisplayTimeZone(zonaHoraria).iana, {
+    second: undefined,
   });
 }
 

@@ -27,7 +27,7 @@ export function userMayAccessImei(user: User | null, imei: string): boolean {
   return user.deviceAccess.includes(imei);
 }
 
-/** IMEI + origen (TUNEL / STARCOOL / TERMOKING) según perfil del usuario. */
+/** IMEI + origen (TUNEL / STARCOOL / STARCOOL2 / TERMOKING) según perfil del usuario. */
 export function userMayAccessDispositivo(
   user: User | null,
   dispositivo: DispositivoUltimoEstado

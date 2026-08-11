@@ -14,6 +14,10 @@ import { Badge } from './ui/badge';
 import { cn } from './ui/utils';
 import { Settings2, Radio, Power, MapPin } from 'lucide-react';
 import { Button } from './ui/button';
+import {
+  formatDateTimeInTz,
+  resolveDisplayTimeZone,
+} from '../lib/telemetryTimezone';
 
 interface Props {
   dispositivo: DispositivoUltimoEstado;
@@ -91,7 +95,10 @@ export function EquipoDetalleIffLayout({
             <p className="text-sm text-muted-foreground mt-2">
               Última actualización:{' '}
               {dispositivo.ultima_actualizacion
-                ? new Date(dispositivo.ultima_actualizacion).toLocaleString('es-ES')
+                ? formatDateTimeInTz(
+                    dispositivo.ultima_actualizacion,
+                    resolveDisplayTimeZone(dispositivo.zona_horaria).iana
+                  )
                 : '—'}
               {dispositivo.minutos_desde_ultimo_dato != null && (
                 <> · hace {dispositivo.minutos_desde_ultimo_dato} min</>
@@ -148,8 +155,8 @@ export function EquipoDetalleIffLayout({
             codigo={dispositivo.codigo!}
             nombreContenedor={tituloPrincipal}
             embedded
-            defaultTab="grafica"
             focusRango={historialFocus}
+            zonaHoraria={dispositivo.zona_horaria}
           />
           {dispositivo.codigo != null && (
             <AnalisisTelemetriaPanel

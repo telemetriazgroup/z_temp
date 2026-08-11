@@ -22,6 +22,10 @@ import {
   telemetriaComparablePayload,
 } from '../lib/telemetriaDetalle';
 import {
+  formatDateTimeInTz,
+  resolveDisplayTimeZone,
+} from '../lib/telemetryTimezone';
+import {
   ensureAlarmCatalog,
   resolveAlarmTitle,
   extractActiveAlarmCodes,
@@ -579,7 +583,10 @@ export default function EquipoDetalle() {
             <p className="text-sm text-muted-foreground">
               Última actualización:{' '}
               {dispositivo.ultima_actualizacion
-                ? new Date(dispositivo.ultima_actualizacion).toLocaleString('es-ES')
+                ? formatDateTimeInTz(
+                    dispositivo.ultima_actualizacion,
+                    resolveDisplayTimeZone(dispositivo.zona_horaria).iana
+                  )
                 : '—'}
               {dispositivo.minutos_desde_ultimo_dato != null && (
                 <> · hace {dispositivo.minutos_desde_ultimo_dato} min</>
@@ -702,6 +709,7 @@ export default function EquipoDetalle() {
             codigo={dispositivo.codigo}
             nombreContenedor={tituloPrincipal}
             focusRango={historialFocus}
+            zonaHoraria={dispositivo.zona_horaria}
           />
           <AnalisisTelemetriaPanel
             imei={dispositivo.imei}

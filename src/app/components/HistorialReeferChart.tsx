@@ -18,6 +18,10 @@ import {
   valorSerieFormateado,
   type HistorialChartSerie,
 } from '../lib/historialChartConfig';
+import {
+  formatDateTimeInTz,
+  resolveDisplayTimeZone,
+} from '../lib/telemetryTimezone';
 import { Button } from './ui/button';
 import { cn } from './ui/utils';
 import { ZoomOut } from 'lucide-react';
@@ -27,18 +31,12 @@ interface Props {
   imei: string;
   nombreContenedor: string;
   rangoLabel?: string | null;
+  /** zona_horaria del listado (GMT-4 / GMT-5). */
+  zonaHoraria?: string | null;
 }
 
-function formatFechaTooltip(ts: number): string {
-  const d = new Date(ts);
-  return d.toLocaleString('es-ES', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
+function formatFechaTooltip(ts: number, iana: string): string {
+  return formatDateTimeInTz(new Date(ts), iana);
 }
 
 function ReeferTooltip({
@@ -46,11 +44,13 @@ function ReeferTooltip({
   payload,
   label,
   series,
+  iana,
 }: {
   active?: boolean;
   payload?: Array<{ dataKey?: string; value?: number | null; color?: string }>;
   label?: number;
   series: HistorialChartSerie[];
+  iana: string;
 }) {
   if (!active || payload == null || label == null) return null;
 
@@ -59,7 +59,7 @@ function ReeferTooltip({
   return (
     <div className="rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-xs text-white shadow-xl min-w-[180px]">
       <div className="font-semibold mb-2 border-b border-neutral-700 pb-1">
-        {formatFechaTooltip(label)}
+        {formatFechaTooltip(label, iana)}
       </div>
       <div className="space-y-1">
         {series.map((s) => {
@@ -130,7 +130,14 @@ function SparseTempLabel({
   );
 }
 
-export function HistorialReeferChart({ data, imei, nombreContenedor, rangoLabel }: Props) {
+export function HistorialReeferChart({
+  data,
+  imei,
+  nombreContenedor,
+  rangoLabel,
+  zonaHoraria,
+}: Props) {
+  const displayIana = resolveDisplayTimeZone(zonaHoraria).iana;
   const disponibles = useMemo(() => seriesConDatos(data), [data]);
   const tienePct = disponibles.some((s) => s.axis === 'pct');
 
@@ -166,24 +173,18 @@ export function HistorialReeferChart({ data, imei, nombreContenedor, rangoLabel 
 
   const tickFormateador = useCallback(
     (ts: number) => {
-      const d = new Date(ts);
       if (rangoMs > 48 * 3600000) {
-        return d.toLocaleString('es-ES', {
-          day: '2-digit',
-          month: '2-digit',
+        return formatDateTimeInTz(new Date(ts), displayIana, {
+          second: undefined,
           year: '2-digit',
-          hour: '2-digit',
-          minute: '2-digit',
         });
       }
-      return d.toLocaleString('es-ES', {
-        day: '2-digit',
-        month: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
+      return formatDateTimeInTz(new Date(ts), displayIana, {
+        second: undefined,
+        year: undefined,
       });
     },
-    [rangoMs]
+    [rangoMs, displayIana]
   );
 
   const toggleSerie = (key: string) => {
@@ -269,7 +270,9 @@ export function HistorialReeferChart({ data, imei, nombreContenedor, rangoLabel 
                     }}
                   />
                 )}
-                <Tooltip content={<ReeferTooltip series={activas} />} />
+                <Tooltip
+                  content={<ReeferTooltip series={activas} iana={displayIana} />}
+                />
                 {activas.map((s) => (
                   <Line
                     key={s.key}

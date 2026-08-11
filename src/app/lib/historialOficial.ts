@@ -1,4 +1,10 @@
 import type { DatoOficialHistorial } from '../types';
+import {
+  formatDateTimeInTz,
+  parseTelemetryTimestampClient,
+  resolveDisplayTimeZone,
+  TELEMETRY_SOURCE_TZ,
+} from './telemetryTimezone';
 
 const MS_HORA = 60 * 60 * 1000;
 
@@ -12,8 +18,7 @@ export function fechaRegistroHistorial(row: DatoOficialHistorial): string | null
 export function timestampRegistroHistorial(row: DatoOficialHistorial): number {
   const v = fechaRegistroHistorial(row);
   if (v == null) return NaN;
-  const t = new Date(v).getTime();
-  return Number.isNaN(t) ? NaN : t;
+  return parseTelemetryTimestampClient(v);
 }
 
 function compararPorFechaAsc(a: DatoOficialHistorial, b: DatoOficialHistorial): number {
@@ -48,6 +53,40 @@ export function filtrarDatosUltimasHoras(
     .sort(compararPorFechaAsc);
 }
 
+/** Filtra por ventana [desdeMs, hastaMs] (instantes absolutos). */
+export function filtrarDatosPorRangoMs(
+  datos: DatoOficialHistorial[],
+  desdeMs: number,
+  hastaMs: number
+): DatoOficialHistorial[] {
+  return datos
+    .filter((row) => {
+      const t = timestampRegistroHistorial(row);
+      return !Number.isNaN(t) && t >= desdeMs && t <= hastaMs;
+    })
+    .sort(compararPorFechaAsc);
+}
+
+/** ¿Los datos cargados cubren el rango pedido? (con holgura de 2 min). */
+export function datosCubrenRangoMs(
+  datos: DatoOficialHistorial[],
+  desdeMs: number,
+  hastaMs: number,
+  holguraMs = 2 * 60 * 1000
+): boolean {
+  if (!datos.length) return false;
+  let min = Infinity;
+  let max = -Infinity;
+  for (const row of datos) {
+    const t = timestampRegistroHistorial(row);
+    if (Number.isNaN(t)) continue;
+    if (t < min) min = t;
+    if (t > max) max = t;
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return false;
+  return min <= desdeMs + holguraMs && max >= hastaMs - holguraMs;
+}
+
 /** Orden más reciente primero (tabla). */
 export function ordenarTablaDesc(datos: DatoOficialHistorial[]): DatoOficialHistorial[] {
   return [...datos].sort(compararPorFechaDesc);
@@ -64,34 +103,26 @@ export interface HistorialChartRow {
   evaporador: number | null;
   ambiente: number | null;
   humedad: number | null;
-  /** USDA1 ← cargo_1_temp */
   usda1: number | null;
-  /** USDA2 ← cargo_2_temp */
   usda2: number | null;
-  /** USDA3 ← cargo_3_temp */
   usda3: number | null;
-  /** USDA4 ← cargo_4_temp */
   usda4: number | null;
 }
 
-export function datosAGrafica(datos: DatoOficialHistorial[]): HistorialChartRow[] {
+export function datosAGrafica(
+  datos: DatoOficialHistorial[],
+  zonaHoraria?: string | null
+): HistorialChartRow[] {
+  const display = resolveDisplayTimeZone(zonaHoraria);
   const sorted = [...datos].sort(compararPorFechaAsc);
   return sorted
     .map((row) => {
       const raw = fechaRegistroHistorial(row);
       if (raw == null) return null;
-      const d = new Date(raw);
-      const ts = d.getTime();
+      const ts = parseTelemetryTimestampClient(raw);
       if (Number.isNaN(ts)) return null;
       return {
-        label: d.toLocaleString('es-ES', {
-          day: '2-digit',
-          month: '2-digit',
-          year: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-        }),
+        label: formatDateTimeInTz(raw, display.iana),
         ts,
         setTemperatura: num(row.set_point),
         suministro: num(row.temp_supply_1),
@@ -137,13 +168,14 @@ export const TABLA_HISTORIAL_COLUMNAS: {
 
 export function celdaHistorial(
   row: DatoOficialHistorial,
-  key: keyof DatoOficialHistorial | 'fecha_registro'
+  key: keyof DatoOficialHistorial | 'fecha_registro',
+  zonaHoraria?: string | null
 ): string {
   if (key === 'fecha_registro') {
     const raw = fechaRegistroHistorial(row);
     if (raw == null) return '—';
-    const d = new Date(raw);
-    return Number.isNaN(d.getTime()) ? raw : d.toLocaleString('es-ES');
+    const display = resolveDisplayTimeZone(zonaHoraria);
+    return formatDateTimeInTz(raw, display.iana);
   }
 
   const v = row[key as keyof DatoOficialHistorial];
@@ -167,13 +199,17 @@ export function cargoTempValida(v: number | null | undefined): number | null {
   return v;
 }
 
-/** Valor para `<input type="datetime-local" step="1" />` en hora local. */
+/** @deprecated Preferir rangoUltimasHorasInTz + dateToDatetimeLocalInTz */
 export function dateToDatetimeLocalValue(d: Date): string {
+  const display = TELEMETRY_SOURCE_TZ;
   const p = (n: number) => String(n).padStart(2, '0');
+  // Mantener firma; usa componentes en UTC+offset vía toLocale no disponible aquí
+  // Dejamos conversión vía telemetryTimezone en el componente.
+  void display;
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
-/** Rango por defecto: últimas `horas` (para precargar búsqueda). */
+/** @deprecated Preferir rangoUltimasHorasInTz */
 export function rangoUltimasHorasDatetimeLocal(horas: number): {
   desde: string;
   hasta: string;

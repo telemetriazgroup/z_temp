@@ -1,5 +1,6 @@
 const TUNEL_BASE = process.env.TUNEL_API_BASE ?? 'http://161.132.53.51:9051';
 const STARCOOL_BASE = process.env.STARCOOL_API_BASE ?? 'http://161.132.206.104:9112';
+const STARCOOL2_BASE = process.env.STARCOOL2_API_BASE ?? TUNEL_BASE;
 
 import { formatoFechaQueryApi, parseTelemetryDate, parseTelemetryTimestamp, startOfDayMs, formatTimeShortTz, formatChartAxisLabel, formatDateTimeTz } from './timezone.js';
 import { getMargenesSetpoint, toleranciaSetpointDefault } from './rangoTemperatura.js';
@@ -17,6 +18,8 @@ function buildHistorialUrl(codigo, imei) {
       return `${TUNEL_BASE}/TermoKing/buscar_datos_oficiales/${safe}`;
     case 'STARCOOL':
       return `${STARCOOL_BASE}/Starcool/buscar_datos_oficiales/${safe}`;
+    case 'STARCOOL2':
+      return `${STARCOOL2_BASE}/Starcool/buscar_datos_oficiales/${safe}`;
     default:
       throw new Error(`Origen no soportado: ${codigo}`);
   }

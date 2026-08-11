@@ -83,6 +83,7 @@ const CODIGO_FILTER_OPTIONS: { id: CodigoFilter; label: string }[] = [
   { id: 'ALL', label: 'Todos' },
   { id: 'TUNEL', label: 'TUNEL' },
   { id: 'STARCOOL', label: 'STARCOOL' },
+  { id: 'STARCOOL2', label: 'STARCOOL2' },
   { id: 'TERMOKING', label: 'TERMOKING' },
 ];
 
@@ -265,6 +266,7 @@ export default function Listado() {
     const counts: Record<DispositivoOrigenCodigo, number> = {
       TUNEL: 0,
       STARCOOL: 0,
+      STARCOOL2: 0,
       TERMOKING: 0,
     };
     for (const d of visibleDispositivos) {

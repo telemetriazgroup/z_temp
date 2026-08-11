@@ -1,13 +1,16 @@
 import type { BuscarDatosOficialesResponse, DispositivoOrigenCodigo } from '../types';
 import {
   TELEMETRY_STARCOOL_BASE,
+  TELEMETRY_STARCOOL2_BASE,
   TELEMETRY_TUNEL_TERMOKING_BASE,
 } from './telemetryBases';
+import { formatoFechaQueryApiTz } from '../lib/telemetryTimezone';
 
 const ORIGENES_CON_HISTORIAL = new Set<DispositivoOrigenCodigo>([
   'TUNEL',
   'TERMOKING',
   'STARCOOL',
+  'STARCOOL2',
 ]);
 
 export function dispositivoTieneHistorialOficial(
@@ -28,6 +31,8 @@ function construirUrlBuscarDatosOficiales(
       return `${TELEMETRY_TUNEL_TERMOKING_BASE}/TermoKing/buscar_datos_oficiales/${safe}`;
     case 'STARCOOL':
       return `${TELEMETRY_STARCOOL_BASE}/Starcool/buscar_datos_oficiales/${safe}`;
+    case 'STARCOOL2':
+      return `${TELEMETRY_STARCOOL2_BASE}/Starcool/buscar_datos_oficiales/${safe}`;
   }
 }
 
@@ -53,8 +58,9 @@ export async function fetchBuscarDatosOficiales(
   let url = construirUrlBuscarDatosOficiales(codigo, imei);
   if (filtro != null) {
     const params = new URLSearchParams({
-      fecha_inicial: formatoFechaQueryApi(filtro.fechaInicial),
-      fecha_final: formatoFechaQueryApi(filtro.fechaFinal),
+      // Siempre hora de pared GMT-5 (fuente telemetría), no la TZ del navegador.
+      fecha_inicial: formatoFechaQueryApiTz(filtro.fechaInicial),
+      fecha_final: formatoFechaQueryApiTz(filtro.fechaFinal),
     });
     url = `${url}?${params.toString()}`;
   }
@@ -63,10 +69,4 @@ export async function fetchBuscarDatosOficiales(
     throw new Error(`HTTP ${res.status}: ${res.statusText}`);
   }
   return parseRespuesta(await res.json());
-}
-
-/** Formato esperado por la API: `2026-04-29_20-11-11` */
-function formatoFechaQueryApi(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
 }

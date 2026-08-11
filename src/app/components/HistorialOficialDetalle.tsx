@@ -1,6 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchBuscarDatosOficiales } from '../api/datosOficiales';
-import type { BuscarDatosOficialesResponse, DispositivoOrigenCodigo } from '../types';
+import type {
+  BuscarDatosOficialesResponse,
+  DatoOficialHistorial,
+  DispositivoOrigenCodigo,
+} from '../types';
 import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
@@ -12,7 +16,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from './ui/select';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import {
   Table,
   TableBody,
@@ -27,8 +30,8 @@ import { ReporteCaModal } from './ReporteCaModal';
 import {
   datosAGrafica,
   ordenarTablaDesc,
-  rangoUltimasHorasDatetimeLocal,
-  dateToDatetimeLocalValue,
+  filtrarDatosPorRangoMs,
+  datosCubrenRangoMs,
   TABLA_HISTORIAL_COLUMNAS,
   celdaHistorial,
   claveFilaHistorial,
@@ -40,6 +43,14 @@ import {
   exportHistorialXlsx,
   exportHistorialJson,
 } from '../lib/exportHistorial';
+import {
+  dateToDatetimeLocalInTz,
+  formatDateInTz,
+  formatDateTimeInTz,
+  parseDatetimeLocalInTz,
+  rangoUltimasHorasInTz,
+  resolveDisplayTimeZone,
+} from '../lib/telemetryTimezone';
 import { useAuth } from '../AuthContext';
 import { HistorialReeferChart } from './HistorialReeferChart';
 import {
@@ -59,7 +70,6 @@ const HORAS_DEFECTO = 12;
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 
 export type HistorialFocusRango = {
-  /** Cambia en cada solicitud para re-disparar el efecto. */
   token: number;
   desdeIso: string;
   hastaIso: string;
@@ -68,21 +78,14 @@ export type HistorialFocusRango = {
 interface Props {
   imei: string;
   codigo: DispositivoOrigenCodigo;
-  /** Nombre local o etiqueta; si no hay, suele ser el IMEI. */
   nombreContenedor: string;
-  /** Layout compacto junto al panel de control IFF. */
   embedded?: boolean;
+  /** @deprecated Se muestran gráfica y tabla juntas. */
   defaultTab?: 'datos' | 'grafica';
-  /** Solicitud externa para cargar un rango (p. ej. desde un evento de análisis). */
   focusRango?: HistorialFocusRango | null;
-  /** id del contenedor para scrollIntoView. */
   sectionId?: string;
-}
-
-function parseDatetimeLocal(s: string): Date | null {
-  if (!s) return null;
-  const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? null : d;
+  /** zona_horaria del listado (ej. GMT-4 / GMT-5). */
+  zonaHoraria?: string | null;
 }
 
 export function HistorialOficialDetalle({
@@ -90,31 +93,86 @@ export function HistorialOficialDetalle({
   codigo,
   nombreContenedor,
   embedded = false,
-  defaultTab = 'datos',
   focusRango = null,
   sectionId = 'historial-oficial',
+  zonaHoraria = null,
 }: Props) {
   const { user } = useAuth();
   const esSuperUser = user?.superUser === true;
+  const displayTz = useMemo(
+    () => resolveDisplayTimeZone(zonaHoraria),
+    [zonaHoraria]
+  );
+
   const [reporteInternoOpen, setReporteInternoOpen] = useState(false);
   const [reporteCaOpen, setReporteCaOpen] = useState(false);
-  const initRango = rangoUltimasHorasDatetimeLocal(HORAS_DEFECTO);
+  const initRango = rangoUltimasHorasInTz(HORAS_DEFECTO, displayTz);
   const [desdeStr, setDesdeStr] = useState(initRango.desde);
   const [hastaStr, setHastaStr] = useState(initRango.hasta);
-  const [tab, setTab] = useState<'datos' | 'grafica'>(defaultTab);
 
+  /** Última respuesta completa de la API (caché local). */
   const [respuesta, setRespuesta] = useState<BuscarDatosOficialesResponse | null>(
     null
   );
+  /** Si hay foco/filtro sobre un subrango ya cargado, no se vuelve a pedir. */
+  const [filtroVistaMs, setFiltroVistaMs] = useState<{
+    desde: number;
+    hasta: number;
+  } | null>(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(25);
   const [exportError, setExportError] = useState<string | null>(null);
+  const respuestaRef = useRef(respuesta);
+  respuestaRef.current = respuesta;
+
+  const cargarRango = useCallback(
+    async (fi: Date, ff: Date, opts?: { usarCacheSiCubre?: boolean }) => {
+      const desdeMs = fi.getTime();
+      const hastaMs = ff.getTime();
+      const cache = respuestaRef.current?.data?.datos ?? [];
+
+      if (
+        opts?.usarCacheSiCubre &&
+        datosCubrenRangoMs(cache, desdeMs, hastaMs)
+      ) {
+        setFiltroVistaMs({ desde: desdeMs, hasta: hastaMs });
+        setDesdeStr(dateToDatetimeLocalInTz(fi, displayTz.iana));
+        setHastaStr(dateToDatetimeLocalInTz(ff, displayTz.iana));
+        setError(null);
+        setPage(1);
+        return true;
+      }
+
+      setError(null);
+      setCargando(true);
+      try {
+        const r = await fetchBuscarDatosOficiales(codigo, imei, {
+          fechaInicial: fi,
+          fechaFinal: ff,
+        });
+        setRespuesta(r);
+        setFiltroVistaMs(null);
+        setDesdeStr(dateToDatetimeLocalInTz(fi, displayTz.iana));
+        setHastaStr(dateToDatetimeLocalInTz(ff, displayTz.iana));
+        setPage(1);
+        return true;
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Error al cargar historial');
+        setRespuesta(null);
+        setFiltroVistaMs(null);
+        return false;
+      } finally {
+        setCargando(false);
+      }
+    },
+    [codigo, imei, displayTz.iana]
+  );
 
   const ejecutarBusqueda = useCallback(async () => {
-    const fi = parseDatetimeLocal(desdeStr);
-    const ff = parseDatetimeLocal(hastaStr);
+    const fi = parseDatetimeLocalInTz(desdeStr, displayTz);
+    const ff = parseDatetimeLocalInTz(hastaStr, displayTz);
     if (fi == null || ff == null) {
       setError('Indique fechas válidas.');
       return false;
@@ -123,34 +181,26 @@ export function HistorialOficialDetalle({
       setError('La fecha inicial debe ser anterior a la fecha final.');
       return false;
     }
+    // Buscar explícito: nueva consulta (puede ampliar ventana).
+    return cargarRango(fi, ff, { usarCacheSiCubre: false });
+  }, [desdeStr, hastaStr, displayTz, cargarRango]);
 
-    setError(null);
-    setCargando(true);
-    try {
-      const r = await fetchBuscarDatosOficiales(codigo, imei, {
-        fechaInicial: fi,
-        fechaFinal: ff,
-      });
-      setRespuesta(r);
-      return true;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error al cargar historial');
-      setRespuesta(null);
-      return false;
-    } finally {
-      setCargando(false);
-    }
-  }, [codigo, imei, desdeStr, hastaStr]);
+  const cargarUltimasHoras = useCallback(async () => {
+    const rango = rangoUltimasHorasInTz(HORAS_DEFECTO, displayTz);
+    const fi = parseDatetimeLocalInTz(rango.desde, displayTz);
+    const ff = parseDatetimeLocalInTz(rango.hasta, displayTz);
+    if (fi == null || ff == null) return;
+    await cargarRango(fi, ff, { usarCacheSiCubre: false });
+  }, [displayTz, cargarRango]);
 
   useEffect(() => {
-    const rango = rangoUltimasHorasDatetimeLocal(HORAS_DEFECTO);
-    setDesdeStr(rango.desde);
-    setHastaStr(rango.hasta);
-
     let cancelled = false;
     (async () => {
-      const fi = parseDatetimeLocal(rango.desde);
-      const ff = parseDatetimeLocal(rango.hasta);
+      const rango = rangoUltimasHorasInTz(HORAS_DEFECTO, displayTz);
+      setDesdeStr(rango.desde);
+      setHastaStr(rango.hasta);
+      const fi = parseDatetimeLocalInTz(rango.desde, displayTz);
+      const ff = parseDatetimeLocalInTz(rango.hasta, displayTz);
       if (fi == null || ff == null) return;
 
       setCargando(true);
@@ -160,7 +210,10 @@ export function HistorialOficialDetalle({
           fechaInicial: fi,
           fechaFinal: ff,
         });
-        if (!cancelled) setRespuesta(res);
+        if (!cancelled) {
+          setRespuesta(res);
+          setFiltroVistaMs(null);
+        }
       } catch (e) {
         if (!cancelled) {
           setError(
@@ -172,15 +225,12 @@ export function HistorialOficialDetalle({
         if (!cancelled) setCargando(false);
       }
     })();
-
     return () => {
       cancelled = true;
     };
-  }, [codigo, imei]);
-
-  useEffect(() => {
-    setPage(1);
-  }, [respuesta?.data.datos.length, pageSize]);
+    // Solo al cambiar equipo / zona de visualización
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [codigo, imei, displayTz.iana]);
 
   useEffect(() => {
     if (focusRango == null) return;
@@ -189,47 +239,25 @@ export function HistorialOficialDetalle({
     if (Number.isNaN(fi.getTime()) || Number.isNaN(ff.getTime())) return;
     if (fi.getTime() >= ff.getTime()) return;
 
-    const desde = dateToDatetimeLocalValue(fi);
-    const hasta = dateToDatetimeLocalValue(ff);
-    setDesdeStr(desde);
-    setHastaStr(hasta);
-    setTab('grafica');
-    setPage(1);
-
-    let cancelled = false;
-    (async () => {
-      setError(null);
-      setCargando(true);
-      try {
-        const r = await fetchBuscarDatosOficiales(codigo, imei, {
-          fechaInicial: fi,
-          fechaFinal: ff,
-        });
-        if (!cancelled) setRespuesta(r);
-      } catch (e) {
-        if (!cancelled) {
-          setError(
-            e instanceof Error ? e.message : 'Error al cargar historial'
-          );
-          setRespuesta(null);
-        }
-      } finally {
-        if (!cancelled) setCargando(false);
-      }
-    })();
+    void cargarRango(fi, ff, { usarCacheSiCubre: true });
 
     requestAnimationFrame(() => {
       document
         .getElementById(sectionId)
         ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
+  }, [focusRango, cargarRango, sectionId]);
 
-    return () => {
-      cancelled = true;
-    };
-  }, [focusRango, codigo, imei, sectionId]);
+  const datosBase: DatoOficialHistorial[] = respuesta?.data.datos ?? [];
+  const datosCompletos = useMemo(() => {
+    if (filtroVistaMs == null) return datosBase;
+    return filtrarDatosPorRangoMs(
+      datosBase,
+      filtroVistaMs.desde,
+      filtroVistaMs.hasta
+    );
+  }, [datosBase, filtroVistaMs]);
 
-  const datosCompletos = respuesta?.data.datos ?? [];
   const filasTabla = useMemo(
     () => ordenarTablaDesc(datosCompletos),
     [datosCompletos]
@@ -240,41 +268,31 @@ export function HistorialOficialDetalle({
   const inicioSlice = (paginaSegura - 1) * pageSize;
   const filasPagina = filasTabla.slice(inicioSlice, inicioSlice + pageSize);
 
-  const chartData = useMemo(() => datosAGrafica(datosCompletos), [datosCompletos]);
+  useEffect(() => {
+    setPage(1);
+  }, [datosCompletos.length, pageSize]);
+
+  const chartData = useMemo(
+    () => datosAGrafica(datosCompletos, zonaHoraria),
+    [datosCompletos, zonaHoraria]
+  );
 
   const sinRegistrosApi =
     !cargando && respuesta != null && datosCompletos.length === 0;
 
   const rangoExport = useMemo((): HistorialExportRango | null => {
-    const a = parseDatetimeLocal(desdeStr);
-    const b = parseDatetimeLocal(hastaStr);
+    const a = parseDatetimeLocalInTz(desdeStr, displayTz);
+    const b = parseDatetimeLocalInTz(hastaStr, displayTz);
     if (a != null && b != null && a.getTime() < b.getTime()) {
       return { desde: a, hasta: b };
     }
-    if (respuesta?.data?.fecha_inicial != null && respuesta?.data?.fecha_final != null) {
-      const d1 = new Date(respuesta.data.fecha_inicial);
-      const d2 = new Date(respuesta.data.fecha_final);
-      if (
-        !Number.isNaN(d1.getTime()) &&
-        !Number.isNaN(d2.getTime()) &&
-        d1.getTime() < d2.getTime()
-      ) {
-        return { desde: d1, hasta: d2 };
-      }
-    }
     return null;
-  }, [desdeStr, hastaStr, respuesta]);
+  }, [desdeStr, hastaStr, displayTz]);
 
   const rangoGraficaLabel = useMemo(() => {
     if (rangoExport == null) return null;
-    const fmt = (d: Date) =>
-      d.toLocaleDateString('es-ES', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-      });
-    return `${fmt(rangoExport.desde)} - ${fmt(rangoExport.hasta)}`;
-  }, [rangoExport]);
+    return `${formatDateInTz(rangoExport.desde, displayTz.iana)} - ${formatDateInTz(rangoExport.hasta, displayTz.iana)} (${displayTz.label})`;
+  }, [rangoExport, displayTz]);
 
   const exportacionDeshabilitada =
     cargando || datosCompletos.length === 0 || rangoExport == null;
@@ -296,325 +314,364 @@ export function HistorialOficialDetalle({
         id={sectionId}
         className={embedded ? 'shadow-sm h-full scroll-mt-20' : 'mt-8 scroll-mt-20'}
       >
-      <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between space-y-0">
-        <div>
-          <CardTitle className="text-lg">
-            {embedded ? 'Monitoreo y análisis' : 'Historial oficial'}
-          </CardTitle>
-          <p className="text-sm text-muted-foreground font-normal mt-1">
-            {embedded
-              ? `Últimas ${HORAS_DEFECTO} h · ${nombreContenedor}`
-              : (
-                <>
-                  Telemetría certificada · <span className="font-mono">{codigo}</span>
-                </>
-              )}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void ejecutarBusqueda()}
-            disabled={cargando}
-          >
-            <RefreshCw
-              className={cn('h-4 w-4 mr-2', cargando && 'animate-spin')}
-            />
-            Actualizar
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => setReporteInternoOpen(true)}
-          >
-            <FileBarChart2 className="h-4 w-4 mr-2" />
-            Reporte interno
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => setReporteCaOpen(true)}
-          >
-            <FlaskConical className="h-4 w-4 mr-2" />
-            Reporte CA
-          </Button>
-          <div className="flex flex-col gap-1 items-stretch sm:items-end">
-            <div className="flex flex-wrap gap-2 justify-end">
-              <span className="text-xs text-muted-foreground self-center hidden sm:inline">
-                Exportar
-              </span>
+        <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between space-y-0">
+          <div>
+            <CardTitle className="text-lg">
+              {embedded ? 'Monitoreo y análisis' : 'Historial oficial'}
+            </CardTitle>
+            <p className="text-sm text-muted-foreground font-normal mt-1">
+              {embedded
+                ? `Últimas ${HORAS_DEFECTO} h · ${nombreContenedor} · ${displayTz.label}`
+                : (
+                  <>
+                    Telemetría certificada ·{' '}
+                    <span className="font-mono">{codigo}</span> · {displayTz.label}
+                  </>
+                )}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={cargando}
+              onClick={() => void cargarUltimasHoras()}
+              title={`Recargar últimas ${HORAS_DEFECTO} h`}
+            >
+              <RefreshCw className={cn('h-4 w-4 mr-1', cargando && 'animate-spin')} />
+              Últimas {HORAS_DEFECTO} h
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => setReporteInternoOpen(true)}
+            >
+              <FileBarChart2 className="h-4 w-4 mr-1" />
+              Reporte interno
+            </Button>
+            {esSuperUser && (
               <Button
-                variant="outline"
+                type="button"
                 size="sm"
+                variant="outline"
+                onClick={() => setReporteCaOpen(true)}
+              >
+                <FlaskConical className="h-4 w-4 mr-1" />
+                Reporte CA
+              </Button>
+            )}
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={exportacionDeshabilitada}
+              onClick={() => {
+                if (rangoExport == null) return;
+                ejecutarExportacion(() =>
+                  exportHistorialCsv(
+                    datosCompletos,
+                    imei,
+                    codigo,
+                    rangoExport,
+                    zonaHoraria
+                  )
+                );
+              }}
+            >
+              <FileText className="h-4 w-4 mr-1.5 shrink-0" />
+              CSV
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={exportacionDeshabilitada}
+              onClick={() => {
+                if (rangoExport == null) return;
+                ejecutarExportacion(() =>
+                  exportHistorialXlsx(
+                    datosCompletos,
+                    imei,
+                    codigo,
+                    rangoExport,
+                    zonaHoraria
+                  )
+                );
+              }}
+            >
+              <FileSpreadsheet className="h-4 w-4 mr-1.5 shrink-0" />
+              Excel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={exportacionDeshabilitada}
+              onClick={() => {
+                if (rangoExport == null) return;
+                ejecutarExportacion(() =>
+                  exportHistorialPdf(
+                    datosCompletos,
+                    imei,
+                    codigo,
+                    nombreContenedor,
+                    rangoExport,
+                    zonaHoraria
+                  )
+                );
+              }}
+            >
+              <FileType2 className="h-4 w-4 mr-1.5 shrink-0" />
+              PDF
+            </Button>
+            {esSuperUser && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
                 disabled={exportacionDeshabilitada}
-                title="Descargar CSV"
                 onClick={() => {
                   if (rangoExport == null) return;
                   ejecutarExportacion(() =>
-                    exportHistorialCsv(datosCompletos, imei, rangoExport)
+                    exportHistorialJson(
+                      datosCompletos,
+                      imei,
+                      codigo,
+                      rangoExport,
+                      zonaHoraria
+                    )
                   );
                 }}
               >
-                <FileType2 className="h-4 w-4 mr-1.5 shrink-0" />
-                CSV
+                <Braces className="h-4 w-4 mr-1.5 shrink-0" />
+                JSON
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={exportacionDeshabilitada}
-                title="Descargar Excel"
-                onClick={() => {
-                  if (rangoExport == null) return;
-                  ejecutarExportacion(() =>
-                    exportHistorialXlsx(datosCompletos, imei, rangoExport)
-                  );
-                }}
-              >
-                <FileSpreadsheet className="h-4 w-4 mr-1.5 shrink-0" />
-                Excel
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={exportacionDeshabilitada}
-                title="Descargar PDF"
-                onClick={() => {
-                  if (rangoExport == null) return;
-                  ejecutarExportacion(() =>
-                    exportHistorialPdf(datosCompletos, imei, rangoExport)
-                  );
-                }}
-              >
-                <FileText className="h-4 w-4 mr-1.5 shrink-0" />
-                PDF
-              </Button>
-              {esSuperUser && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={exportacionDeshabilitada}
-                  title="Descargar JSON (superusuario)"
-                  onClick={() => {
-                    if (rangoExport == null) return;
-                    ejecutarExportacion(() =>
-                      exportHistorialJson(datosCompletos, imei, codigo, rangoExport)
-                    );
-                  }}
-                >
-                  <Braces className="h-4 w-4 mr-1.5 shrink-0" />
-                  JSON
-                </Button>
-              )}
-            </div>
-            {exportError != null && (
-              <p className="text-xs text-destructive text-right max-w-md">{exportError}</p>
             )}
           </div>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-6">
-        <div className={cn('rounded-lg border bg-muted/30 p-4 space-y-4', embedded && 'p-3')}>
-          <p className="text-sm font-medium">Búsqueda por fecha</p>
-          {!embedded && (
-            <p className="text-xs text-muted-foreground">
-              La petición añade{' '}
-              <code className="rounded bg-muted px-1">fecha_inicial</code> y{' '}
-              <code className="rounded bg-muted px-1">fecha_final</code> con formato{' '}
-              <span className="font-mono">YYYY-MM-DD_HH-MM-SS</span>.
+          {exportError != null && (
+            <p className="text-xs text-destructive text-right max-w-md w-full">
+              {exportError}
             </p>
           )}
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <div className="space-y-2">
-              <Label htmlFor="hist-desde">Fecha inicial</Label>
-              <Input
-                id="hist-desde"
-                type="datetime-local"
-                step="1"
-                value={desdeStr}
-                onChange={(e) => setDesdeStr(e.target.value)}
-              />
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div
+            className={cn('rounded-lg border bg-muted/30 p-4 space-y-4', embedded && 'p-3')}
+          >
+            <p className="text-sm font-medium">
+              Búsqueda por fecha ({displayTz.label})
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Horas de pared en {displayTz.label}. La consulta a la API usa GMT-5
+              (fuente de telemetría).
+            </p>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="space-y-2">
+                <Label htmlFor="hist-desde">Fecha inicial</Label>
+                <Input
+                  id="hist-desde"
+                  type="datetime-local"
+                  step="1"
+                  value={desdeStr}
+                  onChange={(e) => setDesdeStr(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="hist-hasta">Fecha final</Label>
+                <Input
+                  id="hist-hasta"
+                  type="datetime-local"
+                  step="1"
+                  value={hastaStr}
+                  onChange={(e) => setHastaStr(e.target.value)}
+                />
+              </div>
+              <div className="flex items-end gap-2">
+                <Button
+                  className="w-full sm:w-auto"
+                  onClick={() => void ejecutarBusqueda()}
+                  disabled={cargando}
+                >
+                  <Search className="h-4 w-4 mr-2" />
+                  Buscar
+                </Button>
+                {filtroVistaMs != null && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={cargando}
+                    onClick={() => {
+                      setFiltroVistaMs(null);
+                      setPage(1);
+                    }}
+                  >
+                    Ver todo lo cargado
+                  </Button>
+                )}
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="hist-hasta">Fecha final</Label>
-              <Input
-                id="hist-hasta"
-                type="datetime-local"
-                step="1"
-                value={hastaStr}
-                onChange={(e) => setHastaStr(e.target.value)}
-              />
+          </div>
+
+          {cargando && (
+            <div className="flex items-center justify-center py-16 text-muted-foreground gap-3">
+              <RefreshCw className="h-8 w-8 animate-spin" />
+              Cargando datos oficiales…
             </div>
-            <div className="flex items-end">
+          )}
+
+          {!cargando && error != null && (
+            <div className="rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+              {error}
               <Button
-                className="w-full sm:w-auto"
+                variant="link"
+                className="px-2 h-auto text-destructive"
                 onClick={() => void ejecutarBusqueda()}
-                disabled={cargando}
               >
-                <Search className="h-4 w-4 mr-2" />
-                Buscar
+                Reintentar
               </Button>
             </div>
-          </div>
-        </div>
+          )}
 
-        {cargando && (
-          <div className="flex items-center justify-center py-16 text-muted-foreground gap-3">
-            <RefreshCw className="h-8 w-8 animate-spin" />
-            Cargando datos oficiales…
-          </div>
-        )}
+          {!cargando && !error && respuesta != null && (
+            <>
+              {respuesta.data.total_datos != null && (
+                <p className="text-xs text-muted-foreground">
+                  Ventana:{' '}
+                  {formatDateTimeInTz(
+                    parseDatetimeLocalInTz(desdeStr, displayTz),
+                    displayTz.iana
+                  )}{' '}
+                  —{' '}
+                  {formatDateTimeInTz(
+                    parseDatetimeLocalInTz(hastaStr, displayTz),
+                    displayTz.iana
+                  )}{' '}
+                  ({displayTz.label})
+                  {filtroVistaMs != null
+                    ? ` · Filtro sobre ${datosBase.length} registros en memoria`
+                    : ` · Registros: ${respuesta.data.total_datos}`}
+                </p>
+              )}
 
-        {!cargando && error != null && (
-          <div className="rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-            {error}
-            <Button
-              variant="link"
-              className="px-2 h-auto text-destructive"
-              onClick={() => void ejecutarBusqueda()}
-            >
-              Reintentar
-            </Button>
-          </div>
-        )}
+              {sinRegistrosApi ? (
+                <p className="text-sm text-muted-foreground py-8 text-center">
+                  No hay datos oficiales para el rango seleccionado.
+                </p>
+              ) : (
+                <div className="space-y-8">
+                  <section className="space-y-2">
+                    <h3 className="text-sm font-medium">Gráfica histórica</h3>
+                    <HistorialReeferChart
+                      data={chartData}
+                      imei={imei}
+                      nombreContenedor={nombreContenedor}
+                      rangoLabel={rangoGraficaLabel}
+                      zonaHoraria={zonaHoraria}
+                    />
+                  </section>
 
-        {!cargando && !error && respuesta != null && (
-          <>
-            {respuesta.data.total_datos != null && (
-              <p className="text-xs text-muted-foreground">
-                Ventana solicitada:{' '}
-                {new Date(respuesta.data.fecha_inicial).toLocaleString('es-ES')}{' '}
-                —{' '}
-                {new Date(respuesta.data.fecha_final).toLocaleString('es-ES')} ·
-                Registros: {respuesta.data.total_datos}
-              </p>
-            )}
-
-            {sinRegistrosApi ? (
-              <p className="text-sm text-muted-foreground py-8 text-center">
-                No hay datos oficiales para el rango seleccionado.
-              </p>
-            ) : (
-              <Tabs
-                value={tab}
-                onValueChange={(v) => setTab(v as 'datos' | 'grafica')}
-                className="w-full"
-              >
-                <TabsList className="w-full sm:w-auto">
-                  <TabsTrigger value="grafica" className="flex-1 sm:flex-initial">
-                    Gráfica histórica
-                  </TabsTrigger>
-                  <TabsTrigger value="datos" className="flex-1 sm:flex-initial">
-                    Datos en tabla
-                  </TabsTrigger>
-                </TabsList>
-
-                <TabsContent value="datos" className="mt-4 space-y-4">
-                  <p className="text-xs text-muted-foreground">
-                    La primera columna es la <strong>fecha</strong> del registro (
-                    <code className="text-[10px]">created_at</code> o{' '}
-                    <code className="text-[10px]">fecha</code> si no hay created_at). Orden:
-                    más reciente arriba.
-                  </p>
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <p className="text-sm text-muted-foreground">
-                      {totalFilas === 0
-                        ? 'Sin registros'
-                        : `Mostrando ${inicioSlice + 1}–${Math.min(
-                            inicioSlice + pageSize,
-                            totalFilas
-                          )} de ${totalFilas}`}
+                  <section className="space-y-4">
+                    <h3 className="text-sm font-medium">Datos en tabla</h3>
+                    <p className="text-xs text-muted-foreground">
+                      Misma consulta que la gráfica (sin volver a pedir al API).
+                      Fechas en {displayTz.label}. Orden: más reciente arriba.
                     </p>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-xs text-muted-foreground">Por página</span>
-                      <Select
-                        value={String(pageSize)}
-                        onValueChange={(v) => {
-                          setPageSize(Number(v));
-                          setPage(1);
-                        }}
-                      >
-                        <SelectTrigger className="w-[100px]" size="sm">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {PAGE_SIZE_OPTIONS.map((n) => (
-                            <SelectItem key={n} value={String(n)}>
-                              {n}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={paginaSegura <= 1}
-                        onClick={() => setPage((p) => Math.max(1, p - 1))}
-                      >
-                        <ChevronLeft className="h-4 w-4" />
-                      </Button>
-                      <span className="text-sm tabular-nums">
-                        {paginaSegura} / {totalPaginas}
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={paginaSegura >= totalPaginas}
-                        onClick={() =>
-                          setPage((p) => Math.min(totalPaginas, p + 1))
-                        }
-                      >
-                        <ChevronRight className="h-4 w-4" />
-                      </Button>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <p className="text-sm text-muted-foreground">
+                        {totalFilas === 0
+                          ? 'Sin registros'
+                          : `Mostrando ${inicioSlice + 1}–${Math.min(
+                              inicioSlice + pageSize,
+                              totalFilas
+                            )} de ${totalFilas}`}
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs text-muted-foreground">
+                          Por página
+                        </span>
+                        <Select
+                          value={String(pageSize)}
+                          onValueChange={(v) => {
+                            setPageSize(Number(v));
+                            setPage(1);
+                          }}
+                        >
+                          <SelectTrigger className="w-[100px]" size="sm">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {PAGE_SIZE_OPTIONS.map((n) => (
+                              <SelectItem key={n} value={String(n)}>
+                                {n}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={paginaSegura <= 1}
+                          onClick={() => setPage((p) => Math.max(1, p - 1))}
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                        </Button>
+                        <span className="text-sm tabular-nums">
+                          {paginaSegura} / {totalPaginas}
+                        </span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={paginaSegura >= totalPaginas}
+                          onClick={() =>
+                            setPage((p) => Math.min(totalPaginas, p + 1))
+                          }
+                        >
+                          <ChevronRight className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
-                  </div>
 
-                  <div className="rounded-md border overflow-x-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          {TABLA_HISTORIAL_COLUMNAS.map((c) => (
-                            <TableHead
-                              key={c.key}
-                              className="whitespace-nowrap text-xs"
-                            >
-                              {c.header}
-                            </TableHead>
-                          ))}
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {filasPagina.map((row, i) => (
-                          <TableRow key={claveFilaHistorial(row, inicioSlice + i)}>
+                    <div className="rounded-md border overflow-x-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
                             {TABLA_HISTORIAL_COLUMNAS.map((c) => (
-                              <TableCell
+                              <TableHead
                                 key={c.key}
-                                className="text-xs tabular-nums"
+                                className="whitespace-nowrap text-xs"
                               >
-                                {celdaHistorial(row, c.key)}
-                              </TableCell>
+                                {c.header}
+                              </TableHead>
                             ))}
                           </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                </TabsContent>
-
-                <TabsContent value="grafica" className="mt-4">
-                  <HistorialReeferChart
-                    data={chartData}
-                    imei={imei}
-                    nombreContenedor={nombreContenedor}
-                    rangoLabel={rangoGraficaLabel}
-                  />
-                </TabsContent>
-              </Tabs>
-            )}
-          </>
-        )}
-      </CardContent>
-    </Card>
+                        </TableHeader>
+                        <TableBody>
+                          {filasPagina.map((row, i) => (
+                            <TableRow
+                              key={claveFilaHistorial(row, inicioSlice + i)}
+                            >
+                              {TABLA_HISTORIAL_COLUMNAS.map((c) => (
+                                <TableCell
+                                  key={c.key}
+                                  className="text-xs tabular-nums"
+                                >
+                                  {celdaHistorial(row, c.key, zonaHoraria)}
+                                </TableCell>
+                              ))}
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </section>
+                </div>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
       <ReporteInternoModal
         open={reporteInternoOpen}
         onOpenChange={setReporteInternoOpen}

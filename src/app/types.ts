@@ -3,8 +3,12 @@ export type PowerStatus = 'ON' | 'OFF';
 export type DeviceType = 'Reefer' | 'Genset' | 'Ripener' | 'Blast-F' | 'Blast-C';
 export type UserRole = 'Administrador' | 'Monitoreo' | 'Solo Vista';
 
-/** Origen del dispositivo en el listado agregado (Túnel / Starcool / Termo King). */
-export type DispositivoOrigenCodigo = 'TUNEL' | 'STARCOOL' | 'TERMOKING';
+/** Origen del dispositivo en el listado agregado. */
+export type DispositivoOrigenCodigo =
+  | 'TUNEL'
+  | 'STARCOOL'
+  | 'STARCOOL2'
+  | 'TERMOKING';
 
 export interface Device {
   id: string;
@@ -58,7 +62,7 @@ export interface User {
   superUser?: boolean;
   /** Etiquetas fijas por IMEI (p. ej. cuenta IFF Perú). */
   deviceNames?: Record<string, string>;
-  /** Orígenes visibles (TUNEL, STARCOOL, TERMOKING). Si se omite, todos los orígenes del IMEI. */
+  /** Orígenes visibles (TUNEL, STARCOOL, STARCOOL2, TERMOKING). Si se omite, todos. */
   allowedCodigos?: DispositivoOrigenCodigo[];
 }
 
