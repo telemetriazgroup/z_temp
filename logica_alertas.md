@@ -23,6 +23,27 @@
 - Un umbral se envía **una vez por día calendario** por incidente; al día siguiente pueden repetirse (30 min, 1 h…) si el evento continúa.
 - Cada correo incluye **temperaturas actuales**, **tabla** y **gráfico SVG** de evolución de las últimas **3 h**.
 - Al cerrar un incidente se guarda registro `episodio_cerrado` en `incidentes.json`.
+- Al volver **EN RANGO** se envía un correo de recuperación («equipo volvió a rangos normales») a los destinatarios del grupo.
+
+## Fuera de línea
+- Si no hay telemetría durante **≥ 3 h** (`OFFLINE_ALERT_HOURS`):
+  - **Usuario** (correos del grupo, excepto ops): un solo aviso «EQUIPO FUERA DE LÍNEA», **sin** indicar horas.
+  - **`ztrack@zgroup.com.pe`** (`ZTRACK_OPS_EMAIL`): aviso **cada 1 h** indicando las horas sin comunicación.
+- Mientras está fuera de línea no se evalúa temperatura (dato antiguo).
+- Al recuperar comunicación se cierra el episodio offline (sin correo de “volvió a línea”).
+
+## API externa (monitor)
+
+`GET /reefer/api/correo/external/monitor`
+
+Devuelve un snapshot para apps externas:
+- equipos programados en grupos activos (umbrales, config, rango min/max, en_rango, episodio)
+- últimas 5 alertas enviadas (configurable con `ultimasAlertas`)
+- última ejecución del ciclo de análisis (`aplicacion.ultimaActualizacionAnalisis`)
+- muestras de decisión: evaluaciones del último ciclo + trazabilidad de alertas
+- opcional `includeHistorial=1&historialHoras=12` para historial oficial por equipo
+
+Auth opcional: si existe `CORREO_EXTERNAL_API_KEY`, enviar header `x-api-key`.
 
 ## Ejemplo
 | Periodo | Acción |

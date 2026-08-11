@@ -267,3 +267,147 @@ export function buildApagadoEmail(params) {
 
   return { subject, text, html, attachments: trazabilidadAttachments };
 }
+
+/** Equipo volvió a temperatura en rango (cierre de incidente fuera de rango). */
+export function buildRecuperacionEnRangoEmail(params) {
+  const {
+    dispositivo,
+    dispositivoReeferId,
+    nombrePlataforma,
+    cliente,
+    referenciaDesde,
+    recuperadoAt,
+    durationHours,
+  } = params;
+
+  const d = dispositivo.ultimo_dato ?? {};
+  const fechaAlerta = formatDateSubjectTz(new Date());
+  const tipoAlarma = 'EQUIPO EN RANGO';
+  const subject = `REEFER ${dispositivoReeferId} - ${nombrePlataforma} - ${tipoAlarma} ${fechaAlerta}`;
+  const intro =
+    'Se notifica que el equipo volvió a estar en rangos normales de temperatura.';
+  const parametrosLinea = buildParametrosLinea(d);
+  const dur =
+    durationHours != null && !Number.isNaN(durationHours)
+      ? `~${roundHoras(durationHours)} h`
+      : '—';
+
+  const text = [
+    `Señores ${cliente}`,
+    '',
+    intro,
+    '',
+    'Detalle del evento :',
+    `• Nombre en la plataforma: ${nombrePlataforma}`,
+    `• Tipo de Alarma: ${tipoAlarma}`,
+    `• Inicio fuera de rango: ${formatDateTimeTz(referenciaDesde)} (GMT-5)`,
+    `• Recuperación: ${formatDateTimeTz(recuperadoAt)} (GMT-5)`,
+    `• Duración del incidente: ${dur}`,
+    `• Última comunicación: ${fmtDateShort(dispositivo.ultima_actualizacion)} (GMT-5)`,
+    '',
+    'Últimos parámetros registrados :',
+    parametrosLinea,
+    '',
+    'Atentamente,',
+    'ZTRACK-ZGROUP',
+    'Sistema de Monitoreo y Alertas',
+  ].join('\n');
+
+  const html = `<!DOCTYPE html><html lang="es"><body style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5">
+<p>Señores <strong>${cliente}</strong></p>
+<p>${intro}</p>
+<p><strong>Detalle del evento :</strong></p>
+<ul>
+<li><strong>Nombre en la plataforma:</strong> ${nombrePlataforma}</li>
+<li><strong>Tipo de Alarma:</strong> ${tipoAlarma}</li>
+<li><strong>Inicio fuera de rango:</strong> ${formatDateTimeTz(referenciaDesde)} (GMT-5)</li>
+<li><strong>Recuperación:</strong> ${formatDateTimeTz(recuperadoAt)} (GMT-5)</li>
+<li><strong>Duración del incidente:</strong> ${dur}</li>
+<li><strong>Última comunicación:</strong> ${fmtDateShort(dispositivo.ultima_actualizacion)} (GMT-5)</li>
+</ul>
+<p><strong>Últimos parámetros registrados :</strong><br>${parametrosLinea}</p>
+<p>Atentamente,<br><strong>ZTRACK-ZGROUP</strong></p></body></html>`;
+
+  return { subject, text, html, attachments: [] };
+}
+
+/**
+ * Fuera de línea.
+ * - usuario: sin horas
+ * - ops (ztrack): con horas sin comunicación
+ */
+export function buildFueraDeLineaEmail(params) {
+  const {
+    dispositivo,
+    dispositivoReeferId,
+    nombrePlataforma,
+    cliente,
+    variante = 'usuario',
+    horasOffline,
+    referenciaDesde,
+  } = params;
+
+  const d = dispositivo.ultimo_dato ?? {};
+  const fechaAlerta = formatDateSubjectTz(new Date());
+  const tipoAlarma = 'EQUIPO FUERA DE LÍNEA';
+  const subject = `REEFER ${dispositivoReeferId} - ${nombrePlataforma} - ALERTA ${tipoAlarma} ${fechaAlerta}`;
+  const esOps = variante === 'ops';
+  const intro = esOps
+    ? 'Se notifica ALERTA EQUIPO FUERA DE LÍNEA (correo operativo ZTRACK).'
+    : 'Se notifica que el equipo se encuentra fuera de línea.';
+  const parametrosLinea = buildParametrosLinea(d);
+  const horasTxt =
+    horasOffline != null && !Number.isNaN(horasOffline)
+      ? `~${roundHoras(horasOffline)} h sin comunicación`
+      : '—';
+
+  const linesDetalle = [
+    `• Nombre en la plataforma: ${nombrePlataforma}`,
+    `• Tipo de Alarma: ${tipoAlarma}`,
+  ];
+  if (esOps) {
+    linesDetalle.push(`• Tiempo fuera de línea: ${horasTxt}`);
+    linesDetalle.push(
+      `• Última comunicación: ${fmtDateShort(referenciaDesde ?? dispositivo.ultima_actualizacion)} (GMT-5)`
+    );
+  } else {
+    linesDetalle.push(
+      `• Última comunicación: ${fmtDateShort(dispositivo.ultima_actualizacion)} (GMT-5)`
+    );
+  }
+
+  const text = [
+    `Señores ${cliente}`,
+    '',
+    intro,
+    '',
+    'Detalle del evento :',
+    ...linesDetalle,
+    '',
+    'Últimos parámetros registrados :',
+    parametrosLinea,
+    '',
+    'Atentamente,',
+    'ZTRACK-ZGROUP',
+    'Sistema de Monitoreo y Alertas',
+  ].join('\n');
+
+  const liOps = esOps
+    ? `<li><strong>Tiempo fuera de línea:</strong> ${horasTxt}</li>
+<li><strong>Última comunicación:</strong> ${fmtDateShort(referenciaDesde ?? dispositivo.ultima_actualizacion)} (GMT-5)</li>`
+    : `<li><strong>Última comunicación:</strong> ${fmtDateShort(dispositivo.ultima_actualizacion)} (GMT-5)</li>`;
+
+  const html = `<!DOCTYPE html><html lang="es"><body style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5">
+<p>Señores <strong>${cliente}</strong></p>
+<p>${intro}</p>
+<p><strong>Detalle del evento :</strong></p>
+<ul>
+<li><strong>Nombre en la plataforma:</strong> ${nombrePlataforma}</li>
+<li><strong>Tipo de Alarma:</strong> ${tipoAlarma}</li>
+${liOps}
+</ul>
+<p><strong>Últimos parámetros registrados :</strong><br>${parametrosLinea}</p>
+<p>Atentamente,<br><strong>ZTRACK-ZGROUP</strong></p></body></html>`;
+
+  return { subject, text, html, attachments: [] };
+}

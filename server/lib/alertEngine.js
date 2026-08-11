@@ -7,8 +7,17 @@ import {
   todayKey,
   formatUmbralHoras,
 } from './store.js';
-import { formatDateTimeTz, parseTelemetryDate } from './timezone.js';
-import { buildFueraDeRangoEmail, buildApagadoEmail } from './emailBuilder.js';
+import {
+  formatDateTimeTz,
+  parseTelemetryDate,
+  parseTelemetryTimestamp,
+} from './timezone.js';
+import {
+  buildFueraDeRangoEmail,
+  buildApagadoEmail,
+  buildRecuperacionEnRangoEmail,
+  buildFueraDeLineaEmail,
+} from './emailBuilder.js';
 import { buildTrazabilidadEmailPack } from './emailTraceability.js';
 import { fetchAllDispositivos, deviceRowKey } from './telemetry.js';
 import { getSmtpConfig } from './smtpRepository.js';
@@ -33,13 +42,32 @@ import {
 } from './historicalTelemetry.js';
 
 const MAX_CICLOS = 200;
+/** Horas sin telemetría para alertar fuera de línea. */
+const OFFLINE_ALERT_HOURS = Number(process.env.OFFLINE_ALERT_HOURS ?? 3);
+/** Correo operativo: recibe fuera de línea cada hora, con duración. */
+const ZTRACK_OPS_EMAIL = String(
+  process.env.ZTRACK_OPS_EMAIL ?? 'ztrack@zgroup.com.pe'
+)
+  .trim()
+  .toLowerCase();
+const ZTRACK_OFFLINE_INTERVAL_MS = 60 * 60 * 1000;
 
 function getGrupos() {
   return readJson('grupos.json', []);
 }
 
 function getState() {
-  return readJson('state.json', { episodes: {}, lastRecovered: {} });
+  const s = readJson('state.json', {
+    episodes: {},
+    lastRecovered: {},
+    offline: {},
+    offlineOps: {},
+  });
+  if (!s.episodes) s.episodes = {};
+  if (!s.lastRecovered) s.lastRecovered = {};
+  if (!s.offline) s.offline = {};
+  if (!s.offlineOps) s.offlineOps = {};
+  return s;
 }
 
 function saveState(state) {
@@ -117,6 +145,70 @@ function ensureApagadoEpisode(state, rowKey, now) {
     referenceLocked: true,
     now,
   });
+}
+
+function horasSinComunicacion(dispositivo, now) {
+  const mins = dispositivo?.minutos_desde_ultimo_dato;
+  if (mins != null && !Number.isNaN(Number(mins))) {
+    return Math.max(0, Number(mins) / 60);
+  }
+  const ua = parseTelemetryTimestamp(dispositivo?.ultima_actualizacion);
+  if (Number.isNaN(ua)) return null;
+  return Math.max(0, (now.getTime() - ua) / (60 * 60 * 1000));
+}
+
+function emailsUsuarioGrupo(grupo) {
+  return (grupo.emails ?? [])
+    .map((e) => String(e).trim())
+    .filter((e) => e && e.toLowerCase() !== ZTRACK_OPS_EMAIL);
+}
+
+/** Clave offline por grupo+equipo (cada grupo notifica a sus usuarios). */
+function offlineKey(grupoId, rowKey) {
+  return `${grupoId}::${rowKey}`;
+}
+
+/** Episodio fuera de línea (mapa aparte: no pisa fuera_rango/apagado). */
+function getOfflineEpisode(state, grupoId, rowKey) {
+  return state.offline?.[offlineKey(grupoId, rowKey)] ?? null;
+}
+
+function ensureOfflineEpisode(state, grupoId, rowKey, sinceIso, now) {
+  if (!state.offline) state.offline = {};
+  const key = offlineKey(grupoId, rowKey);
+  let ep = state.offline[key];
+  if (ep) return ep;
+  ep = {
+    since: sinceIso,
+    userNotified: false,
+    userNotifiedAt: null,
+    lastZtrackAt: null,
+    establishedAt: now.toISOString(),
+  };
+  state.offline[key] = ep;
+  return ep;
+}
+
+function clearOfflineEpisode(state, grupoId, rowKey) {
+  const key = offlineKey(grupoId, rowKey);
+  if (state.offline?.[key]) delete state.offline[key];
+  // Si ningún grupo sigue con offline de este equipo, limpia marca ops.
+  const prefix = `::${rowKey}`;
+  const still = Object.keys(state.offline ?? {}).some((k) => k.endsWith(prefix));
+  if (!still && state.offlineOps?.[rowKey]) delete state.offlineOps[rowKey];
+}
+
+function dueZtrackOffline(state, rowKey, now) {
+  const last = state.offlineOps?.[rowKey];
+  if (!last) return true;
+  const t = new Date(last).getTime();
+  if (Number.isNaN(t)) return true;
+  return now.getTime() - t >= ZTRACK_OFFLINE_INTERVAL_MS;
+}
+
+function markZtrackOffline(state, rowKey, now) {
+  if (!state.offlineOps) state.offlineOps = {};
+  state.offlineOps[rowKey] = now.toISOString();
 }
 
 function startEpisode(state, rowKey, since, meta = {}) {
@@ -299,9 +391,10 @@ async function ensureOutOfRangeReference(state, assignment, dispositivo, now) {
   const since = resolveAlertOutOfRangeSince(hist.datos, now, rangoOpts);
 
   if (since == null) {
+    let recovered = null;
     if (episode) {
       const { dispositivoReeferId, nombrePlataforma } = resolveLabels(assignment, dispositivo);
-      clearEpisode(state, assignment.rowKey, now, {
+      recovered = clearEpisode(state, assignment.rowKey, now, {
         imei: dispositivo.imei,
         codigo: dispositivo.codigo ?? '—',
         descripcionEquipo: dispositivoReeferId,
@@ -312,7 +405,8 @@ async function ensureOutOfRangeReference(state, assignment, dispositivo, now) {
     }
     return {
       episode: null,
-      recovered: true,
+      recovered: recovered ?? true,
+      recoveredDetail: recovered,
       consultaHistorial: true,
       criterioRef:
         'Consulta 12 h (return_air): EN RANGO. Episodio cerrado; contador de umbrales en 0.',
@@ -323,7 +417,7 @@ async function ensureOutOfRangeReference(state, assignment, dispositivo, now) {
     const reconciled = reconcileEpisodeReference(episode, hist.datos, now, rangoOpts);
     if (reconciled == null) {
       const { dispositivoReeferId, nombrePlataforma } = resolveLabels(assignment, dispositivo);
-      clearEpisode(state, assignment.rowKey, now, {
+      const recovered = clearEpisode(state, assignment.rowKey, now, {
         imei: dispositivo.imei,
         codigo: dispositivo.codigo ?? '—',
         descripcionEquipo: dispositivoReeferId,
@@ -331,7 +425,8 @@ async function ensureOutOfRangeReference(state, assignment, dispositivo, now) {
       });
       return {
         episode: null,
-        recovered: true,
+        recovered: recovered ?? true,
+        recoveredDetail: recovered,
         consultaHistorial: true,
         criterioRef: 'Historial indica recuperación EN RANGO. Episodio cerrado.',
       };
@@ -406,6 +501,92 @@ async function sendMail(smtp, to, content) {
     attachments: content.attachments ?? [],
   });
   return info.messageId;
+}
+
+/**
+ * Envía correo de recuperación EN RANGO (una vez al cerrar episodio fuera_rango).
+ * @returns {{ sent: boolean, envioId?: string, error?: string, destinatarios?: string[] }}
+ */
+async function sendRecuperacionEnRangoMail({
+  smtp,
+  grupo,
+  assignment,
+  dispositivo,
+  recovered,
+  result,
+}) {
+  if (recovered?.kind !== 'fuera_rango') {
+    return { sent: false };
+  }
+  let to = emailsUsuarioGrupo(grupo);
+  if (to.length === 0) {
+    // Si el único destinatario es ztrack, igual notificar ahí.
+    to = (grupo.emails ?? []).map((e) => String(e).trim()).filter(Boolean);
+  }
+  if (to.length === 0) return { sent: false };
+
+  const { dispositivoReeferId, nombrePlataforma } = resolveLabels(assignment, dispositivo);
+  const content = buildRecuperacionEnRangoEmail({
+    dispositivo,
+    dispositivoReeferId,
+    nombrePlataforma,
+    cliente: grupo.cliente?.trim() || 'Cliente',
+    referenciaDesde: recovered.since,
+    recuperadoAt: recovered.endedAt,
+    durationHours: recovered.durationHours,
+  });
+  const envioId = uid('envio');
+  try {
+    const messageId = await sendMail(smtp, to, content);
+    addEnvio({
+      id: envioId,
+      alertKind: 'en_rango',
+      grupoId: grupo.id,
+      grupoNombre: grupo.nombre,
+      rowKey: assignment.rowKey,
+      imei: dispositivo.imei,
+      codigo: dispositivo.codigo ?? '—',
+      descripcionEquipo: dispositivoReeferId,
+      nombrePlataforma,
+      horasAcumuladas: recovered.durationHours,
+      referenciaDesde: recovered.since,
+      recuperadoAt: recovered.endedAt,
+      destinatarios: [...to],
+      subject: content.subject,
+      sentAt: new Date().toISOString(),
+      messageId,
+      success: true,
+    });
+    addIncidente({
+      id: uid('inc'),
+      tipo: 'correo_enviado',
+      envioId,
+      alertKind: 'en_rango',
+      grupoId: grupo.id,
+      grupoNombre: grupo.nombre,
+      rowKey: assignment.rowKey,
+      imei: dispositivo.imei,
+      codigo: dispositivo.codigo ?? '—',
+      descripcionEquipo: dispositivoReeferId,
+      nombrePlataforma,
+      horasAcumuladas: recovered.durationHours,
+      referenciaDesde: recovered.since,
+      recuperadoAt: recovered.endedAt,
+      estado: 'cerrado',
+      subject: content.subject,
+      destinatarios: [...to],
+      enviadoAt: new Date().toISOString(),
+      comentarios: [],
+    });
+    result.emailsSent++;
+    result.resumen.correoEnviado++;
+    return { sent: true, envioId, destinatarios: to };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    result.errors.push(`${dispositivoReeferId} EN RANGO: ${msg}`);
+    result.resumen.errores++;
+    return { sent: false, error: msg };
+  }
 }
 
 /**
@@ -536,6 +717,174 @@ export async function runAlertCycle(options = {}) {
         enDefrost: dispositivo.en_defrost ?? null,
         powerState: dispositivo.ultimo_dato?.power_state ?? null,
       };
+
+      // —— Fuera de línea (> OFFLINE_ALERT_HOURS sin telemetría) ——
+      const horasOffline = horasSinComunicacion(dispositivo, now);
+      if (horasOffline != null && horasOffline >= OFFLINE_ALERT_HOURS) {
+        const { dispositivoReeferId, nombrePlataforma } = resolveLabels(
+          assignment,
+          dispositivo
+        );
+        const sinceIso =
+          dispositivo.ultima_actualizacion != null
+            ? parseTelemetryDate(dispositivo.ultima_actualizacion).toISOString()
+            : now.toISOString();
+        const sinceSafe = Number.isNaN(Date.parse(sinceIso))
+          ? now.toISOString()
+          : sinceIso;
+        const offlineEp = ensureOfflineEpisode(
+          state,
+          grupo.id,
+          assignment.rowKey,
+          sinceSafe,
+          now
+        );
+        const horasOfflineReport = Math.round(horasOffline * 10) / 10;
+        const cliente = grupo.cliente?.trim() || 'Cliente';
+        const userEmails = emailsUsuarioGrupo(grupo);
+        const acciones = [];
+        let envioIds = [];
+
+        if (!offlineEp.userNotified && userEmails.length > 0) {
+          const contentUser = buildFueraDeLineaEmail({
+            dispositivo,
+            dispositivoReeferId,
+            nombrePlataforma,
+            cliente,
+            variante: 'usuario',
+            referenciaDesde: offlineEp.since,
+          });
+          const envioId = uid('envio');
+          try {
+            const messageId = await sendMail(smtp, userEmails, contentUser);
+            offlineEp.userNotified = true;
+            offlineEp.userNotifiedAt = now.toISOString();
+            addEnvio({
+              id: envioId,
+              alertKind: 'fuera_linea',
+              destinatarioTipo: 'usuario',
+              grupoId: grupo.id,
+              grupoNombre: grupo.nombre,
+              rowKey: assignment.rowKey,
+              imei: dispositivo.imei,
+              codigo: dispositivo.codigo ?? '—',
+              descripcionEquipo: dispositivoReeferId,
+              nombrePlataforma,
+              horasOffline: horasOfflineReport,
+              referenciaDesde: offlineEp.since,
+              destinatarios: [...userEmails],
+              subject: contentUser.subject,
+              sentAt: now.toISOString(),
+              messageId,
+              success: true,
+            });
+            addIncidente({
+              id: uid('inc'),
+              tipo: 'correo_enviado',
+              envioId,
+              alertKind: 'fuera_linea',
+              destinatarioTipo: 'usuario',
+              grupoId: grupo.id,
+              grupoNombre: grupo.nombre,
+              rowKey: assignment.rowKey,
+              imei: dispositivo.imei,
+              codigo: dispositivo.codigo ?? '—',
+              descripcionEquipo: dispositivoReeferId,
+              nombrePlataforma,
+              horasOffline: horasOfflineReport,
+              referenciaDesde: offlineEp.since,
+              estado: 'pendiente',
+              subject: contentUser.subject,
+              destinatarios: [...userEmails],
+              enviadoAt: now.toISOString(),
+              comentarios: [],
+            });
+            result.emailsSent++;
+            result.resumen.correoEnviado++;
+            envioIds.push(envioId);
+            acciones.push(`usuario 1× → ${userEmails.join(', ')}`);
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            result.errors.push(`${dispositivoReeferId} FUERA LÍNEA usuario: ${msg}`);
+            result.resumen.errores++;
+            acciones.push(`error usuario: ${msg}`);
+          }
+        } else if (offlineEp.userNotified) {
+          acciones.push('usuario ya notificado (sin reenvío)');
+        } else {
+          acciones.push('sin correos de usuario (solo ops)');
+        }
+
+        if (dueZtrackOffline(state, assignment.rowKey, now) && ZTRACK_OPS_EMAIL) {
+          const contentOps = buildFueraDeLineaEmail({
+            dispositivo,
+            dispositivoReeferId,
+            nombrePlataforma,
+            cliente: 'ZTRACK',
+            variante: 'ops',
+            horasOffline: horasOfflineReport,
+            referenciaDesde: offlineEp.since,
+          });
+          const envioId = uid('envio');
+          try {
+            const messageId = await sendMail(smtp, [ZTRACK_OPS_EMAIL], contentOps);
+            markZtrackOffline(state, assignment.rowKey, now);
+            offlineEp.lastZtrackAt = now.toISOString();
+            addEnvio({
+              id: envioId,
+              alertKind: 'fuera_linea',
+              destinatarioTipo: 'ops',
+              grupoId: grupo.id,
+              grupoNombre: grupo.nombre,
+              rowKey: assignment.rowKey,
+              imei: dispositivo.imei,
+              codigo: dispositivo.codigo ?? '—',
+              descripcionEquipo: dispositivoReeferId,
+              nombrePlataforma,
+              horasOffline: horasOfflineReport,
+              referenciaDesde: offlineEp.since,
+              destinatarios: [ZTRACK_OPS_EMAIL],
+              subject: contentOps.subject,
+              sentAt: now.toISOString(),
+              messageId,
+              success: true,
+            });
+            result.emailsSent++;
+            result.resumen.correoEnviado++;
+            envioIds.push(envioId);
+            acciones.push(
+              `ops horario → ${ZTRACK_OPS_EMAIL} (~${horasOfflineReport} h)`
+            );
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            result.errors.push(`${dispositivoReeferId} FUERA LÍNEA ops: ${msg}`);
+            result.resumen.errores++;
+            acciones.push(`error ops: ${msg}`);
+          }
+        } else {
+          acciones.push('ops: esperando intervalo 1 h');
+        }
+
+        pushEval(evaluaciones, {
+          ...base,
+          estado:
+            envioIds.length > 0 ? 'correo_fuera_linea_enviado' : 'fuera_linea_sin_envio',
+          accion: envioIds.length > 0 ? 'envio' : 'ninguna',
+          enRango: null,
+          diaCalendario: hoy,
+          horasOffline: horasOfflineReport,
+          referenciaDesde: offlineEp.since,
+          envioId: envioIds[0] ?? null,
+          telemetria: telem,
+          criterio: `FUERA DE LÍNEA ~${horasOfflineReport} h (≥ ${OFFLINE_ALERT_HOURS} h). ${acciones.join(' · ')}. No se evalúa temperatura con telemetría antigua.`,
+        });
+        continue;
+      }
+
+      // Volvió a línea: cerrar episodio offline (sin correo).
+      if (getOfflineEpisode(state, grupo.id, assignment.rowKey)) {
+        clearOfflineEpisode(state, grupo.id, assignment.rowKey);
+      }
 
       if (isEquipoApagado(dispositivo) === true) {
         clearEpisodeIfKind(state, assignment.rowKey, 'fuera_rango', now);
@@ -710,29 +1059,53 @@ export async function runAlertCycle(options = {}) {
           grupoNombre: grupo.nombre,
         });
         let criterio;
+        let accion = 'ninguna';
+        let estado = 'normal';
+        let envioId = null;
         if (recovered?.kind === 'fuera_rango') {
-          criterio = `EN RANGO (return_air). Incidente cerrado (fuera desde ${formatRef(recovered.since)} hasta ${formatRef(recovered.endedAt)}, ~${recovered.durationHours} h). Umbrales reiniciados.`;
+          const mail = await sendRecuperacionEnRangoMail({
+            smtp,
+            grupo,
+            assignment,
+            dispositivo,
+            recovered,
+            result,
+          });
+          if (mail.sent) {
+            accion = 'envio';
+            estado = 'correo_en_rango_enviado';
+            envioId = mail.envioId ?? null;
+            criterio = `EN RANGO (return_air). Incidente cerrado (fuera desde ${formatRef(recovered.since)} hasta ${formatRef(recovered.endedAt)}, ~${recovered.durationHours} h). Correo recuperación → ${(mail.destinatarios ?? []).join(', ')}.`;
+          } else if (mail.error) {
+            estado = 'error_envio';
+            accion = 'error';
+            criterio = `EN RANGO. Incidente cerrado (~${recovered.durationHours} h) pero falló correo recuperación: ${mail.error}`;
+          } else {
+            criterio = `EN RANGO (return_air). Incidente cerrado (fuera desde ${formatRef(recovered.since)} hasta ${formatRef(recovered.endedAt)}, ~${recovered.durationHours} h). Sin destinatarios para recuperación.`;
+          }
         } else if (recovered) {
           criterio = `EN RANGO (return_air). Episodio ${recovered.kind} cerrado. Contador en 0.`;
         } else if (defrostActivoEfectivo(dispositivo)) {
           criterio =
             'EN RANGO (defrost activo con equipo ON). No se alerta fuera de rango.';
         } else {
-          criterio = 'EN RANGO (return_air). Temperatura dentro de parámetros. No se envía correo.';
+          criterio =
+            'EN RANGO (return_air). Temperatura dentro de parámetros. No se envía correo.';
         }
         pushEval(evaluaciones, {
           ...base,
-          estado: 'normal',
-          accion: 'ninguna',
+          estado,
+          accion,
           enRango: true,
           diaCalendario: hoy,
           umbralesConfigurados: umbrales,
           referenciaDesde: recovered?.since ?? null,
           recuperadoAt: recovered?.endedAt ?? null,
+          envioId,
           telemetria: telem,
           criterio,
         });
-        result.resumen.normal++;
+        if (estado === 'normal') result.resumen.normal++;
         continue;
       }
 
@@ -761,18 +1134,45 @@ export async function runAlertCycle(options = {}) {
         criterioRef = ref.criterioRef;
 
         if (ref.recovered || ref.episode == null) {
+          let estado = 'normal';
+          let accion = 'ninguna';
+          let envioId = null;
+          let criterio = criterioRef;
+          const recoveredDetail = ref.recoveredDetail;
+          if (recoveredDetail?.kind === 'fuera_rango') {
+            const mail = await sendRecuperacionEnRangoMail({
+              smtp,
+              grupo,
+              assignment,
+              dispositivo,
+              recovered: recoveredDetail,
+              result,
+            });
+            if (mail.sent) {
+              estado = 'correo_en_rango_enviado';
+              accion = 'envio';
+              envioId = mail.envioId ?? null;
+              criterio = `${criterioRef} Correo recuperación → ${(mail.destinatarios ?? []).join(', ')}.`;
+            } else if (mail.error) {
+              estado = 'error_envio';
+              accion = 'error';
+              criterio = `${criterioRef} Error correo recuperación: ${mail.error}`;
+            }
+          }
           pushEval(evaluaciones, {
             ...base,
-            estado: 'normal',
-            accion: 'ninguna',
+            estado,
+            accion,
             enRango: true,
             diaCalendario: hoy,
             umbralesConfigurados: umbrales,
             consultaHistorial,
+            recuperadoAt: recoveredDetail?.endedAt ?? null,
+            envioId,
             telemetria: telem,
-            criterio: criterioRef,
+            criterio,
           });
-          result.resumen.normal++;
+          if (estado === 'normal') result.resumen.normal++;
           continue;
         }
 

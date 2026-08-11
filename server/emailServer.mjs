@@ -42,9 +42,12 @@ import {
 } from './lib/usersRepository.js';
 import { createAnalisisRouter } from './lib/analisis/routes.js';
 import { ensureAnalisisSchema } from './lib/db.js';
+import { buildExternalAlertMonitor } from './lib/externalAlertMonitor.js';
 
 const PORT = Number(process.env.CORREO_PORT ?? 3003);
 const POLL_MS = Number(process.env.CORREO_POLL_MS ?? 2 * 60 * 1000);
+/** Si está definido, la ruta externa exige header `x-api-key` o `?apiKey=`. */
+const EXTERNAL_API_KEY = process.env.CORREO_EXTERNAL_API_KEY?.trim() || '';
 const app = express();
 
 app.use(express.json({ limit: '512kb' }));
@@ -74,6 +77,22 @@ function requireSuperUser(req, res) {
   return true;
 }
 
+function requireExternalApiKey(req, res) {
+  if (!EXTERNAL_API_KEY) return true;
+  const provided =
+    req.headers['x-api-key']?.toString().trim() ||
+    req.query.apiKey?.toString().trim() ||
+    '';
+  if (provided !== EXTERNAL_API_KEY) {
+    res.status(401).json({
+      ok: false,
+      error: 'API key inválida o ausente (header x-api-key)',
+    });
+    return false;
+  }
+  return true;
+}
+
 app.get('/health', (_req, res) => {
   res.json({ ok: true, service: 'ztrack-correo', pollMs: POLL_MS });
 });
@@ -91,6 +110,44 @@ app.get('/reefer/api/correo/status', (_req, res) => {
       (i) => i.estado === 'pendiente' && i.archivado !== true
     ).length,
   });
+});
+
+/**
+ * Snapshot para app externa: equipos con alertas, rangos, config,
+ * últimas N alertas, último ciclo de análisis y muestras de decisión.
+ *
+ * GET /reefer/api/correo/external/monitor
+ * Query:
+ *   ultimasAlertas=5
+ *   includeHistorial=1  → consulta historial oficial por equipo (más lento)
+ *   historialHoras=12
+ * Auth (si CORREO_EXTERNAL_API_KEY): header x-api-key
+ */
+app.get('/reefer/api/correo/external/monitor', async (req, res) => {
+  if (!requireExternalApiKey(req, res)) return;
+  try {
+    const data = await buildExternalAlertMonitor({
+      ultimasAlertas: Number(req.query.ultimasAlertas ?? 5),
+      includeHistorialMuestras:
+        req.query.includeHistorial === '1' ||
+        req.query.includeHistorial === 'true',
+      historialHoras: Number(req.query.historialHoras ?? 12),
+      pollMs: POLL_MS,
+    });
+    res.json({
+      ok: true,
+      code: 200,
+      message: 'Monitor de alertas por correo recuperado correctamente.',
+      data,
+    });
+  } catch (e) {
+    res.status(500).json({
+      ok: false,
+      code: 500,
+      error: e instanceof Error ? e.message : String(e),
+      message: 'No se pudo construir el monitor de alertas.',
+    });
+  }
 });
 
 app.get('/reefer/api/correo/config/smtp', (_req, res) => {
