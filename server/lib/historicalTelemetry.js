@@ -122,24 +122,30 @@ export function effectiveEnRangoFromDispositivo(dispositivo, rangoOpts = null) {
 }
 
 /**
- * Evalúa en/fuera de rango para **alertas por correo**.
- * `return_air` es la guía; el suministro en banda no anula un retorno fuera de banda.
- * Defrost con equipo ON no cuenta como fuera de rango.
+ * Solo temperatura (return_air vs setpoint), sin tratar defrost como en rango.
+ * Usado para anclar el incidente continuo y el correo «volvió a rango».
+ */
+export function rowEnRangoTemperaturaParaAlerta(row, rangoOpts = null) {
+  if (row == null) return null;
+  if (row.power_state === 0) return null;
+  return enBandaSetpoint(row.return_air, row.set_point, rangoOpts);
+}
+
+/**
+ * Evalúa en/fuera de rango para **suprimir alertas en el ciclo actual**.
+ * `return_air` es la guía; defrost con equipo ON no cuenta como fuera de rango.
  * @returns {boolean | null} null = sin dato o equipo OFF en fila
  */
 export function rowEnRangoParaAlerta(row, rangoOpts = null) {
   if (row == null) return null;
   if (row.power_state === 0) return null;
   if (filaDefrostEfectivo(row)) return true;
-
-  const retOk = enBandaSetpoint(row.return_air, row.set_point, rangoOpts);
-  if (retOk === true) return true;
-  if (retOk === false) return false;
-  return null;
+  return rowEnRangoTemperaturaParaAlerta(row, rangoOpts);
 }
 
 /**
  * Último estado del dispositivo con la misma lógica que alertas (return_air guía).
+ * Incluye defrost como “en rango” (no alertar fuera durante defrost).
  */
 export function effectiveEnRangoAlertaFromDispositivo(dispositivo, rangoOpts = null) {
   if (dispositivo == null) return null;
@@ -157,6 +163,17 @@ export function effectiveEnRangoAlertaFromDispositivo(dispositivo, rangoOpts = n
     },
     rangoOpts
   );
+}
+
+/**
+ * Solo banda de temperatura (return_air vs setpoint).
+ * No trata defrost como recuperación real — sirve para cerrar incidente y correo «volvió a rango».
+ */
+export function enRangoTemperaturaAlertaFromDispositivo(dispositivo, rangoOpts = null) {
+  if (dispositivo == null) return null;
+  const d = dispositivo.ultimo_dato ?? {};
+  if (d.power_state === 0) return null;
+  return enBandaSetpoint(d.return_air, d.set_point, rangoOpts);
 }
 
 function sortHistorialConEffective(datos, evalFn, rangoOpts) {
@@ -240,10 +257,16 @@ function resolveOutOfRangeSinceWithEval(datos, referencia, rangoOpts, evalFn) {
 }
 
 /**
- * Inicio del episodio continuo actual fuera de rango para alertas (return_air guía).
+ * Inicio del episodio continuo actual fuera de rango para alertas.
+ * Usa solo temperatura (defrost no corta ni cierra el incidente).
  */
 export function resolveAlertOutOfRangeSince(datos, referencia = new Date(), rangoOpts = null) {
-  return resolveOutOfRangeSinceWithEval(datos, referencia, rangoOpts, rowEnRangoParaAlerta);
+  return resolveOutOfRangeSinceWithEval(
+    datos,
+    referencia,
+    rangoOpts,
+    rowEnRangoTemperaturaParaAlerta
+  );
 }
 
 /**

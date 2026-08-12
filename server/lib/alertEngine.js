@@ -28,6 +28,7 @@ import {
   fetchHistorialUltimasHoras,
   resolveAlertOutOfRangeSince,
   effectiveEnRangoAlertaFromDispositivo,
+  enRangoTemperaturaAlertaFromDispositivo,
   reconcileEpisodeReference,
   computeOutOfRangeIntervals,
   computeApagadoIntervals,
@@ -507,6 +508,12 @@ async function sendMail(smtp, to, content) {
  * Envía correo de recuperación EN RANGO (una vez al cerrar episodio fuera_rango).
  * @returns {{ sent: boolean, envioId?: string, error?: string, destinatarios?: string[] }}
  */
+/**
+ * Correo «volvió a rango» solo si:
+ * - el episodio era fuera_rango
+ * - ya se envió al menos un umbral de fuera de rango en ese intervalo
+ * - no se había marcado recoveryEmailSent
+ */
 async function sendRecuperacionEnRangoMail({
   smtp,
   grupo,
@@ -514,16 +521,31 @@ async function sendRecuperacionEnRangoMail({
   dispositivo,
   recovered,
   result,
+  state = null,
 }) {
   if (recovered?.kind !== 'fuera_rango') {
-    return { sent: false };
+    return { sent: false, skipReason: 'no_fuera_rango' };
   }
+  const umbralesEnviados = Array.isArray(recovered.sentUmbrales)
+    ? recovered.sentUmbrales
+    : [];
+  if (umbralesEnviados.length === 0) {
+    return {
+      sent: false,
+      skipReason: 'sin_alerta_fuera_previa',
+    };
+  }
+  if (recovered.recoveryEmailSent === true) {
+    return { sent: false, skipReason: 'ya_enviado' };
+  }
+
   let to = emailsUsuarioGrupo(grupo);
   if (to.length === 0) {
-    // Si el único destinatario es ztrack, igual notificar ahí.
     to = (grupo.emails ?? []).map((e) => String(e).trim()).filter(Boolean);
   }
-  if (to.length === 0) return { sent: false };
+  if (to.length === 0) {
+    return { sent: false, skipReason: 'sin_destinatarios' };
+  }
 
   const { dispositivoReeferId, nombrePlataforma } = resolveLabels(assignment, dispositivo);
   const content = buildRecuperacionEnRangoEmail({
@@ -534,10 +556,18 @@ async function sendRecuperacionEnRangoMail({
     referenciaDesde: recovered.since,
     recuperadoAt: recovered.endedAt,
     durationHours: recovered.durationHours,
+    umbralesEnviados,
   });
   const envioId = uid('envio');
   try {
     const messageId = await sendMail(smtp, to, content);
+    recovered.recoveryEmailSent = true;
+    if (state?.lastRecovered?.[assignment.rowKey]) {
+      state.lastRecovered[assignment.rowKey].recoveryEmailSent = true;
+      state.lastRecovered[assignment.rowKey].recoveryEmailAt =
+        new Date().toISOString();
+      state.lastRecovered[assignment.rowKey].recoveryEnvioId = envioId;
+    }
     addEnvio({
       id: envioId,
       alertKind: 'en_rango',
@@ -551,6 +581,7 @@ async function sendRecuperacionEnRangoMail({
       horasAcumuladas: recovered.durationHours,
       referenciaDesde: recovered.since,
       recuperadoAt: recovered.endedAt,
+      umbralesEnviados,
       destinatarios: [...to],
       subject: content.subject,
       sentAt: new Date().toISOString(),
@@ -572,6 +603,7 @@ async function sendRecuperacionEnRangoMail({
       horasAcumuladas: recovered.durationHours,
       referenciaDesde: recovered.since,
       recuperadoAt: recovered.endedAt,
+      umbralesEnviados,
       estado: 'cerrado',
       subject: content.subject,
       destinatarios: [...to],
@@ -1048,8 +1080,40 @@ export async function runAlertCycle(options = {}) {
         clearEpisodeIfKind(state, assignment.rowKey, 'apagado', now);
       }
 
-      if (enRangoEfectivo === true) {
-        const { dispositivoReeferId, nombrePlataforma } = resolveLabels(assignment, dispositivo);
+      const enDefrost = defrostActivoEfectivo(dispositivo);
+      const enRangoTemperatura = enRangoTemperaturaAlertaFromDispositivo(
+        dispositivo,
+        rangoOpts
+      );
+
+      // Defrost: NO cierra el incidente ni envía «volvió a rango» (evita spam cada ciclo).
+      // Solo pausa alertas de fuera de rango mientras dura el defrost.
+      if (enDefrost && enRangoTemperatura !== true) {
+        const ep = getEpisode(state, assignment.rowKey);
+        const epFuera = ep && episodeKind(ep) === 'fuera_rango' ? ep : null;
+        pushEval(evaluaciones, {
+          ...base,
+          estado: 'defrost_pausa',
+          accion: 'ninguna',
+          enRango: true,
+          diaCalendario: hoy,
+          umbralesConfigurados: umbrales,
+          referenciaDesde: epFuera?.since ?? null,
+          telemetria: telem,
+          criterio: epFuera
+            ? `DEFROST activo. Episodio fuera de rango en pausa desde ${formatRef(epFuera.since)} (no se cierra; no correo «volvió a rango»).`
+            : 'DEFROST activo con equipo ON. No se alerta fuera de rango.',
+        });
+        result.resumen.normal++;
+        continue;
+      }
+
+      // Recuperación real: return_air otra vez en banda.
+      if (enRangoTemperatura === true) {
+        const { dispositivoReeferId, nombrePlataforma } = resolveLabels(
+          assignment,
+          dispositivo
+        );
         const recovered = clearEpisode(state, assignment.rowKey, now, {
           imei: dispositivo.imei,
           codigo: dispositivo.codigo ?? '—',
@@ -1070,24 +1134,24 @@ export async function runAlertCycle(options = {}) {
             dispositivo,
             recovered,
             result,
+            state,
           });
           if (mail.sent) {
             accion = 'envio';
             estado = 'correo_en_rango_enviado';
             envioId = mail.envioId ?? null;
-            criterio = `EN RANGO (return_air). Incidente cerrado (fuera desde ${formatRef(recovered.since)} hasta ${formatRef(recovered.endedAt)}, ~${recovered.durationHours} h). Correo recuperación → ${(mail.destinatarios ?? []).join(', ')}.`;
+            criterio = `EN RANGO (return_air). Incidente cerrado (fuera desde ${formatRef(recovered.since)} hasta ${formatRef(recovered.endedAt)}, ~${recovered.durationHours} h). Correo «volvió a rango» (hubo alerta fuera previa) → ${(mail.destinatarios ?? []).join(', ')}.`;
           } else if (mail.error) {
             estado = 'error_envio';
             accion = 'error';
             criterio = `EN RANGO. Incidente cerrado (~${recovered.durationHours} h) pero falló correo recuperación: ${mail.error}`;
+          } else if (mail.skipReason === 'sin_alerta_fuera_previa') {
+            criterio = `EN RANGO (return_air). Incidente cerrado (~${recovered.durationHours} h) sin correo: no hubo alerta de fuera de rango en ese intervalo.`;
           } else {
-            criterio = `EN RANGO (return_air). Incidente cerrado (fuera desde ${formatRef(recovered.since)} hasta ${formatRef(recovered.endedAt)}, ~${recovered.durationHours} h). Sin destinatarios para recuperación.`;
+            criterio = `EN RANGO (return_air). Incidente cerrado (fuera desde ${formatRef(recovered.since)} hasta ${formatRef(recovered.endedAt)}, ~${recovered.durationHours} h). Sin correo recuperación (${mail.skipReason ?? 'n/d'}).`;
           }
         } else if (recovered) {
           criterio = `EN RANGO (return_air). Episodio ${recovered.kind} cerrado. Contador en 0.`;
-        } else if (defrostActivoEfectivo(dispositivo)) {
-          criterio =
-            'EN RANGO (defrost activo con equipo ON). No se alerta fuera de rango.';
         } else {
           criterio =
             'EN RANGO (return_air). Temperatura dentro de parámetros. No se envía correo.';
@@ -1134,49 +1198,40 @@ export async function runAlertCycle(options = {}) {
         criterioRef = ref.criterioRef;
 
         if (ref.recovered || ref.episode == null) {
-          let estado = 'normal';
-          let accion = 'ninguna';
-          let envioId = null;
-          let criterio = criterioRef;
           const recoveredDetail = ref.recoveredDetail;
-          if (recoveredDetail?.kind === 'fuera_rango') {
-            const mail = await sendRecuperacionEnRangoMail({
-              smtp,
-              grupo,
-              assignment,
-              dispositivo,
-              recovered: recoveredDetail,
-              result,
+          // Si el historial cerró pero return_air actual sigue fuera, reabrir episodio.
+          if (
+            recoveredDetail?.kind === 'fuera_rango' &&
+            enRangoTemperatura !== true &&
+            recoveredDetail.since
+          ) {
+            episode = startEpisode(state, assignment.rowKey, recoveredDetail.since, {
+              kind: 'fuera_rango',
+              sentUmbrales: [...(recoveredDetail.sentUmbrales ?? [])],
+              sentUmbralesDay: todayKey(now),
+              fromHistorial: true,
+              now,
             });
-            if (mail.sent) {
-              estado = 'correo_en_rango_enviado';
-              accion = 'envio';
-              envioId = mail.envioId ?? null;
-              criterio = `${criterioRef} Correo recuperación → ${(mail.destinatarios ?? []).join(', ')}.`;
-            } else if (mail.error) {
-              estado = 'error_envio';
-              accion = 'error';
-              criterio = `${criterioRef} Error correo recuperación: ${mail.error}`;
-            }
+            criterioRef = `Historial ambiguo; se mantiene incidente desde ${formatRef(episode.since)} (return_air actual aún fuera).`;
+          } else {
+            pushEval(evaluaciones, {
+              ...base,
+              estado: 'normal',
+              accion: 'ninguna',
+              enRango: true,
+              diaCalendario: hoy,
+              umbralesConfigurados: umbrales,
+              consultaHistorial,
+              recuperadoAt: recoveredDetail?.endedAt ?? null,
+              telemetria: telem,
+              criterio: criterioRef,
+            });
+            result.resumen.normal++;
+            continue;
           }
-          pushEval(evaluaciones, {
-            ...base,
-            estado,
-            accion,
-            enRango: true,
-            diaCalendario: hoy,
-            umbralesConfigurados: umbrales,
-            consultaHistorial,
-            recuperadoAt: recoveredDetail?.endedAt ?? null,
-            envioId,
-            telemetria: telem,
-            criterio,
-          });
-          if (estado === 'normal') result.resumen.normal++;
-          continue;
+        } else {
+          episode = ref.episode;
         }
-
-        episode = ref.episode;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         pushEval(evaluaciones, {

@@ -278,18 +278,23 @@ export function buildRecuperacionEnRangoEmail(params) {
     referenciaDesde,
     recuperadoAt,
     durationHours,
+    umbralesEnviados = [],
   } = params;
 
   const d = dispositivo.ultimo_dato ?? {};
   const fechaAlerta = formatDateSubjectTz(new Date());
-  const tipoAlarma = 'EQUIPO EN RANGO';
+  const tipoAlarma = 'EQUIPO VOLVIÓ A RANGO';
   const subject = `REEFER ${dispositivoReeferId} - ${nombrePlataforma} - ${tipoAlarma} ${fechaAlerta}`;
   const intro =
-    'Se notifica que el equipo volvió a estar en rangos normales de temperatura.';
+    'Se notifica que el equipo, que estuvo fuera de rango, ya se reguló y volvió a estar en rangos normales de temperatura.';
   const parametrosLinea = buildParametrosLinea(d);
   const dur =
     durationHours != null && !Number.isNaN(durationHours)
       ? `~${roundHoras(durationHours)} h`
+      : '—';
+  const umbralesTxt =
+    Array.isArray(umbralesEnviados) && umbralesEnviados.length
+      ? umbralesEnviados.map((u) => formatUmbralHoras(u)).join(', ')
       : '—';
 
   const text = [
@@ -303,6 +308,7 @@ export function buildRecuperacionEnRangoEmail(params) {
     `• Inicio fuera de rango: ${formatDateTimeTz(referenciaDesde)} (GMT-5)`,
     `• Recuperación: ${formatDateTimeTz(recuperadoAt)} (GMT-5)`,
     `• Duración del incidente: ${dur}`,
+    `• Alertas fuera de rango enviadas en el intervalo: ${umbralesTxt}`,
     `• Última comunicación: ${fmtDateShort(dispositivo.ultima_actualizacion)} (GMT-5)`,
     '',
     'Últimos parámetros registrados :',
@@ -323,6 +329,7 @@ export function buildRecuperacionEnRangoEmail(params) {
 <li><strong>Inicio fuera de rango:</strong> ${formatDateTimeTz(referenciaDesde)} (GMT-5)</li>
 <li><strong>Recuperación:</strong> ${formatDateTimeTz(recuperadoAt)} (GMT-5)</li>
 <li><strong>Duración del incidente:</strong> ${dur}</li>
+<li><strong>Alertas fuera de rango enviadas en el intervalo:</strong> ${umbralesTxt}</li>
 <li><strong>Última comunicación:</strong> ${fmtDateShort(dispositivo.ultima_actualizacion)} (GMT-5)</li>
 </ul>
 <p><strong>Últimos parámetros registrados :</strong><br>${parametrosLinea}</p>

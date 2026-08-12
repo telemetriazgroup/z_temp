@@ -23,7 +23,9 @@
 - Un umbral se envía **una vez por día calendario** por incidente; al día siguiente pueden repetirse (30 min, 1 h…) si el evento continúa.
 - Cada correo incluye **temperaturas actuales**, **tabla** y **gráfico SVG** de evolución de las últimas **3 h**.
 - Al cerrar un incidente se guarda registro `episodio_cerrado` en `incidentes.json`.
-- Al volver **EN RANGO** se envía un correo de recuperación («equipo volvió a rangos normales») a los destinatarios del grupo.
+- Al volver **EN RANGO** (temperatura real, `return_air` en banda) se envía **una sola vez** el correo «volvió a rango», y **solo si** en ese intervalo ya se había enviado al menos un umbral de fuera de rango (p. ej. 30 min / 1 h).
+- **Defrost** no cierra el incidente ni dispara «volvió a rango»; solo pausa las alertas de fuera de rango.
+- Tras el correo de recuperación, el ciclo se reinicia: debe volver a haber fuera de rango (+ alerta) y otra recuperación real para un nuevo correo.
 
 ## Fuera de línea
 - Si no hay telemetría durante **≥ 3 h** (`OFFLINE_ALERT_HOURS`):
