@@ -87,7 +87,7 @@ export function getControlCommandLogsForUser(
   const all = readRaw();
   if (user == null) return [];
   if (userHasFullDeviceAccess(user)) return all.slice(0, limit);
-  const allowed = new Set(user.deviceAccess);
+  const allowed = new Set(Array.isArray(user.deviceAccess) ? user.deviceAccess : []);
   return all.filter((e) => allowed.has(e.imei)).slice(0, limit);
 }
 

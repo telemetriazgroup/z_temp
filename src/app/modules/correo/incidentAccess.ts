@@ -11,7 +11,7 @@ export function userMayAccessCorreoDevice(
   if (user.superUser === true) return true;
   if (!userMayAccessImei(user, device.imei)) return false;
   const allowed = user.allowedCodigos;
-  if (allowed != null && allowed.length > 0 && device.codigo) {
+  if (Array.isArray(allowed) && allowed.length > 0 && device.codigo) {
     return allowed.includes(device.codigo);
   }
   return true;

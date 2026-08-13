@@ -103,6 +103,12 @@ export function ensureUserRegistry() {
       changed = true;
     }
   }
+  for (const u of users) {
+    if (!Array.isArray(u.deviceAccess)) {
+      u.deviceAccess = u.superUser === true ? ['all'] : [];
+      changed = true;
+    }
+  }
   if (changed) writeUsers(users);
   return users;
 }

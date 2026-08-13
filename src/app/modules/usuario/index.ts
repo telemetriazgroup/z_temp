@@ -11,6 +11,7 @@ export {
   migrateLegacyUsersIfNeeded,
 } from './userRepository';
 export {
+  deviceAccessList,
   userIsMonitoreoNavigation,
   userIsIffRestrictedNavigation,
   userHasFullDeviceAccess,

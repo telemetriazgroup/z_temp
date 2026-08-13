@@ -286,9 +286,10 @@ export default function Usuarios() {
                       )}
                     </TableCell>
                     <TableCell className="max-w-[280px] truncate text-sm text-muted-foreground">
-                      {u.superUser === true || u.deviceAccess.includes('all')
+                      {u.superUser === true ||
+                      (Array.isArray(u.deviceAccess) && u.deviceAccess.includes('all'))
                         ? 'Todos'
-                        : `${u.deviceAccess.length} IMEI`}
+                        : `${Array.isArray(u.deviceAccess) ? u.deviceAccess.length : 0} IMEI`}
                     </TableCell>
                     <TableCell className="text-right space-x-1">
                       <Button variant="ghost" size="icon" onClick={() => openEdit(u)}>

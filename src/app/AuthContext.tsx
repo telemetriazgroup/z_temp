@@ -25,7 +25,11 @@ function readStoredSession(): User | null {
   try {
     const stored = localStorage.getItem(SESSION_KEY);
     if (!stored) return null;
-    return JSON.parse(stored) as User;
+    const parsed = JSON.parse(stored) as User;
+    if (parsed != null && !Array.isArray(parsed.deviceAccess)) {
+      parsed.deviceAccess = parsed.superUser === true ? ['all'] : [];
+    }
+    return parsed;
   } catch {
     return null;
   }

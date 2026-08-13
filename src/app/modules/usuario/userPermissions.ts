@@ -1,6 +1,12 @@
 import type { User, DispositivoUltimoEstado } from '../../types';
 import { IFF_STYLE_ACCOUNT_USERNAMES } from './bootstrapUsers';
 
+/** Normaliza `deviceAccess` aunque falte en sesiones/usuarios antiguos. */
+export function deviceAccessList(user: User | null | undefined): string[] {
+  if (user == null) return [];
+  return Array.isArray(user.deviceAccess) ? user.deviceAccess : [];
+}
+
 /** Menú restringido para rol Monitoreo (no superusuario). */
 export function userIsMonitoreoNavigation(user: User | null): boolean {
   if (user == null || user.superUser === true) return false;
@@ -10,7 +16,7 @@ export function userIsMonitoreoNavigation(user: User | null): boolean {
 /** Operativo restringido: cuentas semilla tipo IFF o correo `@iff.com` (no superusuario). */
 export function userIsIffRestrictedNavigation(user: User | null): boolean {
   if (user == null || user.superUser === true) return false;
-  const u = user.username.trim().toLowerCase();
+  const u = user.username?.trim().toLowerCase() ?? '';
   if ((IFF_STYLE_ACCOUNT_USERNAMES as readonly string[]).includes(u)) return true;
   return u.endsWith('@iff.com');
 }
@@ -18,13 +24,13 @@ export function userIsIffRestrictedNavigation(user: User | null): boolean {
 export function userHasFullDeviceAccess(user: User | null): boolean {
   if (user == null) return false;
   if (user.superUser === true) return true;
-  return user.deviceAccess.includes('all');
+  return deviceAccessList(user).includes('all');
 }
 
 export function userMayAccessImei(user: User | null, imei: string): boolean {
   if (user == null) return false;
   if (userHasFullDeviceAccess(user)) return true;
-  return user.deviceAccess.includes(imei);
+  return deviceAccessList(user).includes(imei);
 }
 
 /** IMEI + origen (TUNEL / STARCOOL / STARCOOL2 / TERMOKING) según perfil del usuario. */
@@ -34,7 +40,7 @@ export function userMayAccessDispositivo(
 ): boolean {
   if (!userMayAccessImei(user, dispositivo.imei)) return false;
   const allowed = user?.allowedCodigos;
-  if (allowed == null || allowed.length === 0) return true;
+  if (!Array.isArray(allowed) || allowed.length === 0) return true;
   if (dispositivo.codigo == null) return true;
   return allowed.includes(dispositivo.codigo);
 }
