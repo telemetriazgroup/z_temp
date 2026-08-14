@@ -41,17 +41,23 @@ import {
   getUserByIdPublic,
 } from './lib/usersRepository.js';
 import { createAnalisisRouter } from './lib/analisis/routes.js';
+import { createDashboardRouter } from './lib/dashboard/routes.js';
 import { ensureAnalisisSchema } from './lib/db.js';
+import { captureDashboardSnapshotSafe } from './lib/dashboard/snapshot.js';
 import { buildExternalAlertMonitor } from './lib/externalAlertMonitor.js';
 
 const PORT = Number(process.env.CORREO_PORT ?? 3003);
 const POLL_MS = Number(process.env.CORREO_POLL_MS ?? 2 * 60 * 1000);
+const DASHBOARD_SNAPSHOT_MS = Number(
+  process.env.DASHBOARD_SNAPSHOT_MS ?? Math.max(POLL_MS, 5 * 60 * 1000)
+);
 /** Si está definido, la ruta externa exige header `x-api-key` o `?apiKey=`. */
 const EXTERNAL_API_KEY = process.env.CORREO_EXTERNAL_API_KEY?.trim() || '';
 const app = express();
 
 app.use(express.json({ limit: '512kb' }));
 app.use('/reefer/api/analisis', createAnalisisRouter());
+app.use('/reefer/api/correo/dashboard', createDashboardRouter());
 
 function isValidEmail(s) {
   return typeof s === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -177,7 +183,7 @@ app.get('/reefer/api/correo/users', (req, res) => {
   }
 });
 
-app.post('/reefer/api/correo/users/login', (req, res) => {
+app.post('/reefer/api/correo/users/login', async (req, res) => {
   try {
     const username = req.body?.username?.toString().trim();
     const password = req.body?.password?.toString() ?? '';
@@ -187,6 +193,14 @@ app.post('/reefer/api/correo/users/login', (req, res) => {
     const user = authenticate(username, password);
     if (user == null) {
       return res.status(401).json({ ok: false, error: 'Usuario o contraseña incorrectos' });
+    }
+    try {
+      const { ensureDashboardSchema } = await import('./lib/db.js');
+      const { recordUserLogin } = await import('./lib/dashboard/userActivity.js');
+      await ensureDashboardSchema();
+      await recordUserLogin(user);
+    } catch (e) {
+      console.warn('[dashboard] login trace:', e.message);
     }
     res.json({ ok: true, data: user });
   } catch (e) {
@@ -606,9 +620,25 @@ app.post('/reefer/api/correo/send', async (req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
   ensureUserRegistry();
   console.log(`ZTRACK correo API :${PORT} · ciclo cada ${POLL_MS / 1000}s`);
-  ensureAnalisisSchema().catch((e) =>
-    console.warn('[analisis] esquema diferido:', e.message)
-  );
+  // Una sola cadena de migración (analisis → dashboard). Evita CREATE TABLE
+  // concurrente que dispara pg_type_typname_nsp_index.
+  ensureAnalisisSchema()
+    .then(() => {
+      setTimeout(() => {
+        captureDashboardSnapshotSafe()
+          .then((r) => console.log('[dashboard] snapshot inicial', r?.id ?? r?.skipped ?? 'ok'))
+          .catch((e) => console.warn('[dashboard] snapshot inicial:', e.message));
+      }, 8000);
+      setInterval(() => {
+        captureDashboardSnapshotSafe().catch((e) =>
+          console.warn('[dashboard] snapshot:', e.message)
+        );
+      }, DASHBOARD_SNAPSHOT_MS);
+      console.log(
+        `[dashboard] snapshots cada ${DASHBOARD_SNAPSHOT_MS / 1000}s`
+      );
+    })
+    .catch((e) => console.warn('[analisis/dashboard] esquema diferido:', e.message));
   setTimeout(() => {
     runAlertCycle({ trigger: 'automatic' }).catch((e) =>
       console.error('[correo] ciclo inicial', e.message)

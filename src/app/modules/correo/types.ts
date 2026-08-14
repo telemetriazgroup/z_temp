@@ -344,6 +344,192 @@ export interface CorreoServerStatus {
   incidentesPendientes: number;
 }
 
+/** KPI live / promedio del dashboard Inicio. */
+export interface DashboardFleetCounts {
+  total: number;
+  online: number;
+  wait: number;
+  offline: number;
+  power_on?: number;
+  power_off?: number;
+  en_defrost?: number;
+  en_rango: number;
+  fuera_rango: number;
+  apagado?: number;
+  indeterminado?: number;
+  pct_online: number | null;
+  pct_en_rango: number | null;
+  by_codigo?: Record<string, unknown>;
+  captured_at?: string;
+}
+
+export interface DashboardPeriodAverage {
+  samples: number;
+  online: number;
+  wait: number;
+  offline: number;
+  en_rango: number;
+  fuera_rango: number;
+  pct_online: number;
+  pct_en_rango: number;
+  total: number;
+}
+
+export interface DashboardDayPoint {
+  day: string;
+  online: number;
+  wait: number;
+  offline: number;
+  en_rango: number;
+  fuera_rango: number;
+  pct_online: number;
+  pct_en_rango: number;
+  samples: number;
+}
+
+export interface DashboardWeekStatus {
+  label: string;
+  detalle: string;
+  tendencia: 'up' | 'down' | 'stable' | 'neutral';
+  pct_online: number;
+  pct_en_rango: number;
+  delta_pct_online: number | null;
+  delta_pct_en_rango: number | null;
+}
+
+export interface DashboardUrgentEnvio {
+  id: string;
+  subject: string;
+  imei: string;
+  descripcionEquipo: string;
+  umbralHoras: number;
+  sentAt: string;
+  success: boolean;
+  grupoNombre: string;
+}
+
+export interface DashboardUrgentAlarma {
+  id: string;
+  imei: string;
+  codigo: string;
+  descripcionEquipo: string;
+  alertKind: string | null;
+  umbralHoras: number | null;
+  horasFueraRango: number | null;
+  enviadoAt: string;
+  estado: string;
+  subject: string | null;
+}
+
+export interface DashboardUrgentEquipo {
+  imei: string;
+  codigo: string | null;
+  rowKey: string;
+  nombre: string;
+  power_state_texto?: string | null;
+  en_rango?: boolean | null;
+  en_defrost?: boolean | null;
+  ultima_actualizacion?: string | null;
+}
+
+export interface DashboardOverview {
+  live: DashboardFleetCounts;
+  averages: {
+    dia: DashboardPeriodAverage;
+    semana: DashboardPeriodAverage;
+    mes: DashboardPeriodAverage;
+  };
+  weekSeries: DashboardDayPoint[];
+  weekStatus: DashboardWeekStatus;
+  latestSnapshotAt: string | null;
+  telemetryError?: string | null;
+  urgent: {
+    envios: DashboardUrgentEnvio[];
+    alarmas: DashboardUrgentAlarma[];
+    conectados: DashboardUrgentEquipo[];
+    fueraRango: DashboardUrgentEquipo[];
+  };
+  links: {
+    current: DashboardLinkStatus[];
+    liveCheck: Array<{
+      codigo: string;
+      url: string;
+      ok: boolean;
+      latencyMs?: number | null;
+      error?: string | null;
+      deviceCount?: number;
+    }>;
+    probes3h: DashboardLinkProbe[];
+    alert: {
+      active: boolean;
+      message: string | null;
+      codigos: string[];
+    };
+  };
+  devices: {
+    pendingReview: DashboardKnownDevice[];
+    recentlyRegistered: DashboardKnownDevice[];
+  };
+  users: {
+    recentLogins: DashboardUserLogin[];
+  };
+}
+
+export interface DashboardLinkStatus {
+  codigo: string;
+  url: string | null;
+  ok: boolean;
+  checked_at: string;
+  latency_ms: number | null;
+  error_message: string | null;
+  device_count: number;
+  online_count: number;
+  wait_count: number;
+  offline_count: number;
+  last_ok_at: string | null;
+  last_error_at: string | null;
+  last_success: {
+    devices?: Array<Record<string, unknown>>;
+    counts?: Record<string, number>;
+  };
+}
+
+export interface DashboardLinkProbe {
+  codigo: string;
+  checked_at: string;
+  ok: boolean;
+  latency_ms: number | null;
+  error_message: string | null;
+  device_count: number;
+  online_count: number;
+  wait_count: number;
+  offline_count: number;
+}
+
+export interface DashboardKnownDevice {
+  rowKey: string;
+  imei: string;
+  codigo: string | null;
+  first_seen_at: string;
+  last_seen_at: string;
+  first_estado_conexion?: string | null;
+  last_estado_conexion?: string | null;
+  last_power_state?: string | null;
+  review_status: 'pendiente' | 'revisado' | 'ignorado' | string;
+  nombre?: string;
+  reviewed_at?: string | null;
+  reviewed_by?: string | null;
+}
+
+export interface DashboardUserLogin {
+  id: string;
+  userId: string | null;
+  username: string;
+  role: string | null;
+  superUser: boolean;
+  logged_in_at: string;
+}
+
 /** Vista pública del SMTP guardado en servidor (sin contraseña). */
 export interface SmtpConfigServerView {
   user: string;

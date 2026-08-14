@@ -1,248 +1,711 @@
-import React, { useMemo } from 'react';
-import { useNavigate } from 'react-router';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router';
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+import {
+  fetchDashboardOverview,
+  markDashboardDeviceReviewed,
+} from '../modules/correo/correoServerApi';
+import type {
+  DashboardOverview,
+  DashboardPeriodAverage,
+} from '../modules/correo/types';
 import { useAuth } from '../AuthContext';
 import { userIsMonitoreoNavigation } from '../modules/usuario';
-import { mockDevices } from '../mockData';
-import { getDeviceAlarmEvents, ensureAlarmCatalog } from '../modules/alarma';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
-import { Activity, Power, Bell, Mail, Snowflake, TrendingUp, TrendingDown, List, BookOpen } from 'lucide-react';
+import { Badge } from '../components/ui/badge';
+import { cn } from '../components/ui/utils';
+import {
+  RefreshCw,
+  AlertCircle,
+  Radio,
+  ChevronRight,
+  List,
+  BookOpen,
+  Wifi,
+  WifiOff,
+  Clock,
+  Thermometer,
+  ThermometerSnowflake,
+  Mail,
+  Siren,
+  TrendingUp,
+  TrendingDown,
+  Minus,
+  Users,
+  PackagePlus,
+  Link2,
+  Check,
+} from 'lucide-react';
+
+function detallePath(imei: string, codigo?: string | null): string {
+  const q = new URLSearchParams({ imei });
+  if (codigo) q.set('codigo', codigo);
+  return `/listado/detalle?${q.toString()}`;
+}
+
+function formatDayLabel(day: string): string {
+  const [, m, d] = day.split('-');
+  return `${d}/${m}`;
+}
+
+function formatWhen(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toLocaleString('es-PE', {
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return iso;
+  }
+}
+
+function KpiCard({
+  label,
+  value,
+  hint,
+  tone,
+  icon: Icon,
+}: {
+  label: string;
+  value: number | string;
+  hint?: string;
+  tone?: 'ok' | 'warn' | 'bad' | 'muted';
+  icon: React.ComponentType<{ className?: string }>;
+}) {
+  const toneClass =
+    tone === 'ok'
+      ? 'border-emerald-200 bg-emerald-50/50'
+      : tone === 'warn'
+        ? 'border-amber-200 bg-amber-50/40'
+        : tone === 'bad'
+          ? 'border-red-200 bg-red-50/40'
+          : 'bg-card';
+  return (
+    <div className={cn('rounded-lg border p-3 sm:p-4', toneClass)}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs text-muted-foreground">{label}</span>
+        <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
+      </div>
+      <div className="text-2xl font-semibold mt-1 tabular-nums">{value}</div>
+      {hint ? <div className="text-[11px] text-muted-foreground mt-0.5">{hint}</div> : null}
+    </div>
+  );
+}
+
+function AvgBlock({
+  title,
+  avg,
+}: {
+  title: string;
+  avg: DashboardPeriodAverage;
+}) {
+  return (
+    <div className="rounded-lg border p-3 space-y-2">
+      <div className="text-sm font-medium">{title}</div>
+      {avg.samples === 0 ? (
+        <p className="text-xs text-muted-foreground">Sin muestras aún</p>
+      ) : (
+        <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+          <dt className="text-muted-foreground">Online</dt>
+          <dd className="text-right tabular-nums font-medium">{avg.online}</dd>
+          <dt className="text-muted-foreground">Wait</dt>
+          <dd className="text-right tabular-nums">{avg.wait}</dd>
+          <dt className="text-muted-foreground">Offline</dt>
+          <dd className="text-right tabular-nums">{avg.offline}</dd>
+          <dt className="text-muted-foreground">En rango</dt>
+          <dd className="text-right tabular-nums text-emerald-700">{avg.en_rango}</dd>
+          <dt className="text-muted-foreground">Fuera</dt>
+          <dd className="text-right tabular-nums text-red-700">{avg.fuera_rango}</dd>
+          <dt className="text-muted-foreground">% online</dt>
+          <dd className="text-right tabular-nums">{avg.pct_online}%</dd>
+          <dt className="text-muted-foreground">% en rango</dt>
+          <dd className="text-right tabular-nums">{avg.pct_en_rango}%</dd>
+        </dl>
+      )}
+    </div>
+  );
+}
 
 export default function Inicio() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const esMonitoreo = userIsMonitoreoNavigation(user);
+  const esSuper = user?.superUser === true;
 
-  const alarmEvents = useMemo(() => {
-    ensureAlarmCatalog();
-    return getDeviceAlarmEvents();
-  }, []);
+  const [data, setData] = useState<DashboardOverview | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [reviewing, setReviewing] = useState<string | null>(null);
 
-  if (esMonitoreo) {
-    return (
-      <div className="space-y-6 max-w-2xl">
-        <div>
-          <h1 className="text-3xl font-bold">Bienvenido/a</h1>
-          <p className="text-gray-500 mt-2">
-            Hola, <span className="font-medium text-gray-800">{user?.username}</span>.
-            Desde aquí puede consultar el estado de sus equipos y el catálogo de alarmas.
-          </p>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Card className="hover:shadow-md transition-shadow">
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <List className="h-5 w-5 text-blue-600" />
-                Listado de equipos
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground mb-4">
-                Vea el estado en tiempo real de los contenedores asignados a su cuenta.
-              </p>
-              <Button onClick={() => navigate('/listado')}>Ir al listado</Button>
-            </CardContent>
-          </Card>
-          <Card className="hover:shadow-md transition-shadow">
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <BookOpen className="h-5 w-5 text-orange-600" />
-                Catálogo de alarmas
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground mb-4">
-                Consulte la documentación de códigos de alarma del controlador.
-              </p>
-              <Button variant="outline" onClick={() => navigate('/catalogo-alarmas')}>
-                Ver catálogo
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-    );
-  }
+  const load = useCallback(async () => {
+    setError(null);
+    setLoading(true);
+    try {
+      const overview = await fetchDashboardOverview({
+        username: user?.username,
+        superUser: user?.superUser === true,
+      });
+      setData(overview);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error al cargar dashboard');
+    } finally {
+      setLoading(false);
+    }
+  }, [user?.username, user?.superUser]);
 
-  const onlineDevices = mockDevices.filter(d => d.status === 'ONLINE').length;
-  const waitDevices = mockDevices.filter(d => d.status === 'WAIT').length;
-  const offlineDevices = mockDevices.filter(d => d.status === 'OFFLINE').length;
-  
-  const onPowerDevices = mockDevices.filter(d => d.power === 'ON').length;
-  const offPowerDevices = mockDevices.filter(d => d.power === 'OFF').length;
-  
-  const alarmsVistas = alarmEvents.filter(a => a.atendida).length;
-  const alarmsNoVistas = alarmEvents.filter(a => !a.atendida && a.clearedAt == null).length;
-  
-  const alarmsEmail = alarmEvents.filter(a => a.reportadaEmail).length;
-  
-  const defrostDevices = mockDevices.filter(d => d.defrost).length;
-  const enRangoDevices = mockDevices.filter(d => d.enRango).length;
-  const fueraRangoDevices = mockDevices.filter(d => !d.enRango).length;
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const markReviewed = async (
+    rowKey: string,
+    status: 'revisado' | 'ignorado'
+  ) => {
+    setReviewing(rowKey);
+    try {
+      await markDashboardDeviceReviewed(rowKey, status, {
+        username: user?.username,
+        superUser: true,
+      });
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo marcar revisión');
+    } finally {
+      setReviewing(null);
+    }
+  };
+
+  const live = data?.live;
+  const chartData =
+    data?.weekSeries.map((p) => ({
+      ...p,
+      label: formatDayLabel(p.day),
+    })) ?? [];
+
+  const TrendIcon =
+    data?.weekStatus.tendencia === 'up'
+      ? TrendingUp
+      : data?.weekStatus.tendencia === 'down'
+        ? TrendingDown
+        : Minus;
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Dashboard</h1>
-        <p className="text-gray-500 mt-1">Resumen general del sistema</p>
+      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold">
+            {esMonitoreo ? 'Bienvenido/a' : 'Dashboard'}
+          </h1>
+          <p className="text-muted-foreground mt-1">
+            {esMonitoreo ? (
+              <>
+                Hola,{' '}
+                <span className="font-medium text-foreground">{user?.username}</span>.
+                Resumen operativo de sus equipos.
+              </>
+            ) : (
+              'Resúmenes, links API, equipos nuevos y extractos urgentes.'
+            )}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
+            <RefreshCw className={cn('h-4 w-4 mr-2', loading && 'animate-spin')} />
+            Actualizar
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => navigate('/listado')}>
+            <List className="h-4 w-4 mr-2" />
+            Listado
+          </Button>
+          {esMonitoreo && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate('/catalogo-alarmas')}
+            >
+              <BookOpen className="h-4 w-4 mr-2" />
+              Catálogo alarmas
+            </Button>
+          )}
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {/* Box 1: Status de equipos */}
-        <Card 
-          className="cursor-pointer hover:shadow-lg transition-shadow"
-          onClick={() => navigate('/listado')}
-        >
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              Estado de Equipos
-            </CardTitle>
-            <Activity className="h-4 w-4 text-blue-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              <div className="flex justify-between items-center">
-                <span className="text-sm">Online</span>
-                <span className="text-2xl font-bold text-green-600">{onlineDevices}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm">Wait</span>
-                <span className="text-2xl font-bold text-yellow-600">{waitDevices}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm">Offline</span>
-                <span className="text-2xl font-bold text-red-600">{offlineDevices}</span>
+      {loading && data == null && (
+        <div className="flex flex-col items-center justify-center py-16 gap-3 text-muted-foreground">
+          <RefreshCw className="h-8 w-8 animate-spin" />
+          Cargando dashboard…
+        </div>
+      )}
+
+      {!loading && error != null && data == null && (
+        <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-6 flex flex-col items-center gap-3">
+          <AlertCircle className="h-10 w-10 text-destructive" />
+          <p className="text-sm text-destructive font-medium">{error}</p>
+          <Button variant="outline" onClick={() => void load()}>
+            Reintentar
+          </Button>
+        </div>
+      )}
+
+      {data != null && live != null && (
+        <>
+          {(error != null || data.telemetryError) && (
+            <p className="text-xs text-amber-700">{error ?? data.telemetryError}</p>
+          )}
+
+          {esSuper && data.links?.alert?.active && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 flex gap-3 items-start">
+              <AlertCircle className="h-5 w-5 text-amber-700 shrink-0 mt-0.5" />
+              <div>
+                <div className="font-medium text-amber-900">Links API con falla</div>
+                <p className="text-sm text-amber-800">{data.links.alert.message}</p>
               </div>
             </div>
-          </CardContent>
-        </Card>
+          )}
 
-        {/* Box 2: Power de equipos */}
-        <Card 
-          className="cursor-pointer hover:shadow-lg transition-shadow"
-          onClick={() => navigate('/listado')}
-        >
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              Power de Equipos
-            </CardTitle>
-            <Power className="h-4 w-4 text-purple-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              <div className="flex justify-between items-center">
-                <span className="text-sm">Encendidos</span>
-                <span className="text-2xl font-bold text-green-600">{onPowerDevices}</span>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+            <KpiCard label="Online" value={live.online} tone="ok" icon={Wifi} hint={`${live.pct_online ?? 0}%`} />
+            <KpiCard label="Wait" value={live.wait} tone="warn" icon={Clock} />
+            <KpiCard label="Offline" value={live.offline} tone="muted" icon={WifiOff} />
+            <KpiCard
+              label="En rango"
+              value={live.en_rango}
+              tone="ok"
+              icon={Thermometer}
+              hint={live.pct_en_rango != null ? `${live.pct_en_rango}%` : undefined}
+            />
+            <KpiCard
+              label="Fuera de rango"
+              value={live.fuera_rango}
+              tone={live.fuera_rango > 0 ? 'bad' : 'ok'}
+              icon={ThermometerSnowflake}
+            />
+          </div>
+
+          {esSuper && (data.links?.current?.length ?? 0) > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Link2 className="h-4 w-4" />
+                  Links de telemetría (último estatus + 3 h)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  {data.links.current.map((link) => {
+                    const last = link.last_success?.counts;
+                    return (
+                      <div
+                        key={link.codigo}
+                        className={cn(
+                          'rounded-lg border p-3',
+                          link.ok
+                            ? 'border-emerald-200'
+                            : 'border-red-300 bg-red-50/40'
+                        )}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-medium text-sm">{link.codigo}</span>
+                          <Badge variant={link.ok ? 'secondary' : 'destructive'}>
+                            {link.ok ? 'OK' : 'DOWN'}
+                          </Badge>
+                        </div>
+                        <div className="text-[11px] text-muted-foreground mt-1">
+                          Check {formatWhen(link.checked_at)}
+                          {link.latency_ms != null ? ` · ${link.latency_ms} ms` : ''}
+                        </div>
+                        {!link.ok && (
+                          <>
+                            <p className="text-xs text-red-700 mt-1 truncate">
+                              {link.error_message || 'Sin respuesta'}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground mt-1">
+                              Último OK {formatWhen(link.last_ok_at)}
+                              {last
+                                ? ` · ${last.total ?? link.device_count} eq (${last.online ?? '—'} online)`
+                                : ''}
+                            </p>
+                          </>
+                        )}
+                        {link.ok && (
+                          <p className="text-xs mt-1 tabular-nums">
+                            {link.device_count} eq · {link.online_count} online ·{' '}
+                            {link.wait_count} wait
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                {(data.links.probes3h?.length ?? 0) > 0 && (
+                  <p className="text-[11px] text-muted-foreground">
+                    Trazabilidad: {data.links.probes3h.length} sondas en las últimas 3 h
+                    (cada consulta de último estado).
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <TrendIcon className="h-4 w-4" />
+                Estatus de la semana
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
+              <div>
+                <div className="font-medium">{data.weekStatus.label}</div>
+                <p className="text-sm text-muted-foreground">{data.weekStatus.detalle}</p>
               </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm">Apagados</span>
-                <span className="text-2xl font-bold text-gray-600">{offPowerDevices}</span>
+              <div className="flex flex-wrap gap-2">
+                {data.weekStatus.delta_pct_online != null && (
+                  <Badge variant="outline">
+                    Online {data.weekStatus.delta_pct_online > 0 ? '+' : ''}
+                    {data.weekStatus.delta_pct_online} pp
+                  </Badge>
+                )}
+                {data.weekStatus.delta_pct_en_rango != null && (
+                  <Badge variant="outline">
+                    En rango {data.weekStatus.delta_pct_en_rango > 0 ? '+' : ''}
+                    {data.weekStatus.delta_pct_en_rango} pp
+                  </Badge>
+                )}
+                {data.latestSnapshotAt && (
+                  <Badge variant="secondary">
+                    Snapshot {formatWhen(data.latestSnapshotAt)}
+                  </Badge>
+                )}
               </div>
+            </CardContent>
+          </Card>
+
+          <div>
+            <h2 className="text-sm font-medium text-muted-foreground mb-2">
+              Promedios históricos
+            </h2>
+            <div className="grid sm:grid-cols-3 gap-3">
+              <AvgBlock title="Día" avg={data.averages.dia} />
+              <AvgBlock title="Semana" avg={data.averages.semana} />
+              <AvgBlock title="Mes" avg={data.averages.mes} />
             </div>
-          </CardContent>
-        </Card>
+          </div>
 
-        {/* Box 3: Alarmas */}
-        <Card 
-          className="cursor-pointer hover:shadow-lg transition-shadow"
-          onClick={() => navigate('/alarmas')}
-        >
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              Alarmas
-            </CardTitle>
-            <Bell className="h-4 w-4 text-orange-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              <div className="flex justify-between items-center">
-                <span className="text-sm">Vistas</span>
-                <span className="text-2xl font-bold text-green-600">{alarmsVistas}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm">Por Atender</span>
-                <span className="text-2xl font-bold text-red-600">{alarmsNoVistas}</span>
-              </div>
+          <div className="grid lg:grid-cols-2 gap-4">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Conexión (promedio diario)</CardTitle>
+              </CardHeader>
+              <CardContent className="h-64">
+                {chartData.length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-12 text-center">
+                    Aún no hay histórico de snapshots.
+                  </p>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                      <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                      <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                      <Tooltip />
+                      <Legend />
+                      <Area type="monotone" dataKey="online" name="Online" stackId="1" stroke="#059669" fill="#6ee7b7" />
+                      <Area type="monotone" dataKey="wait" name="Wait" stackId="1" stroke="#d97706" fill="#fcd34d" />
+                      <Area type="monotone" dataKey="offline" name="Offline" stackId="1" stroke="#64748b" fill="#cbd5e1" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                )}
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Temperatura (promedio diario)</CardTitle>
+              </CardHeader>
+              <CardContent className="h-64">
+                {chartData.length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-12 text-center">
+                    Sin datos semanales todavía.
+                  </p>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                      <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                      <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                      <Tooltip />
+                      <Legend />
+                      <Bar dataKey="en_rango" name="En rango" fill="#059669" radius={[2, 2, 0, 0]} />
+                      <Bar dataKey="fuera_rango" name="Fuera" fill="#dc2626" radius={[2, 2, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <div>
+            <h2 className="text-sm font-medium text-muted-foreground mb-2">
+              Urgente / extractos
+            </h2>
+            <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Siren className="h-4 w-4" />
+                    Últimos equipos con alarmas
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {data.urgent.alarmas.length === 0 ? (
+                    <p className="text-xs text-muted-foreground py-4 text-center">
+                      Sin alarmas pendientes
+                    </p>
+                  ) : (
+                    <ul className="divide-y text-sm">
+                      {data.urgent.alarmas.map((a) => (
+                        <li key={a.id} className="py-2">
+                          <Link
+                            to={detallePath(a.imei, a.codigo)}
+                            className="font-medium hover:underline truncate block"
+                          >
+                            {a.descripcionEquipo || a.imei}
+                          </Link>
+                          <div className="text-xs text-muted-foreground">
+                            {a.alertKind === 'apagado' ? 'Apagado' : 'Fuera de rango'}
+                            {a.horasFueraRango != null ? ` · ${a.horasFueraRango}h` : ''}
+                          </div>
+                          <div className="text-[11px] text-muted-foreground">
+                            {formatWhen(a.enviadoAt)}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Mail className="h-4 w-4" />
+                    Últimos correos
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {data.urgent.envios.length === 0 ? (
+                    <p className="text-xs text-muted-foreground py-4 text-center">
+                      Sin envíos recientes
+                    </p>
+                  ) : (
+                    <ul className="divide-y text-sm">
+                      {data.urgent.envios.map((e) => (
+                        <li key={e.id} className="py-2">
+                          <div className="font-medium truncate">
+                            {e.descripcionEquipo || e.imei}
+                          </div>
+                          <div className="text-xs text-muted-foreground truncate">
+                            {e.subject}
+                          </div>
+                          <div className="text-[11px] text-muted-foreground mt-0.5">
+                            {formatWhen(e.sentAt)} · {e.umbralHoras}h
+                            {!e.success ? ' · error' : ''}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Radio className="h-4 w-4 text-emerald-600" />
+                    Equipos conectados
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {data.urgent.conectados.length === 0 ? (
+                    <p className="text-xs text-muted-foreground py-4 text-center">
+                      Ningún equipo online
+                    </p>
+                  ) : (
+                    <ul className="divide-y text-sm">
+                      {data.urgent.conectados.map((c) => (
+                        <li key={c.rowKey}>
+                          <Link
+                            to={detallePath(c.imei, c.codigo)}
+                            className="flex items-center gap-2 py-2 hover:bg-muted/40 -mx-1 px-1 rounded"
+                          >
+                            <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
+                            <div className="min-w-0 flex-1">
+                              <div className="font-medium truncate">{c.nombre}</div>
+                              <div className="text-[11px] text-muted-foreground font-mono truncate">
+                                {c.codigo ? `${c.codigo} · ` : ''}
+                                {c.imei}
+                              </div>
+                            </div>
+                            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <PackagePlus className="h-4 w-4" />
+                    Últimos equipos registrados
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {(data.devices?.recentlyRegistered ?? []).length === 0 ? (
+                    <p className="text-xs text-muted-foreground py-4 text-center">
+                      Aún no hay registro histórico
+                    </p>
+                  ) : (
+                    <ul className="divide-y text-sm">
+                      {data.devices.recentlyRegistered.map((d) => (
+                        <li key={d.rowKey} className="py-2">
+                          <Link
+                            to={detallePath(d.imei, d.codigo)}
+                            className="font-medium hover:underline truncate block"
+                          >
+                            {d.nombre || d.imei}
+                          </Link>
+                          <div className="text-[11px] text-muted-foreground font-mono truncate">
+                            {d.codigo ? `${d.codigo} · ` : ''}
+                            {d.imei}
+                          </div>
+                          <div className="text-[11px] text-muted-foreground">
+                            1ª conexión {formatWhen(d.first_seen_at)}
+                            {d.review_status === 'pendiente'
+                              ? ' · pendiente revisión'
+                              : ''}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </CardContent>
+              </Card>
+
+              {esSuper && (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <Users className="h-4 w-4" />
+                      Últimos usuarios conectados
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {(data.users?.recentLogins ?? []).length === 0 ? (
+                      <p className="text-xs text-muted-foreground py-4 text-center">
+                        Sin logins registrados aún
+                      </p>
+                    ) : (
+                      <ul className="divide-y text-sm">
+                        {data.users.recentLogins.map((u) => (
+                          <li
+                            key={u.id}
+                            className="py-2 flex items-center justify-between gap-2"
+                          >
+                            <div className="min-w-0">
+                              <div className="font-medium truncate">{u.username}</div>
+                              <div className="text-[11px] text-muted-foreground">
+                                {u.role ?? '—'}
+                                {u.superUser ? ' · super' : ''}
+                              </div>
+                            </div>
+                            <span className="text-[11px] text-muted-foreground shrink-0">
+                              {formatWhen(u.logged_in_at)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
+              {esSuper && (
+                <Card className="border-amber-200">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <PackagePlus className="h-4 w-4 text-amber-700" />
+                      Revisión rápida — equipos nuevos
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {(data.devices?.pendingReview ?? []).length === 0 ? (
+                      <p className="text-xs text-muted-foreground py-4 text-center">
+                        No hay equipos nuevos pendientes
+                      </p>
+                    ) : (
+                      <ul className="divide-y text-sm">
+                        {data.devices.pendingReview.map((d) => (
+                          <li key={d.rowKey} className="py-2 space-y-1">
+                            <Link
+                              to={detallePath(d.imei, d.codigo)}
+                              className="font-medium hover:underline truncate block"
+                            >
+                              {d.imei}
+                            </Link>
+                            <div className="text-[11px] text-muted-foreground">
+                              {d.codigo ?? '—'} · 1ª vez {formatWhen(d.first_seen_at)} ·{' '}
+                              {d.first_estado_conexion ?? d.last_estado_conexion ?? '—'}
+                            </div>
+                            <div className="flex gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs"
+                                disabled={reviewing === d.rowKey}
+                                onClick={() => void markReviewed(d.rowKey, 'revisado')}
+                              >
+                                <Check className="h-3 w-3 mr-1" />
+                                Revisado
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 text-xs"
+                                disabled={reviewing === d.rowKey}
+                                onClick={() => void markReviewed(d.rowKey, 'ignorado')}
+                              >
+                                Ignorar
+                              </Button>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
             </div>
-          </CardContent>
-        </Card>
-
-        {/* Box 4: Alarmas por Email */}
-        <Card 
-          className="cursor-pointer hover:shadow-lg transition-shadow"
-          onClick={() => navigate('/alarmas')}
-        >
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              Reportes Email
-            </CardTitle>
-            <Mail className="h-4 w-4 text-blue-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold">{alarmsEmail}</div>
-            <p className="text-xs text-gray-500 mt-1">
-              Alarmas reportadas por correo
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* Box 5: Defrost */}
-        <Card 
-          className="cursor-pointer hover:shadow-lg transition-shadow"
-          onClick={() => navigate('/monitoreo')}
-        >
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              Defrost
-            </CardTitle>
-            <Snowflake className="h-4 w-4 text-cyan-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold">{defrostDevices}</div>
-            <p className="text-xs text-gray-500 mt-1">
-              Equipos en defrost
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* Box 6: En Rango */}
-        <Card 
-          className="cursor-pointer hover:shadow-lg transition-shadow"
-          onClick={() => navigate('/monitoreo')}
-        >
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              En Rango
-            </CardTitle>
-            <TrendingUp className="h-4 w-4 text-green-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold text-green-600">{enRangoDevices}</div>
-            <p className="text-xs text-gray-500 mt-1">
-              Equipos en rango
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* Box 7: Fuera de Rango */}
-        <Card 
-          className="cursor-pointer hover:shadow-lg transition-shadow"
-          onClick={() => navigate('/monitoreo')}
-        >
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              Fuera de Rango
-            </CardTitle>
-            <TrendingDown className="h-4 w-4 text-red-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold text-red-600">{fueraRangoDevices}</div>
-            <p className="text-xs text-gray-500 mt-1">
-              Equipos fuera de rango
-            </p>
-          </CardContent>
-        </Card>
-      </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

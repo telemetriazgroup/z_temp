@@ -12,6 +12,11 @@ const {
 
 let pool = null;
 let migrated = false;
+/** @type {Promise<boolean> | null} */
+let analisisMigrating = null;
+let dashboardMigrated = false;
+/** @type {Promise<boolean> | null} */
+let dashboardMigrating = null;
 
 export function isDbConfigured() {
   return Boolean(DATABASE_URL?.trim());
@@ -44,47 +49,95 @@ export async function withClient(fn) {
   }
 }
 
+async function runAnalisisMigration() {
+  if (migrated) return true;
+  if (!isDbConfigured()) return false;
+  const sqlPath = path.join(__dirname, '../sql/001_analisis.sql');
+  const sql = fs.readFileSync(sqlPath, 'utf8');
+  await query(sql);
+  // Migración: clasificaciones del motor (defrost + falsos positivos).
+  await query(`
+    DO $$
+    BEGIN
+      ALTER TABLE analisis_evento DROP CONSTRAINT IF EXISTS analisis_evento_clasificacion_check;
+      ALTER TABLE analisis_evento
+        ADD CONSTRAINT analisis_evento_clasificacion_check
+        CHECK (clasificacion IN (
+          'autorizado', 'programado', 'no_previsto', 'sin_clasificar', 'defrost',
+          'falso_apagado', 'falso_fuera'
+        ));
+    EXCEPTION WHEN others THEN
+      NULL;
+    END $$;
+  `);
+  await query(`
+    ALTER TABLE analisis_semana
+      ADD COLUMN IF NOT EXISTS horas_defrost DOUBLE PRECISION NOT NULL DEFAULT 0
+  `);
+  await query(`
+    ALTER TABLE analisis_semana
+      ADD COLUMN IF NOT EXISTS eventos_defrost INT NOT NULL DEFAULT 0
+  `);
+  await query(`
+    ALTER TABLE analisis_evento
+      ADD COLUMN IF NOT EXISTS analisis TEXT
+  `);
+  await ensureDashboardSchema();
+  migrated = true;
+  console.log('[analisis] esquema PostgreSQL listo');
+  return true;
+}
+
 export async function ensureAnalisisSchema() {
   if (migrated) return true;
   if (!isDbConfigured()) return false;
-  try {
-    const sqlPath = path.join(__dirname, '../sql/001_analisis.sql');
-    const sql = fs.readFileSync(sqlPath, 'utf8');
-    await query(sql);
-    // Migración: clasificaciones del motor (defrost + falsos positivos).
-    await query(`
-      DO $$
-      BEGIN
-        ALTER TABLE analisis_evento DROP CONSTRAINT IF EXISTS analisis_evento_clasificacion_check;
-        ALTER TABLE analisis_evento
-          ADD CONSTRAINT analisis_evento_clasificacion_check
-          CHECK (clasificacion IN (
-            'autorizado', 'programado', 'no_previsto', 'sin_clasificar', 'defrost',
-            'falso_apagado', 'falso_fuera'
-          ));
-      EXCEPTION WHEN others THEN
-        NULL;
-      END $$;
-    `);
-    await query(`
-      ALTER TABLE analisis_semana
-        ADD COLUMN IF NOT EXISTS horas_defrost DOUBLE PRECISION NOT NULL DEFAULT 0
-    `);
-    await query(`
-      ALTER TABLE analisis_semana
-        ADD COLUMN IF NOT EXISTS eventos_defrost INT NOT NULL DEFAULT 0
-    `);
-    await query(`
-      ALTER TABLE analisis_evento
-        ADD COLUMN IF NOT EXISTS analisis TEXT
-    `);
-    migrated = true;
-    console.log('[analisis] esquema PostgreSQL listo');
-    return true;
-  } catch (e) {
-    console.error('[analisis] no se pudo migrar esquema:', e.message);
-    throw e;
-  }
+  if (analisisMigrating) return analisisMigrating;
+  analisisMigrating = runAnalisisMigration()
+    .catch((e) => {
+      console.error('[analisis] no se pudo migrar esquema:', e.message);
+      throw e;
+    })
+    .finally(() => {
+      analisisMigrating = null;
+    });
+  return analisisMigrating;
+}
+
+async function runDashboardMigration() {
+  if (dashboardMigrated) return true;
+  if (!isDbConfigured()) return false;
+  const sqlPath = path.join(__dirname, '../sql/002_dashboard.sql');
+  const sql = fs.readFileSync(sqlPath, 'utf8');
+  await query(sql);
+  dashboardMigrated = true;
+  console.log('[dashboard] esquema PostgreSQL listo');
+  return true;
+}
+
+export async function ensureDashboardSchema() {
+  if (dashboardMigrated) return true;
+  if (!isDbConfigured()) return false;
+  if (dashboardMigrating) return dashboardMigrating;
+  dashboardMigrating = runDashboardMigration()
+    .catch((e) => {
+      // CREATE TABLE IF NOT EXISTS no es atómico entre sesiones: si otra
+      // conexión ya creó el tipo/tabla, reintentar es seguro.
+      const msg = String(e?.message ?? e);
+      if (
+        msg.includes('pg_type_typname_nsp_index') ||
+        msg.includes('already exists')
+      ) {
+        dashboardMigrated = true;
+        console.log('[dashboard] esquema ya existente (carrera inofensiva)');
+        return true;
+      }
+      console.error('[dashboard] no se pudo migrar esquema:', e.message);
+      throw e;
+    })
+    .finally(() => {
+      dashboardMigrating = null;
+    });
+  return dashboardMigrating;
 }
 
 export async function checkDbHealth() {

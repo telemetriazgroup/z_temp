@@ -4,7 +4,6 @@ import { fetchUltimoEstadoDispositivos } from '../api/termoking';
 import type {
   UltimoEstadoDispositivosResponse,
   DispositivoUltimoEstado,
-  ResumenDispositivos,
   DispositivoOrigenCodigo,
 } from '../types';
 import {
@@ -49,9 +48,7 @@ import {
 import { useAuth } from '../AuthContext';
 import {
   userMayAccessDispositivo,
-  userHasFullDeviceAccess,
   displayNameForDevice,
-  resumenFromDispositivos,
 } from '../modules/usuario';
 import {
   ensureAlarmCatalog,
@@ -249,18 +246,11 @@ export default function Listado() {
   }, []);
 
   const dispositivos = data?.data?.dispositivos ?? [];
-  const resumenApi: ResumenDispositivos | null = data?.data?.resumen ?? null;
 
   const visibleDispositivos = useMemo(
     () => dispositivos.filter((d) => userMayAccessDispositivo(user, d)),
     [dispositivos, user]
   );
-
-  const resumen = useMemo((): ResumenDispositivos | null => {
-    if (resumenApi == null) return null;
-    if (userHasFullDeviceAccess(user)) return resumenApi;
-    return resumenFromDispositivos(visibleDispositivos, resumenApi.zona_horaria ?? 'GMT-5');
-  }, [resumenApi, user, visibleDispositivos]);
 
   const codigoCounts = useMemo(() => {
     const counts: Record<DispositivoOrigenCodigo, number> = {
@@ -316,10 +306,6 @@ export default function Listado() {
         nameLockedByProfile: Boolean(user?.deviceNames?.[d.imei]),
       };
     });
-
-  const toggleStatusFilter = (s: Exclude<StatusFilter, 'ALL'>) => {
-    setStatusFilter((prev) => (prev === s ? 'ALL' : s));
-  };
 
   const saveLocalName = () => {
     if (nameEdit == null) return;
@@ -449,7 +435,7 @@ export default function Listado() {
             <div className="text-3xl font-bold">
               {codigoFilter !== 'ALL' || statusFilter !== 'ALL' || searchTerm.trim()
                 ? filteredDevices.length
-                : (resumen?.total_dispositivos ?? filteredDevices.length)}
+                : visibleDispositivos.length}
             </div>
             {(codigoFilter !== 'ALL' || statusFilter !== 'ALL' || searchTerm.trim()) && (
               <div className="text-xs text-muted-foreground">
@@ -459,39 +445,6 @@ export default function Listado() {
           </div>
         </div>
       </div>
-
-      {resumen != null && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-3">
-          <SummaryCard
-            label="Online"
-            value={resumen.online}
-            clickable
-            selected={statusFilter === 'ONLINE'}
-            onClick={() => toggleStatusFilter('ONLINE')}
-          />
-          <SummaryCard
-            label="Wait"
-            value={resumen.wait}
-            clickable
-            selected={statusFilter === 'WAIT'}
-            onClick={() => toggleStatusFilter('WAIT')}
-          />
-          <SummaryCard
-            label="Offline"
-            value={resumen.offline}
-            clickable
-            selected={statusFilter === 'OFFLINE'}
-            onClick={() => toggleStatusFilter('OFFLINE')}
-          />
-          <SummaryCard label="Power ON" value={resumen.power_on} />
-          <SummaryCard label="Power OFF" value={resumen.power_off} />
-          <SummaryCard label="En defrost" value={resumen.en_defrost} />
-          <div className="rounded-lg border bg-card p-3">
-            <div className="text-xs text-muted-foreground">Zona horaria</div>
-            <div className="text-sm font-medium">{resumen.zona_horaria}</div>
-          </div>
-        </div>
-      )}
 
       <div className="flex flex-col gap-3">
         <div className="flex flex-col sm:flex-row gap-4 items-stretch sm:items-center flex-wrap">
@@ -804,49 +757,6 @@ export default function Listado() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
-  );
-}
-
-function SummaryCard({
-  label,
-  value,
-  clickable,
-  selected,
-  onClick,
-}: {
-  label: string;
-  value: number;
-  clickable?: boolean;
-  selected?: boolean;
-  onClick?: () => void;
-}) {
-  return (
-    <div
-      role={clickable ? 'button' : undefined}
-      tabIndex={clickable ? 0 : undefined}
-      onClick={clickable ? onClick : undefined}
-      onKeyDown={
-        clickable && onClick
-          ? (e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                onClick();
-              }
-            }
-          : undefined
-      }
-      className={cn(
-        'rounded-lg border bg-card p-3 transition-colors',
-        clickable && 'cursor-pointer hover:bg-muted/60 focus:outline-none focus:ring-2 focus:ring-ring',
-        selected && 'ring-2 ring-primary ring-offset-2 ring-offset-background'
-      )}
-    >
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="text-xl font-semibold">{value}</div>
-      {clickable && (
-        <div className="text-[10px] text-muted-foreground mt-1">Clic para filtrar</div>
-      )}
     </div>
   );
 }

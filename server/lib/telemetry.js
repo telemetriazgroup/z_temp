@@ -1,3 +1,5 @@
+import { observeTelemetryFetch } from './dashboard/observeTelemetry.js';
+
 const TUNEL_BASE = process.env.TUNEL_API_BASE ?? 'http://161.132.53.51:9051';
 const STARCOOL_BASE = process.env.STARCOOL_API_BASE ?? 'http://161.132.206.104:9112';
 /** Misma API StarCool documentada en api_star.md (host :9051). */
@@ -57,29 +59,74 @@ function mergeStarcoolOrigenes(dispositivos) {
 }
 
 async function fetchSource(source) {
-  const res = await fetch(source.url, { method: 'GET' });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const json = await res.json();
-  if (!json?.data?.dispositivos || !Array.isArray(json.data.dispositivos)) {
-    throw new Error('Respuesta inválida');
+  const started = Date.now();
+  try {
+    const res = await fetch(source.url, { method: 'GET' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    if (!json?.data?.dispositivos || !Array.isArray(json.data.dispositivos)) {
+      throw new Error('Respuesta inválida');
+    }
+    const dispositivos = json.data.dispositivos.map((d) => ({
+      ...d,
+      codigo: source.codigo,
+    }));
+    return {
+      codigo: source.codigo,
+      url: source.url,
+      ok: true,
+      latencyMs: Date.now() - started,
+      error: null,
+      dispositivos,
+    };
+  } catch (e) {
+    return {
+      codigo: source.codigo,
+      url: source.url,
+      ok: false,
+      latencyMs: Date.now() - started,
+      error: e?.message ?? String(e),
+      dispositivos: [],
+    };
   }
-  return json.data.dispositivos.map((d) => ({ ...d, codigo: source.codigo }));
+}
+
+/**
+ * Consulta todos los orígenes y devuelve dispositivos + detalle por link.
+ * Registra trazabilidad de links (últimas 3 h) y equipos nuevos.
+ */
+export async function fetchAllDispositivosDetailed() {
+  const links = await Promise.all(SOURCES.map(fetchSource));
+  const dispositivos = [];
+  const errors = [];
+  for (const link of links) {
+    if (link.ok) dispositivos.push(...link.dispositivos);
+    else errors.push(`${link.codigo}: ${link.error}`);
+  }
+  const merged = mergeStarcoolOrigenes(dispositivos);
+  await observeTelemetryFetch(links, merged);
+  return {
+    dispositivos: merged,
+    links: links.map(({ dispositivos: devices, ...rest }) => ({
+      ...rest,
+      deviceCount: devices?.length ?? 0,
+    })),
+    errors,
+  };
 }
 
 export async function fetchAllDispositivos() {
-  const settled = await Promise.allSettled(SOURCES.map(fetchSource));
-  const dispositivos = [];
-  const errors = [];
-  settled.forEach((r, i) => {
-    if (r.status === 'fulfilled') dispositivos.push(...r.value);
-    else errors.push(`${SOURCES[i].codigo}: ${r.reason?.message ?? r.reason}`);
-  });
+  const { dispositivos, errors } = await fetchAllDispositivosDetailed();
   if (dispositivos.length === 0) {
     throw new Error(errors.join(' | ') || 'Sin telemetría');
   }
-  return mergeStarcoolOrigenes(dispositivos);
+  return dispositivos;
 }
 
 export function deviceRowKey(d) {
   return d.codigo != null ? `${d.codigo}-${d.imei}` : d.imei;
+}
+
+export function listTelemetrySources() {
+  return SOURCES.map((s) => ({ codigo: s.codigo, url: s.url }));
 }

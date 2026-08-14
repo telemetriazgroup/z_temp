@@ -17,6 +17,7 @@ import type {
   DeviceAlertStateView,
   ReferenciaUpdateResult,
   DeviceEventosView,
+  DashboardOverview,
 } from './types';
 import type { DeviceLocalNameHistoryEntry } from '../../lib/deviceLocalNames';
 
@@ -349,4 +350,31 @@ export async function sendTestEmailViaServer(payload: Omit<SendEmailPayload, 'sm
     body: JSON.stringify(payload),
   });
   return parseRes(res);
+}
+
+export async function fetchDashboardOverview(opts?: {
+  username?: string | null;
+  superUser?: boolean;
+}): Promise<DashboardOverview> {
+  const res = await fetch(`${BASE}/dashboard/overview`, {
+    headers: headers(opts?.username, opts?.superUser),
+  });
+  const body = await parseRes<{ data: DashboardOverview }>(res);
+  return body.data;
+}
+
+export async function markDashboardDeviceReviewed(
+  rowKey: string,
+  status: 'revisado' | 'ignorado' | 'pendiente',
+  opts?: { username?: string | null; superUser?: boolean }
+): Promise<void> {
+  const res = await fetch(
+    `${BASE}/dashboard/devices/${encodeURIComponent(rowKey)}/review`,
+    {
+      method: 'POST',
+      headers: headers(opts?.username, opts?.superUser),
+      body: JSON.stringify({ status }),
+    }
+  );
+  await parseRes(res);
 }
