@@ -48,10 +48,12 @@ import { useAuth } from '../AuthContext';
 import {
   userMayAccessDispositivo,
   displayNameForDevice,
+  postAuditEvent,
 } from '../modules/usuario';
+import { AUDIT_ACTIONS } from '../modules/usuario/auditActions';
 import {
   ensureAlarmCatalog,
-  resolveAlarmTitle,
+  resolveAlarmDisplayLabel,
   extractActiveAlarmCodes,
 } from '../modules/alarma';
 import { cn } from '../components/ui/utils';
@@ -166,7 +168,9 @@ function mapDeviceToDisplay(
   const alarmActive = rawAlarmSlots.length > 0;
   const alarmCode = alarmActive ? rawAlarmSlots[0].code : null;
   const alarmTitle =
-    alarmCode != null ? resolveAlarmTitle(null, alarmCode) : null;
+    alarmCode != null
+      ? resolveAlarmDisplayLabel(null, alarmCode, { technical: false })
+      : null;
   const alarmCount = rawAlarmSlots.length;
   const lat = d.ultimo_dato?.latitud ?? null;
   const lng = d.ultimo_dato?.longitud ?? null;
@@ -257,6 +261,21 @@ export default function Listado() {
     setStatusFilter(parseFleetStatusParam(searchParams.get('status')));
     setRangoFilter(parseFleetRangoParam(searchParams.get('rango')));
   }, [searchParams]);
+
+  useEffect(() => {
+    if (!user?.username) return;
+    void postAuditEvent(user.username, {
+      action: AUDIT_ACTIONS.DEVICE_VIEW_LIST,
+      module: 'listado',
+      summary: 'Consultó listado de dispositivos',
+      detail: {
+        status: statusFilter,
+        rango: rangoFilter,
+      },
+    });
+    // una vez por visita a la pantalla
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.username]);
 
   const load = useCallback(
     async (force = false) => {
@@ -794,6 +813,18 @@ export default function Listado() {
                         onClick={(e) => {
                           e.stopPropagation();
                           exportEquipoUltimoEstadoJson(device.raw, device.nombreAsignado);
+                          if (user?.username) {
+                            void postAuditEvent(user.username, {
+                              action: AUDIT_ACTIONS.DOWNLOAD_EQUIPO_JSON,
+                              module: 'listado',
+                              summary: `Descargó JSON del equipo ${device.imei}`,
+                              targetId: device.imei,
+                              detail: {
+                                imei: device.imei,
+                                codigo: device.codigo,
+                              },
+                            });
+                          }
                         }}
                       >
                         <Download className="h-4 w-4" />

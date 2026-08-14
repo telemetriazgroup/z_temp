@@ -90,4 +90,18 @@ export {
   diaRelativoLabel,
   tipoEventoLabel,
 } from './incidentAccess';
+export {
+  ADMIN_MAX_CORREO_GRUPOS,
+  ADMIN_MAX_CORREO_EMAILS_POR_GRUPO,
+  userCanAccessCorreoConfig,
+  userCanSeeCorreoRemitente,
+  userCanSeeCorreoCiclos,
+  filterGruposCorreoForUser,
+  countGruposOwnedByUser,
+  userMayEditGrupoCorreo,
+  maxEmailsForUser,
+  maxGruposForUser,
+  userMayAssignCorreoDevice,
+  validateGrupoCorreoLimits,
+} from './correoPermissions';
 export { ALERT_POLL_INTERVAL_MS, deviceRowKey, resolveDeviceLabels } from './alertEngine';

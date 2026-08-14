@@ -20,6 +20,7 @@ import {
   markDeviceReviewed,
 } from './deviceRegistry.js';
 import { listRecentLogins } from './userActivity.js';
+import { appendAuditEvent } from '../auditLogRepository.js';
 
 function resolveAccessUser(req) {
   const username = String(req.headers['x-ztrack-user'] ?? '').trim();
@@ -271,6 +272,19 @@ export function createDashboardRouter() {
       });
       if (!data) {
         return res.status(404).json({ ok: false, error: 'Equipo no encontrado' });
+      }
+      try {
+        appendAuditEvent({
+          actorUsername: user?.username ?? 'admin',
+          actorId: user?.id,
+          action: 'dashboard.device_review',
+          module: 'dashboard',
+          summary: `Marcó revisión ${status} en ${req.params.rowKey}`,
+          targetId: req.params.rowKey,
+          detail: { status },
+        });
+      } catch {
+        // no bloquear
       }
       res.json({ ok: true, data });
     } catch (e) {

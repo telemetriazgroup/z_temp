@@ -133,6 +133,8 @@ export interface GrupoCorreo {
   emails: string[];
   devices: GrupoCorreoDevice[];
   enabled: boolean;
+  /** Username del admin/superadmin propietario (cuotas admin). */
+  ownerUsername?: string;
   createdAt: string;
   updatedAt: string;
 }

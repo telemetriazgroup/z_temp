@@ -39,3 +39,5 @@ export {
   fetchAuditLog,
   postAuditEvent,
 } from './auditServerApi';
+export type { AuditLogQuery } from './auditServerApi';
+export { AUDIT_ACTIONS, AUDIT_MODULES } from './auditActions';

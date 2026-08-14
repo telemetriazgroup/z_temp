@@ -56,13 +56,18 @@ export async function fetchCorreoStatus(): Promise<CorreoServerStatus> {
   };
 }
 
-export async function fetchServerSmtp(): Promise<SmtpConfigServerView | null> {
-  const res = await fetch(`${BASE}/config/smtp`);
+export async function fetchServerSmtp(actingUser?: string | null): Promise<SmtpConfigServerView | null> {
+  const res = await fetch(`${BASE}/config/smtp`, {
+    headers: headers(actingUser, true),
+  });
   const body = await parseRes<{ data: SmtpConfigServerView | null }>(res);
   return body.data;
 }
 
-export async function saveServerSmtp(config: SmtpConfigSaveInput): Promise<SmtpConfigServerView> {
+export async function saveServerSmtp(
+  config: SmtpConfigSaveInput,
+  actingUser?: string | null
+): Promise<SmtpConfigServerView> {
   const payload: SmtpConfigSaveInput = {
     user: config.user.trim(),
     fromName: config.fromName.trim() || 'ZTRACK TELEMETRY',
@@ -72,23 +77,28 @@ export async function saveServerSmtp(config: SmtpConfigSaveInput): Promise<SmtpC
 
   const res = await fetch(`${BASE}/config/smtp`, {
     method: 'PUT',
-    headers: headers(),
+    headers: headers(actingUser, true),
     body: JSON.stringify(payload),
   });
   const body = await parseRes<{ data: SmtpConfigServerView }>(res);
   return body.data;
 }
 
-export async function fetchServerGrupos(): Promise<GrupoCorreo[]> {
-  const res = await fetch(`${BASE}/grupos`);
+export async function fetchServerGrupos(actingUser?: string | null): Promise<GrupoCorreo[]> {
+  const res = await fetch(`${BASE}/grupos`, {
+    headers: headers(actingUser),
+  });
   const body = await parseRes<{ data: GrupoCorreo[] }>(res);
   return body.data;
 }
 
-export async function saveServerGrupo(grupo: GrupoCorreo): Promise<GrupoCorreo> {
+export async function saveServerGrupo(
+  grupo: GrupoCorreo,
+  actingUser?: string | null
+): Promise<GrupoCorreo> {
   const res = await fetch(`${BASE}/grupos`, {
     method: 'POST',
-    headers: headers(),
+    headers: headers(actingUser),
     body: JSON.stringify(grupo),
   });
   const body = await parseRes<{ data: GrupoCorreo }>(res);
@@ -153,8 +163,14 @@ export async function replaceServerGrupos(grupos: GrupoCorreo[]): Promise<void> 
   await parseRes(res);
 }
 
-export async function deleteServerGrupo(id: string): Promise<void> {
-  const res = await fetch(`${BASE}/grupos/${id}`, { method: 'DELETE' });
+export async function deleteServerGrupo(
+  id: string,
+  actingUser?: string | null
+): Promise<void> {
+  const res = await fetch(`${BASE}/grupos/${id}`, {
+    method: 'DELETE',
+    headers: headers(actingUser),
+  });
   await parseRes(res);
 }
 
@@ -239,14 +255,24 @@ export async function runServerAlertCycle(): Promise<CorreoCicloAnalisis> {
   return parseRes(res);
 }
 
-export async function fetchServerCiclos(limit = 30): Promise<CorreoCicloAnalisis[]> {
-  const res = await fetch(`${BASE}/ciclos?limit=${limit}`);
+export async function fetchServerCiclos(
+  limit = 30,
+  actingUser?: string | null
+): Promise<CorreoCicloAnalisis[]> {
+  const res = await fetch(`${BASE}/ciclos?limit=${limit}`, {
+    headers: headers(actingUser, true),
+  });
   const body = await parseRes<{ data: CorreoCicloAnalisis[] }>(res);
   return body.data;
 }
 
-export async function fetchServerCiclo(id: string): Promise<CorreoCicloAnalisis> {
-  const res = await fetch(`${BASE}/ciclos/${id}`);
+export async function fetchServerCiclo(
+  id: string,
+  actingUser?: string | null
+): Promise<CorreoCicloAnalisis> {
+  const res = await fetch(`${BASE}/ciclos/${id}`, {
+    headers: headers(actingUser, true),
+  });
   const body = await parseRes<{ data: CorreoCicloAnalisis }>(res);
   return body.data;
 }
@@ -281,11 +307,12 @@ export async function saveDeviceAlertConfigApi(
     useRangoPersonalizado?: boolean;
     margenInferior?: number;
     margenSuperior?: number;
-  }
+  },
+  actingUser?: string | null
 ): Promise<DeviceAlertConfig | null> {
   const res = await fetch(`${BASE}/alert-config/${encodeURIComponent(rowKey)}`, {
     method: 'PUT',
-    headers: headers(),
+    headers: headers(actingUser),
     body: JSON.stringify(config),
   });
   const body = await parseRes<{ data: DeviceAlertConfig | null }>(res);

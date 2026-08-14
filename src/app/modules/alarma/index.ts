@@ -25,8 +25,11 @@ export {
   resolveAlarmCatalogForCode,
   resolveAlarmCatalogForDevice,
   resolveAlarmTitle,
+  resolveAlarmMensajeUsuario,
+  resolveAlarmDisplayLabel,
   formatAlarmCodeLabel,
 } from './alarmResolver';
+export { normalizeAlarmCatalogEntry } from './bootstrapAlarms';
 export {
   ALARMA_SLOT_FIELD_NAMES,
   extractActiveAlarmCodes,

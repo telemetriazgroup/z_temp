@@ -5,7 +5,9 @@ import {
   ensureUserRegistry,
   getUserById,
   migrateLegacyUsersIfNeeded,
+  postAuditEvent,
 } from './modules/usuario';
+import { AUDIT_ACTIONS } from './modules/usuario/auditActions';
 import { ensureAlarmCatalog } from './modules/alarma';
 
 const SESSION_KEY = 'ztrack_user';
@@ -91,6 +93,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(() => {
+    const current = readStoredSession();
+    if (current?.username) {
+      void postAuditEvent(current.username, {
+        action: AUDIT_ACTIONS.LOGOUT,
+        module: 'auth',
+        summary: `Cerró sesión (${current.username})`,
+      });
+    }
     setUser(null);
     persistSession(null);
   }, []);

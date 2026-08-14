@@ -10,6 +10,11 @@ export interface AlarmCatalogEntry {
   descriptionEn: string;
   correctiveActionEs: string;
   correctiveActionEn: string;
+  /**
+   * Mensaje corto mostrado al usuario estándar.
+   * Admin/superadmin ven además título técnico, descripción y acción correctiva.
+   */
+  mensajeUsuario: string;
   model: string;
   archived: boolean;
 }
@@ -33,5 +38,5 @@ export interface AlarmCatalogSeedFile {
     model?: string;
     count?: number;
   };
-  alarms: Array<Omit<AlarmCatalogEntry, 'id'>>;
+  alarms: Array<Omit<AlarmCatalogEntry, 'id' | 'mensajeUsuario'> & { mensajeUsuario?: string }>;
 }

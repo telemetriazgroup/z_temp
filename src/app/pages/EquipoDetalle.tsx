@@ -13,7 +13,9 @@ import { readDeviceLocalNames } from '../lib/deviceLocalNames';
 import {
   userMayAccessDispositivo,
   displayNameForDevice,
+  postAuditEvent,
 } from '../modules/usuario';
+import { AUDIT_ACTIONS } from '../modules/usuario/auditActions';
 import {
   nivelCo2O2Valido,
   textoEstadoPowerState,
@@ -26,7 +28,7 @@ import {
 } from '../lib/telemetryTimezone';
 import {
   ensureAlarmCatalog,
-  resolveAlarmTitle,
+  resolveAlarmDisplayLabel,
   extractActiveAlarmCodes,
   syncDeviceAlarmsFromTelemetry,
 } from '../modules/alarma';
@@ -187,7 +189,7 @@ function buildDetalleItems(d: UltimoDatoDispositivo): DetalleItem[] {
             : '0';
         }
         if (slots.length === 1) {
-          return `${slots[0].code} — ${resolveAlarmTitle(null, slots[0].code)}`;
+          return `${slots[0].code} — ${resolveAlarmDisplayLabel(null, slots[0].code, { technical: false })}`;
         }
         return `${slots.length} activas (${slots.map((s) => s.code).join(', ')})`;
       })(),
@@ -330,6 +332,17 @@ export default function EquipoDetalle() {
     if (found) upsertDispositivo(found);
     return found;
   }, [refreshFleet, findDispositivo, upsertDispositivo, imei, codigoParam]);
+
+  useEffect(() => {
+    if (!user?.username || !imei) return;
+    void postAuditEvent(user.username, {
+      action: AUDIT_ACTIONS.DEVICE_VIEW_DETAIL,
+      module: 'listado',
+      summary: `Abrió detalle del equipo ${imei}`,
+      targetId: imei,
+      detail: { imei, codigo: codigoParam || undefined },
+    });
+  }, [user?.username, imei, codigoParam]);
 
   useEffect(() => {
     if (!imei) {

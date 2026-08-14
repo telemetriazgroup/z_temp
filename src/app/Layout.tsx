@@ -150,6 +150,14 @@ export default function Layout() {
     }
   }, [user, location.pathname, navigate]);
 
+  useEffect(() => {
+    if (!user) return;
+    if (userCanManageUsers(user)) return;
+    if (location.pathname === '/configuracion-correo') {
+      navigate('/', { replace: true });
+    }
+  }, [user, location.pathname, navigate]);
+
   const menuItems = useMemo(() => {
     if (menuMonitoreo) {
       return [
@@ -188,11 +196,15 @@ export default function Layout() {
         label: 'Configuración Alarmas',
         icon: BellPlus,
       },
-      {
-        path: '/configuracion-correo',
-        label: 'Correo',
-        icon: Mail,
-      },
+      ...(canManage
+        ? [
+            {
+              path: '/configuracion-correo' as const,
+              label: 'Correo',
+              icon: Mail,
+            },
+          ]
+        : []),
       ...incidentesItem,
       { path: '/ubicanos', label: 'Ubícanos', icon: MapPin },
       { path: '/ayuda', label: 'Ayuda/Soporte', icon: HelpCircle },

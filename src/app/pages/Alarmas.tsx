@@ -5,16 +5,20 @@ import type { DispositivoUltimoEstado } from '../types';
 import { useAuth } from '../AuthContext';
 import {
   userMayAccessDispositivo,
+  userMayAccessImei,
   displayNameForDevice,
+  userCanManageUsers,
 } from '../modules/usuario';
 import {
   ensureAlarmCatalog,
   getDeviceAlarmEvents,
   syncDeviceAlarmsFromTelemetry,
   updateDeviceAlarmEvent,
-  resolveAlarmTitle,
+  resolveAlarmDisplayLabel,
   extractActiveAlarmCodes,
+  getAlarmCatalogById,
 } from '../modules/alarma';
+import type { DeviceAlarmEvent } from '../modules/alarma';
 import { readDeviceLocalNames } from '../lib/deviceLocalNames';
 import { AlarmCatalogDetailPanel } from '../components/AlarmCatalogDetailPanel';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -30,8 +34,6 @@ import {
   TableRow,
 } from '../components/ui/table';
 import { Bell, CheckCircle2, AlertCircle, RefreshCw, BookOpen } from 'lucide-react';
-import type { DeviceAlarmEvent } from '../modules/alarma';
-import { getAlarmCatalogById } from '../modules/alarma';
 
 const SIN_ASIGNAR = 'SIN ASIGNAR';
 
@@ -54,6 +56,7 @@ function formatDate(dateString: string | null): string {
 
 export default function Alarmas() {
   const { user } = useAuth();
+  const showTechnical = userCanManageUsers(user);
   const localNames = useMemo(() => readDeviceLocalNames(), []);
   const [events, setEvents] = useState<DeviceAlarmEvent[]>([]);
   const [liveDevices, setLiveDevices] = useState<DispositivoUltimoEstado[]>([]);
@@ -206,7 +209,10 @@ export default function Alarmas() {
                   <div className="flex flex-wrap gap-1 justify-end">
                     {slots.map((s) => (
                       <Badge key={`${s.slot}-${s.code}`} variant="destructive">
-                        {s.slot}: {resolveAlarmTitle(null, s.code)}
+                        {showTechnical ? `${s.slot}: ` : ''}
+                        {resolveAlarmDisplayLabel(null, s.code, {
+                          technical: showTechnical,
+                        })}
                       </Badge>
                     ))}
                   </div>
@@ -226,7 +232,7 @@ export default function Alarmas() {
                 <TableHead>IMEI</TableHead>
                 <TableHead>Equipo</TableHead>
                 <TableHead>Código</TableHead>
-                <TableHead>Alarma (catálogo)</TableHead>
+                <TableHead>{showTechnical ? 'Alarma (técnico)' : 'Mensaje'}</TableHead>
                 <TableHead>Detectada</TableHead>
                 <TableHead>Cerrada</TableHead>
                 <TableHead>Atendida</TableHead>
@@ -263,7 +269,9 @@ export default function Alarmas() {
                   <TableCell>{alarm.alarmCode}</TableCell>
                   <TableCell>
                     <span className={alarm.atendida ? 'text-gray-500' : 'font-medium'}>
-                      {resolveAlarmTitle(alarm.catalogId, alarm.alarmCode)}
+                      {resolveAlarmDisplayLabel(alarm.catalogId, alarm.alarmCode, {
+                        technical: showTechnical,
+                      })}
                     </span>
                   </TableCell>
                   <TableCell className="text-sm">{formatDate(alarm.detectedAt)}</TableCell>
@@ -285,6 +293,7 @@ export default function Alarmas() {
         <AlarmCatalogDetailPanel
           catalog={selectedCatalog}
           alarmCode={selectedEvent.alarmCode}
+          showTechnical={showTechnical}
         />
       )}
     </div>

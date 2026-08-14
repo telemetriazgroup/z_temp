@@ -52,6 +52,8 @@ import {
   resolveDisplayTimeZone,
 } from '../lib/telemetryTimezone';
 import { useAuth } from '../AuthContext';
+import { postAuditEvent } from '../modules/usuario';
+import { AUDIT_ACTIONS } from '../modules/usuario/auditActions';
 import { HistorialReeferChart } from './HistorialReeferChart';
 import {
   RefreshCw,
@@ -297,10 +299,27 @@ export function HistorialOficialDetalle({
   const exportacionDeshabilitada =
     cargando || datosCompletos.length === 0 || rangoExport == null;
 
-  const ejecutarExportacion = (fn: () => void) => {
+  const ejecutarExportacion = (
+    fn: () => void,
+    meta?: { action: string; label: string }
+  ) => {
     try {
       setExportError(null);
       fn();
+      if (meta && user?.username) {
+        void postAuditEvent(user.username, {
+          action: meta.action,
+          module: 'listado',
+          summary: `${meta.label} del equipo ${imei}`,
+          targetId: imei,
+          detail: {
+            imei,
+            codigo,
+            desde: rangoExport?.desde,
+            hasta: rangoExport?.hasta,
+          },
+        });
+      }
     } catch (e) {
       setExportError(
         e instanceof Error ? e.message : 'No se pudo generar el archivo.'
@@ -369,14 +388,19 @@ export function HistorialOficialDetalle({
               disabled={exportacionDeshabilitada}
               onClick={() => {
                 if (rangoExport == null) return;
-                ejecutarExportacion(() =>
-                  exportHistorialCsv(
-                    datosCompletos,
-                    imei,
-                    codigo,
-                    rangoExport,
-                    zonaHoraria
-                  )
+                ejecutarExportacion(
+                  () =>
+                    exportHistorialCsv(
+                      datosCompletos,
+                      imei,
+                      codigo,
+                      rangoExport,
+                      zonaHoraria
+                    ),
+                  {
+                    action: AUDIT_ACTIONS.DOWNLOAD_HISTORIAL_CSV,
+                    label: 'Descargó historial CSV',
+                  }
                 );
               }}
             >
@@ -390,14 +414,19 @@ export function HistorialOficialDetalle({
               disabled={exportacionDeshabilitada}
               onClick={() => {
                 if (rangoExport == null) return;
-                ejecutarExportacion(() =>
-                  exportHistorialXlsx(
-                    datosCompletos,
-                    imei,
-                    codigo,
-                    rangoExport,
-                    zonaHoraria
-                  )
+                ejecutarExportacion(
+                  () =>
+                    exportHistorialXlsx(
+                      datosCompletos,
+                      imei,
+                      codigo,
+                      rangoExport,
+                      zonaHoraria
+                    ),
+                  {
+                    action: AUDIT_ACTIONS.DOWNLOAD_HISTORIAL_XLSX,
+                    label: 'Descargó historial Excel',
+                  }
                 );
               }}
             >
@@ -411,15 +440,20 @@ export function HistorialOficialDetalle({
               disabled={exportacionDeshabilitada}
               onClick={() => {
                 if (rangoExport == null) return;
-                ejecutarExportacion(() =>
-                  exportHistorialPdf(
-                    datosCompletos,
-                    imei,
-                    codigo,
-                    nombreContenedor,
-                    rangoExport,
-                    zonaHoraria
-                  )
+                ejecutarExportacion(
+                  () =>
+                    exportHistorialPdf(
+                      datosCompletos,
+                      imei,
+                      codigo,
+                      nombreContenedor,
+                      rangoExport,
+                      zonaHoraria
+                    ),
+                  {
+                    action: AUDIT_ACTIONS.DOWNLOAD_HISTORIAL_PDF,
+                    label: 'Descargó historial PDF',
+                  }
                 );
               }}
             >
@@ -434,14 +468,19 @@ export function HistorialOficialDetalle({
                 disabled={exportacionDeshabilitada}
                 onClick={() => {
                   if (rangoExport == null) return;
-                  ejecutarExportacion(() =>
-                    exportHistorialJson(
-                      datosCompletos,
-                      imei,
-                      codigo,
-                      rangoExport,
-                      zonaHoraria
-                    )
+                  ejecutarExportacion(
+                    () =>
+                      exportHistorialJson(
+                        datosCompletos,
+                        imei,
+                        codigo,
+                        rangoExport,
+                        zonaHoraria
+                      ),
+                    {
+                      action: AUDIT_ACTIONS.DOWNLOAD_HISTORIAL_JSON,
+                      label: 'Descargó historial JSON',
+                    }
                   );
                 }}
               >

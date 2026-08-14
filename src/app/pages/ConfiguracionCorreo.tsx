@@ -1,8 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Navigate } from 'react-router';
 import { fetchUltimoEstadoDispositivos } from '../api/termoking';
 import type { DispositivoUltimoEstado } from '../types';
 import { useAuth } from '../AuthContext';
-import { userMayAccessDispositivo, displayNameForDevice } from '../modules/usuario';
+import {
+  userMayAccessDispositivo,
+  displayNameForDevice,
+  userIsSuperAdmin,
+} from '../modules/usuario';
 import { readDeviceLocalNames } from '../lib/deviceLocalNames';
 import {
   readSmtpConfig,
@@ -19,6 +24,16 @@ import {
   type GrupoCorreoDevice,
   type CorreoTipoEvento,
   ALERT_POLL_INTERVAL_MS,
+  userCanAccessCorreoConfig,
+  userCanSeeCorreoRemitente,
+  userCanSeeCorreoCiclos,
+  countGruposOwnedByUser,
+  maxEmailsForUser,
+  maxGruposForUser,
+  validateGrupoCorreoLimits,
+  ADMIN_MAX_CORREO_GRUPOS,
+  ADMIN_MAX_CORREO_EMAILS_POR_GRUPO,
+  userMayAssignCorreoDevice,
 } from '../modules/correo';
 import {
   fetchCorreoStatus,
@@ -166,7 +181,7 @@ function formatIntervaloEvento(iv: AlertEventoIntervalo): string {
   return `${desde} → ${hasta} (${iv.durationHours} h)`;
 }
 
-function emptyGrupo(): Omit<GrupoCorreo, 'createdAt' | 'updatedAt'> {
+function emptyGrupo(ownerUsername?: string): Omit<GrupoCorreo, 'createdAt' | 'updatedAt'> {
   return {
     id: generateGrupoCorreoId(),
     nombre: '',
@@ -174,11 +189,17 @@ function emptyGrupo(): Omit<GrupoCorreo, 'createdAt' | 'updatedAt'> {
     emails: [],
     devices: [],
     enabled: true,
+    ownerUsername,
   };
 }
 
 export default function ConfiguracionCorreo() {
   const { user } = useAuth();
+  const isSuper = userIsSuperAdmin(user);
+  const canSeeRemitente = userCanSeeCorreoRemitente(user);
+  const canSeeCiclos = userCanSeeCorreoCiclos(user);
+  const maxEmails = maxEmailsForUser(user);
+  const maxGrupos = maxGruposForUser(user);
   const [smtpUser, setSmtpUser] = useState('');
   const [smtpPass, setSmtpPass] = useState('');
   const [smtpPasswordSaved, setSmtpPasswordSaved] = useState(false);
@@ -225,25 +246,43 @@ export default function ConfiguracionCorreo() {
   const [alertEventosLoading, setAlertEventosLoading] = useState(false);
 
   const localNames = useMemo(() => readDeviceLocalNames(), []);
+  const actingUser = user?.username ?? null;
 
   const loadServerConfig = useCallback(async () => {
+    if (!actingUser) return;
     try {
-      let g = await fetchServerGrupos();
+      let g = await fetchServerGrupos(actingUser);
       const localG = getGruposCorreo();
       const localS = readSmtpConfig();
-      let smtpLoaded = await fetchServerSmtp();
+      let smtpLoaded = canSeeRemitente
+        ? await fetchServerSmtp(actingUser).catch(() => null)
+        : null;
 
-      if (!smtpLoaded?.hasPassword && localS?.user && localS.appPassword) {
-        smtpLoaded = await saveServerSmtp({
-          user: localS.user,
-          fromName: localS.fromName,
-          appPassword: localS.appPassword,
-        });
+      if (
+        canSeeRemitente &&
+        !smtpLoaded?.hasPassword &&
+        localS?.user &&
+        localS.appPassword
+      ) {
+        smtpLoaded = await saveServerSmtp(
+          {
+            user: localS.user,
+            fromName: localS.fromName,
+            appPassword: localS.appPassword,
+          },
+          actingUser
+        );
         toast.message('Remitente migrado a la base interna del servidor');
-      } else if (g.length === 0 && (localG.length > 0 || localS)) {
-        await migrateLocalCorreoToServer({ smtp: localS, grupos: localG });
-        g = await fetchServerGrupos();
-        smtpLoaded = await fetchServerSmtp();
+      } else if (g.length === 0 && (localG.length > 0 || (canSeeRemitente && localS))) {
+        await migrateLocalCorreoToServer({
+          smtp: canSeeRemitente ? localS : null,
+          grupos: localG.map((x) => ({
+            ...x,
+            ownerUsername: x.ownerUsername ?? actingUser,
+          })),
+        });
+        g = await fetchServerGrupos(actingUser);
+        if (canSeeRemitente) smtpLoaded = await fetchServerSmtp(actingUser);
         toast.message('Configuración local migrada al servidor');
       }
 
@@ -256,14 +295,18 @@ export default function ConfiguracionCorreo() {
         setSmtpPass('');
       }
       setEnvioLogs(await fetchServerEnvios(80));
-      setCiclos(await fetchServerCiclos(40));
+      if (canSeeCiclos) {
+        setCiclos(await fetchServerCiclos(40, actingUser));
+      } else {
+        setCiclos([]);
+      }
       setServerStatus(await fetchCorreoStatus());
       const st = await fetchDeviceAlertState();
       setAlertState(st.entries);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Error al cargar config del servidor');
     }
-  }, []);
+  }, [actingUser, canSeeRemitente, canSeeCiclos]);
 
   useEffect(() => {
     void loadServerConfig();
@@ -297,12 +340,23 @@ export default function ConfiguracionCorreo() {
 
   const refreshLogs = async () => {
     setEnvioLogs(await fetchServerEnvios(80));
-    setCiclos(await fetchServerCiclos(40));
+    if (canSeeCiclos && actingUser) {
+      setCiclos(await fetchServerCiclos(40, actingUser));
+    }
     setServerStatus(await fetchCorreoStatus());
     const st = await fetchDeviceAlertState();
     setAlertState(st.entries);
   };
-  const refreshGrupos = async () => setGrupos(await fetchServerGrupos());
+  const refreshGrupos = async () =>
+    setGrupos(await fetchServerGrupos(actingUser));
+
+  const alertStateVisible = useMemo(() => {
+    if (isSuper) return alertState;
+    const allowedKeys = new Set(
+      grupos.flatMap((g) => (g.devices ?? []).map((d) => d.rowKey))
+    );
+    return alertState.filter((e) => allowedKeys.has(e.rowKey));
+  }, [alertState, grupos, isSuper]);
 
   const liveDeviceForRowKey = useCallback(
     (rowKey: string) => dispositivos.find((d) => deviceRowKey(d) === rowKey) ?? null,
@@ -393,7 +447,7 @@ export default function ConfiguracionCorreo() {
           : {}),
       } as const;
 
-      await saveDeviceAlertConfigApi(alertEdit.rowKey, payload);
+      await saveDeviceAlertConfigApi(alertEdit.rowKey, payload, actingUser);
 
       if (alertMode === 'custom' && alertUseManualRef && alertManualRef) {
         await updateDeviceReferencia(alertEdit.rowKey, {
@@ -482,13 +536,17 @@ export default function ConfiguracionCorreo() {
   };
 
   const handleSaveSmtp = async () => {
+    if (!canSeeRemitente) {
+      toast.error('Solo superadmin puede configurar el remitente');
+      return;
+    }
     const payload = buildSmtpSavePayload();
     if (payload == null) {
       toast.error('Indique correo Gmail. La clave es obligatoria solo la primera vez.');
       return;
     }
     try {
-      const saved = await saveServerSmtp(payload);
+      const saved = await saveServerSmtp(payload, actingUser);
       if (payload.appPassword) {
         persistSmtpConfig({
           user: saved.user,
@@ -515,7 +573,12 @@ export default function ConfiguracionCorreo() {
   };
 
   const openNewGrupo = () => {
-    setEditing(emptyGrupo());
+    const owned = countGruposOwnedByUser(user, grupos);
+    if (maxGrupos != null && owned >= maxGrupos) {
+      toast.error(`Como admin solo puede crear hasta ${maxGrupos} grupos de correo`);
+      return;
+    }
+    setEditing(emptyGrupo(actingUser ?? undefined));
     setEditingCreatedAt(undefined);
     setIsEditingExisting(false);
     setEmailsDraft('');
@@ -531,6 +594,7 @@ export default function ConfiguracionCorreo() {
       emails: [...g.emails],
       devices: g.devices.map((d) => ({ ...d, umbralesHoras: [...normalizeUmbrales(d.umbralesHoras)] })),
       enabled: g.enabled,
+      ownerUsername: g.ownerUsername ?? actingUser ?? undefined,
     });
     setEditingCreatedAt(g.createdAt);
     setIsEditingExisting(true);
@@ -550,6 +614,16 @@ export default function ConfiguracionCorreo() {
       toast.error('Indique al menos un correo destinatario');
       return;
     }
+    const limitErr = validateGrupoCorreoLimits(user, {
+      emails,
+      devices: editing.devices,
+      isNew: !isEditingExisting,
+      ownedCount: countGruposOwnedByUser(user, grupos),
+    });
+    if (limitErr) {
+      toast.error(limitErr);
+      return;
+    }
     try {
       const devices = enrichGrupoDevicesWithNames(
         editing.devices,
@@ -557,15 +631,19 @@ export default function ConfiguracionCorreo() {
         user,
         localNames
       );
-      await saveServerGrupo({
-        ...editing,
-        devices,
-        nombre: editing.nombre.trim(),
-        cliente: editing.cliente.trim() || 'Cliente',
-        emails,
-        createdAt: editingCreatedAt ?? new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      });
+      await saveServerGrupo(
+        {
+          ...editing,
+          devices,
+          nombre: editing.nombre.trim(),
+          cliente: editing.cliente.trim() || 'Cliente',
+          emails,
+          ownerUsername: editing.ownerUsername ?? actingUser ?? undefined,
+          createdAt: editingCreatedAt ?? new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        actingUser
+      );
       await syncDeviceNamesToServer(buildDeviceNamesForServer(user, dispositivos, localNames));
       await refreshGrupos();
       closeGrupoDialog();
@@ -577,7 +655,7 @@ export default function ConfiguracionCorreo() {
 
   const handleDeleteGrupo = async (id: string) => {
     try {
-      await deleteServerGrupo(id);
+      await deleteServerGrupo(id, actingUser);
       await refreshGrupos();
       toast.success('Grupo eliminado');
     } catch (e) {
@@ -613,6 +691,10 @@ export default function ConfiguracionCorreo() {
     const d = dispositivos.find((dev) => deviceRowKey(dev) === rowKey);
     if (d == null) {
       toast.error('Equipo no encontrado. Pulse «Equipos» para actualizar el listado.');
+      return;
+    }
+    if (!userMayAssignCorreoDevice(user, { imei: d.imei, codigo: d.codigo ?? undefined })) {
+      toast.error('Solo puede asignar equipos disponibles en su cuenta');
       return;
     }
     const nombre = nombrePlataformaForDevice(user, d, localNames);
@@ -725,6 +807,10 @@ export default function ConfiguracionCorreo() {
     }
   };
 
+  if (!userCanAccessCorreoConfig(user)) {
+    return <Navigate to="/" replace />;
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -734,8 +820,10 @@ export default function ConfiguracionCorreo() {
             Correo y alertas
           </h1>
           <p className="text-muted-foreground mt-1">
-            Configuración en servidor. El envío de alertas corre automáticamente cada{' '}
-            {ALERT_POLL_INTERVAL_MS / 60000} minutos sin necesidad de sesión activa.
+            {isSuper
+              ? 'Superadmin: remitente, grupos ilimitados y ciclos de análisis.'
+              : `Admin: hasta ${ADMIN_MAX_CORREO_GRUPOS} grupos y ${ADMIN_MAX_CORREO_EMAILS_POR_GRUPO} correos por grupo; solo equipos disponibles.`}{' '}
+            El envío corre automáticamente cada {ALERT_POLL_INTERVAL_MS / 60000} minutos.
           </p>
           {serverStatus?.lastRun != null && (
             <p className="text-xs text-muted-foreground mt-1">
@@ -774,13 +862,14 @@ export default function ConfiguracionCorreo() {
 
       <Tabs defaultValue="grupos">
         <TabsList>
-          <TabsTrigger value="remitente">Remitente</TabsTrigger>
+          {canSeeRemitente && <TabsTrigger value="remitente">Remitente</TabsTrigger>}
           <TabsTrigger value="grupos">Grupos de correo</TabsTrigger>
           <TabsTrigger value="log">Registro de envíos</TabsTrigger>
           <TabsTrigger value="alertas">Alertas por equipo</TabsTrigger>
-          <TabsTrigger value="ciclos">Ciclos de análisis</TabsTrigger>
+          {canSeeCiclos && <TabsTrigger value="ciclos">Ciclos de análisis</TabsTrigger>}
         </TabsList>
 
+        {canSeeRemitente && (
         <TabsContent value="remitente" className="mt-4">
           <Card>
             <CardHeader>
@@ -844,14 +933,21 @@ export default function ConfiguracionCorreo() {
             </CardContent>
           </Card>
         </TabsContent>
+        )}
 
         <TabsContent value="grupos" className="mt-4 space-y-4">
-          <div className="flex justify-between items-center">
+          <div className="flex justify-between items-center gap-3">
             <p className="text-sm text-muted-foreground">
-              Un grupo agrupa destinatarios y uno o más dispositivos. Si un equipo está fuera de
-              rango, el servidor consulta las últimas 12 h para fijar la referencia. Solo se envía
-              un correo por umbral alcanzado (a 12 h solo el de 12 h; el siguiente será a 13 h).
+              {isSuper
+                ? 'Grupos ilimitados y destinatarios ilimitados. Asigne cualquier equipo.'
+                : `Máximo ${ADMIN_MAX_CORREO_GRUPOS} grupos y ${ADMIN_MAX_CORREO_EMAILS_POR_GRUPO} correos por grupo. Solo equipos disponibles en su cuenta.`}{' '}
               Complete «Descripción / ID Reefer» en cada equipo para el asunto del correo.
+              {!isSuper && (
+                <>
+                  {' '}
+                  ({grupos.length}/{ADMIN_MAX_CORREO_GRUPOS} grupos)
+                </>
+              )}
             </p>
             <Button onClick={openNewGrupo}>
               <Plus className="h-4 w-4 mr-2" />
@@ -1068,9 +1164,10 @@ export default function ConfiguracionCorreo() {
                 Alertas por equipo
               </CardTitle>
               <CardDescription>
-                Modo estándar: umbrales del grupo y referencia automática. Puede activar alertas a
-                30 min / 1 h y personalizar el rango EN RANGO por equipo. Modo personalizado:
-                override de umbrales y/o referencia manual. Un solo correo por umbral.
+                {isSuper
+                  ? 'Configuración de alertas de todos los equipos en grupos de correo.'
+                  : 'Solo equipos de sus grupos / asignados a su cuenta.'}{' '}
+                Modo estándar: umbrales del grupo. Puede activar alertas a 30 min / 1 h.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -1087,7 +1184,7 @@ export default function ConfiguracionCorreo() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {alertState.map((entry) => {
+                  {alertStateVisible.map((entry) => {
                     const nombre =
                       entry.descripcionEquipo ||
                       entry.nombrePlataforma ||
@@ -1158,10 +1255,10 @@ export default function ConfiguracionCorreo() {
                       </TableRow>
                     );
                   })}
-                  {alertState.length === 0 && (
+                  {alertStateVisible.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={7} className="text-center text-muted-foreground">
-                        No hay equipos en grupos de correo.
+                        No hay equipos en grupos de correo visibles para su cuenta.
                       </TableCell>
                     </TableRow>
                   )}
@@ -1171,6 +1268,7 @@ export default function ConfiguracionCorreo() {
           </Card>
         </TabsContent>
 
+        {canSeeCiclos && (
         <TabsContent value="ciclos" className="mt-4">
           <Card>
             <CardHeader>
@@ -1250,8 +1348,10 @@ export default function ConfiguracionCorreo() {
             </CardContent>
           </Card>
         </TabsContent>
+        )}
       </Tabs>
 
+      {canSeeCiclos && (
       <Dialog open={cicloDetalle != null} onOpenChange={(open) => !open && setCicloDetalle(null)}>
         <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -1358,6 +1458,7 @@ export default function ConfiguracionCorreo() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      )}
 
       <Dialog open={alertEdit != null} onOpenChange={(open) => !open && closeAlertEdit()}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
@@ -1731,11 +1832,23 @@ export default function ConfiguracionCorreo() {
                 </div>
               </div>
               <div className="space-y-2">
-                <Label>Correos destinatarios</Label>
+                <Label>
+                  Correos destinatarios
+                  {maxEmails != null && (
+                    <span className="text-muted-foreground font-normal">
+                      {' '}
+                      (máx. {maxEmails})
+                    </span>
+                  )}
+                </Label>
                 <Input
                   value={emailsDraft}
                   onChange={(e) => setEmailsDraft(e.target.value)}
-                  placeholder="correo1@empresa.com, correo2@…"
+                  placeholder={
+                    maxEmails != null
+                      ? `hasta ${maxEmails} correos separados por coma`
+                      : 'correo1@empresa.com, correo2@…'
+                  }
                 />
               </div>
               <div className="flex items-center gap-2">

@@ -23,6 +23,12 @@ import {
   getDeviceEventosView,
 } from './lib/alertEngine.js';
 import { getSmtpConfig, saveSmtpConfig, smtpPublicView } from './lib/smtpRepository.js';
+import {
+  filterGruposForActor,
+  validateAndNormalizeGrupoSave,
+  grupoOwnedBy,
+  actorMayAccessImei,
+} from './lib/correoPermissions.js';
 import { mergeDeviceNames, getDeviceNameByImei, getDeviceNamesView, setDeviceName, getDeviceNameHistory } from './lib/deviceNamesRepository.js';
 import {
   getDeviceAlertConfigMap,
@@ -49,6 +55,7 @@ import {
 import {
   appendAuditEvent,
   listAuditEvents,
+  listAuditActionCatalog,
 } from './lib/auditLogRepository.js';
 import {
   listEmpresas,
@@ -138,7 +145,22 @@ function auditSafeDetail(obj) {
   delete clone.password;
   delete clone.currentPassword;
   delete clone.newPassword;
+  delete clone.appPassword;
   return clone;
+}
+
+function auditActorEvent(req, event) {
+  try {
+    const actor = resolveActor(req);
+    appendAuditEvent({
+      actorUsername: actor?.username ?? getUser(req),
+      actorId: actor?.id,
+      ...event,
+      detail: auditSafeDetail(event.detail),
+    });
+  } catch {
+    // no bloquear la operación principal
+  }
 }
 
 function requireExternalApiKey(req, res) {
@@ -214,21 +236,37 @@ app.get('/reefer/api/correo/external/monitor', async (req, res) => {
   }
 });
 
-app.get('/reefer/api/correo/config/smtp', (_req, res) => {
+app.get('/reefer/api/correo/config/smtp', (req, res) => {
+  if (!requireSuperUser(req, res)) return;
   res.json({ ok: true, data: smtpPublicView(getSmtpConfig()) });
 });
 
 app.put('/reefer/api/correo/config/smtp', (req, res) => {
   try {
+    if (!requireSuperUser(req, res)) return;
     const saved = saveSmtpConfig(req.body ?? {});
+    auditActorEvent(req, {
+      action: 'correo.smtp_update',
+      module: 'correo',
+      summary: `Actualizó configuración SMTP (${saved.user ?? 'sin usuario'})`,
+      detail: { user: saved.user, fromName: saved.fromName },
+    });
     res.json({ ok: true, data: smtpPublicView(saved) });
   } catch (e) {
     res.status(400).json({ ok: false, error: e.message });
   }
 });
 
-app.get('/reefer/api/correo/grupos', (_req, res) => {
-  res.json({ ok: true, data: getGrupos() });
+app.get('/reefer/api/correo/grupos', (req, res) => {
+  const actor = resolveActor(req);
+  if (!actor || !canManageUsers(actor)) {
+    // Ciclo interno / status puede leer todos sin actor; UI manda X-ZTrack-User
+    if (!actor) {
+      return res.json({ ok: true, data: getGrupos() });
+    }
+    return res.status(403).json({ ok: false, error: 'Se requiere admin o superadmin' });
+  }
+  res.json({ ok: true, data: filterGruposForActor(actor, getGrupos()) });
 });
 
 app.get('/reefer/api/correo/users', (req, res) => {
@@ -251,6 +289,16 @@ app.post('/reefer/api/correo/users/login', async (req, res) => {
     }
     const user = authenticate(username, password);
     if (user == null) {
+      try {
+        appendAuditEvent({
+          actorUsername: username,
+          action: 'login.failed',
+          module: 'auth',
+          summary: `Intento de login fallido: ${username}`,
+        });
+      } catch {
+        // ignore
+      }
       return res.status(401).json({ ok: false, error: 'Usuario o contraseña incorrectos' });
     }
     try {
@@ -428,8 +476,20 @@ app.get('/reefer/api/correo/audit', (req, res) => {
       actorUsername: req.query.actor?.toString(),
       action: req.query.action?.toString(),
       module: req.query.module?.toString(),
+      from: req.query.from?.toString(),
+      to: req.query.to?.toString(),
+      q: req.query.q?.toString(),
     });
     res.json({ ok: true, ...result });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/reefer/api/correo/audit/catalog', (req, res) => {
+  try {
+    if (!requireAuditAccess(req, res)) return;
+    res.json({ ok: true, data: listAuditActionCatalog() });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -490,6 +550,13 @@ app.post('/reefer/api/correo/empresas', (req, res) => {
   try {
     if (!requireSuperUser(req, res)) return;
     const created = addEmpresa(req.body ?? {});
+    auditActorEvent(req, {
+      action: 'empresa.create',
+      module: 'empresas',
+      summary: `Creó empresa ${created.nombre ?? created.id}`,
+      targetId: created.id,
+      detail: { nombre: created.nombre, ruc: created.ruc },
+    });
     res.json({ ok: true, data: created });
   } catch (e) {
     res.status(400).json({ ok: false, error: e.message });
@@ -500,6 +567,13 @@ app.put('/reefer/api/correo/empresas/:id', (req, res) => {
   try {
     if (!requireSuperUser(req, res)) return;
     const updated = updateEmpresa(req.params.id, req.body ?? {});
+    auditActorEvent(req, {
+      action: 'empresa.update',
+      module: 'empresas',
+      summary: `Modificó empresa ${updated.nombre ?? updated.id}`,
+      targetId: updated.id,
+      detail: auditSafeDetail(req.body),
+    });
     res.json({ ok: true, data: updated });
   } catch (e) {
     res.status(400).json({ ok: false, error: e.message });
@@ -509,7 +583,14 @@ app.put('/reefer/api/correo/empresas/:id', (req, res) => {
 app.delete('/reefer/api/correo/empresas/:id', (req, res) => {
   try {
     if (!requireSuperUser(req, res)) return;
+    const before = getEmpresaById(req.params.id);
     deleteEmpresa(req.params.id);
+    auditActorEvent(req, {
+      action: 'empresa.delete',
+      module: 'empresas',
+      summary: `Eliminó empresa ${before?.nombre ?? req.params.id}`,
+      targetId: req.params.id,
+    });
     res.json({ ok: true });
   } catch (e) {
     res.status(400).json({ ok: false, error: e.message });
@@ -524,6 +605,14 @@ app.post('/reefer/api/correo/empresas/:id/assign', (req, res) => {
       return res.status(400).json({ ok: false, error: 'userId obligatorio' });
     }
     const updated = assignUserEmpresa(userId, req.params.id);
+    auditActorEvent(req, {
+      action: 'empresa.assign',
+      module: 'empresas',
+      summary: `Asignó empresa ${req.params.id} a usuario ${updated.username ?? userId}`,
+      targetUsername: updated.username,
+      targetId: userId,
+      detail: { empresaId: req.params.id },
+    });
     res.json({ ok: true, data: updated });
   } catch (e) {
     res.status(400).json({ ok: false, error: e.message });
@@ -538,6 +627,13 @@ app.post('/reefer/api/correo/empresas/unassign', (req, res) => {
       return res.status(400).json({ ok: false, error: 'userId obligatorio' });
     }
     const updated = assignUserEmpresa(userId, null);
+    auditActorEvent(req, {
+      action: 'empresa.unassign',
+      module: 'empresas',
+      summary: `Desasignó empresa de usuario ${updated.username ?? userId}`,
+      targetUsername: updated.username,
+      targetId: userId,
+    });
     res.json({ ok: true, data: updated });
   } catch (e) {
     res.status(400).json({ ok: false, error: e.message });
@@ -579,6 +675,13 @@ app.post('/reefer/api/correo/device-names', (req, res) => {
       name: name != null ? String(name) : '',
       usuario: getUser(req),
     });
+    auditActorEvent(req, {
+      action: 'device.name_update',
+      module: 'listado',
+      summary: `Asignó nombre "${name ?? ''}" a ${imei}`,
+      targetId: String(imei),
+      detail: { rowKey, imei, codigo, name },
+    });
     res.json({ ok: true, data: result });
   } catch (e) {
     res.status(400).json({ ok: false, error: e.message });
@@ -586,20 +689,30 @@ app.post('/reefer/api/correo/device-names', (req, res) => {
 });
 
 app.put('/reefer/api/correo/grupos', (req, res) => {
+  if (!requireSuperUser(req, res)) return;
   const grupos = req.body?.grupos;
   if (!Array.isArray(grupos)) {
     return res.status(400).json({ ok: false, error: 'grupos debe ser un array' });
   }
   writeJson('grupos.json', grupos);
+  auditActorEvent(req, {
+    action: 'correo.grupo_change',
+    module: 'correo',
+    summary: `Reemplazó lista de grupos (${grupos.length})`,
+    detail: { count: grupos.length },
+  });
   res.json({ ok: true, count: grupos.length });
 });
 
 app.post('/reefer/api/correo/grupos', (req, res) => {
-  const grupo = req.body;
-  if (!grupo?.id || !grupo?.nombre) {
-    return res.status(400).json({ ok: false, error: 'Grupo inválido' });
-  }
+  const actor = requireUserManager(req, res);
+  if (!actor) return;
   const all = getGrupos();
+  const checked = validateAndNormalizeGrupoSave(actor, req.body, all);
+  if (!checked.ok) {
+    return res.status(400).json({ ok: false, error: checked.error });
+  }
+  const grupo = checked.grupo;
   const idx = all.findIndex((g) => g.id === grupo.id);
   const now = new Date().toISOString();
   const entry = {
@@ -610,12 +723,39 @@ app.post('/reefer/api/correo/grupos', (req, res) => {
   if (idx === -1) all.push(entry);
   else all[idx] = entry;
   writeJson('grupos.json', all);
+  auditActorEvent(req, {
+    action: 'correo.grupo_change',
+    module: 'correo',
+    summary: `${idx === -1 ? 'Creó' : 'Actualizó'} grupo ${entry.nombre}`,
+    targetId: entry.id,
+    detail: {
+      id: entry.id,
+      nombre: entry.nombre,
+      emails: entry.emails,
+      ownerUsername: entry.ownerUsername,
+    },
+  });
   res.json({ ok: true, data: entry });
 });
 
 app.delete('/reefer/api/correo/grupos/:id', (req, res) => {
+  const actor = requireUserManager(req, res);
+  if (!actor) return;
+  const before = getGrupos().find((g) => g.id === req.params.id);
+  if (!before) {
+    return res.status(404).json({ ok: false, error: 'Grupo no encontrado' });
+  }
+  if (!isSuperAdminUser(actor) && !grupoOwnedBy(before, actor.username)) {
+    return res.status(403).json({ ok: false, error: 'No puede eliminar un grupo de otro usuario' });
+  }
   const all = getGrupos().filter((g) => g.id !== req.params.id);
   writeJson('grupos.json', all);
+  auditActorEvent(req, {
+    action: 'correo.grupo_change',
+    module: 'correo',
+    summary: `Eliminó grupo ${before?.nombre ?? req.params.id}`,
+    targetId: req.params.id,
+  });
   res.json({ ok: true });
 });
 
@@ -655,6 +795,12 @@ app.post('/reefer/api/correo/incidentes/archivar-todos', (req, res) => {
   }
   try {
     const result = archiveAllIncidentes(getUser(req));
+    auditActorEvent(req, {
+      action: 'incidente.archive_all',
+      module: 'correo',
+      summary: `Archivó todos los incidentes (${result.count ?? 0})`,
+      detail: result,
+    });
     res.json({ ok: true, ...result });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -667,6 +813,13 @@ app.delete('/reefer/api/correo/incidentes/:id', (req, res) => {
   }
   try {
     const archived = archiveIncidente(req.params.id, getUser(req));
+    auditActorEvent(req, {
+      action: 'incidente.archive',
+      module: 'correo',
+      summary: `Archivó incidente ${req.params.id}`,
+      targetId: req.params.id,
+      detail: { imei: archived?.imei, rowKey: archived?.rowKey },
+    });
     res.json({ ok: true, data: archived });
   } catch (e) {
     res.status(e.message === 'Incidente no encontrado' ? 404 : 500).json({
@@ -713,15 +866,24 @@ app.patch('/reefer/api/correo/incidentes/:id', (req, res) => {
 
   all[idx] = inc;
   writeJson('incidentes.json', all);
+  auditActorEvent(req, {
+    action: action === 'atender' ? 'incidente.atender' : 'incidente.comentar',
+    module: 'correo',
+    summary: `${action === 'atender' ? 'Atendió' : 'Comentó'} incidente ${inc.id}`,
+    targetId: inc.id,
+    detail: { imei: inc.imei, action },
+  });
   res.json({ ok: true, data: inc });
 });
 
 app.get('/reefer/api/correo/ciclos', (req, res) => {
+  if (!requireSuperUser(req, res)) return;
   const limit = Math.min(Number(req.query.limit ?? 30), 100);
   res.json({ ok: true, data: listCiclos(limit) });
 });
 
 app.get('/reefer/api/correo/ciclos/:id', (req, res) => {
+  if (!requireSuperUser(req, res)) return;
   const ciclo = getCicloById(req.params.id);
   if (!ciclo) return res.status(404).json({ ok: false, error: 'Ciclo no encontrado' });
   res.json({ ok: true, data: ciclo });
@@ -746,6 +908,8 @@ app.get('/reefer/api/correo/alert-config/:rowKey/eventos', async (req, res) => {
 });
 
 app.put('/reefer/api/correo/alert-config/:rowKey', (req, res) => {
+  const actor = requireUserManager(req, res);
+  if (!actor) return;
   const rowKey = decodeURIComponent(req.params.rowKey);
   const {
     mode,
@@ -759,6 +923,22 @@ app.put('/reefer/api/correo/alert-config/:rowKey', (req, res) => {
     margenSuperior,
   } = req.body ?? {};
   try {
+    // Admin: solo equipos de sus grupos o de su deviceAccess
+    if (!isSuperAdminUser(actor)) {
+      const inOwned = getGrupos().some(
+        (g) =>
+          grupoOwnedBy(g, actor.username) &&
+          (g.devices ?? []).some((d) => d.rowKey === rowKey)
+      );
+      const imei = (getGrupos().flatMap((g) => g.devices ?? []).find((d) => d.rowKey === rowKey)
+        ?.imei) ?? rowKey.split('-').slice(-1)[0];
+      if (!inOwned && !actorMayAccessImei(actor, imei)) {
+        return res.status(403).json({
+          ok: false,
+          error: 'Solo puede configurar alertas de equipos asignados',
+        });
+      }
+    }
     const entry = saveDeviceAlertConfig(rowKey, {
       mode: mode === 'custom' ? 'custom' : 'standard',
       umbralesHoras,
@@ -769,6 +949,17 @@ app.put('/reefer/api/correo/alert-config/:rowKey', (req, res) => {
       useRangoPersonalizado: Boolean(useRangoPersonalizado),
       margenInferior: margenInferior != null ? Number(margenInferior) : undefined,
       margenSuperior: margenSuperior != null ? Number(margenSuperior) : undefined,
+    });
+    auditActorEvent(req, {
+      action: 'alarma.config_update',
+      module: 'alarma',
+      summary: `Actualizó alarmas de ${rowKey}`,
+      targetId: rowKey,
+      detail: {
+        mode: entry.mode,
+        alerta1Hora: entry.alerta1Hora,
+        alerta30Minutos: entry.alerta30Minutos,
+      },
     });
     res.json({ ok: true, data: entry });
   } catch (e) {
@@ -783,10 +974,24 @@ app.post('/reefer/api/correo/alert-config/:rowKey/referencia', async (req, res) 
     if (action === 'manual') {
       if (!since) return res.status(400).json({ ok: false, error: 'since obligatorio para referencia manual' });
       const data = applyManualDeviceReference(rowKey, since, Boolean(resetSentUmbrales));
+      auditActorEvent(req, {
+        action: 'alarma.config_update',
+        module: 'alarma',
+        summary: `Referencia manual en ${rowKey}`,
+        targetId: rowKey,
+        detail: { action: 'manual', since },
+      });
       return res.json({ ok: true, data });
     }
     if (action === 'historial') {
       const data = await refreshDeviceReferenceFromHistorial(rowKey);
+      auditActorEvent(req, {
+        action: 'alarma.config_update',
+        module: 'alarma',
+        summary: `Refrescó referencia historial de ${rowKey}`,
+        targetId: rowKey,
+        detail: { action: 'historial' },
+      });
       return res.json({ ok: true, data });
     }
     res.status(400).json({ ok: false, error: 'action debe ser historial o manual' });
@@ -820,6 +1025,12 @@ app.post('/reefer/api/correo/historial/limpiar', (req, res) => {
       writeJson('state.json', { episodes: {}, lastRecovered: {} });
       cleared.push('episodios');
     }
+    auditActorEvent(req, {
+      action: 'correo.historial_limpiar',
+      module: 'correo',
+      summary: `Limpió historial correo: ${cleared.join(', ')}`,
+      detail: { cleared },
+    });
     res.json({ ok: true, cleared });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });

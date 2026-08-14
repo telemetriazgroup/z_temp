@@ -2,7 +2,7 @@ import type { UltimoDatoDispositivo } from '../../types';
 import type { AlarmCatalogEntry } from './types';
 import { ensureAlarmCatalog, getAlarmCatalogByCode } from './alarmCatalogRepository';
 import { isActiveAlarmCode } from './deviceAlarmRepository';
-import { resolveAlarmTitle } from './alarmResolver';
+import { resolveAlarmTitle, resolveAlarmMensajeUsuario } from './alarmResolver';
 
 /** Campos de alarma conocidos en telemetría túnel / Termo King. */
 export const ALARMA_SLOT_FIELD_NAMES = [
@@ -20,6 +20,8 @@ export interface AlarmaSlotLectura {
 export interface AlarmaSlotResuelta extends AlarmaSlotLectura {
   catalog: AlarmCatalogEntry | null;
   titleEs: string;
+  /** Mensaje corto para usuario estándar. */
+  mensajeUsuario: string;
   enCatalogo: boolean;
 }
 
@@ -80,6 +82,7 @@ export function resolveAlarmSlotsFromUltimoDato(
       code,
       catalog,
       titleEs: resolveAlarmTitle(catalog?.id ?? null, code, model),
+      mensajeUsuario: resolveAlarmMensajeUsuario(catalog?.id ?? null, code, model),
       enCatalogo: catalog != null,
     };
   });

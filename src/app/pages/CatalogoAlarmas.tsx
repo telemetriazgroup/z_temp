@@ -8,6 +8,7 @@ import {
   deleteAlarmCatalogEntry,
   ensureAlarmCatalog,
 } from '../modules/alarma';
+import { userCanManageUsers } from '../modules/usuario';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -37,6 +38,7 @@ import { BookOpen, Plus, Pencil, Trash2, Search } from 'lucide-react';
 const emptyForm = {
   code: '',
   model: 'MP4000',
+  mensajeUsuario: '',
   titleEs: '',
   titleEn: '',
   descriptionEs: '',
@@ -50,6 +52,7 @@ function entryToForm(e: AlarmCatalogEntry) {
   return {
     code: String(e.code),
     model: e.model,
+    mensajeUsuario: e.mensajeUsuario ?? e.titleEs,
     titleEs: e.titleEs,
     titleEn: e.titleEn,
     descriptionEs: e.descriptionEs,
@@ -71,6 +74,8 @@ export default function CatalogoAlarmas() {
   const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState<string | null>(null);
 
+  const canManage = userCanManageUsers(user);
+
   const reload = useCallback(() => {
     ensureAlarmCatalog();
     setEntries(
@@ -88,13 +93,12 @@ export default function CatalogoAlarmas() {
     return entries.filter(
       (e) =>
         String(e.code).includes(q) ||
+        (e.mensajeUsuario ?? '').toLowerCase().includes(q) ||
         e.titleEs.toLowerCase().includes(q) ||
         e.titleEn.toLowerCase().includes(q) ||
         e.model.toLowerCase().includes(q)
     );
   }, [entries, search]);
-
-  const canManage = user?.superUser === true;
 
   const openCreate = () => {
     setEditingId(null);
@@ -117,8 +121,12 @@ export default function CatalogoAlarmas() {
       setError('El código debe ser un entero ≥ 0');
       return;
     }
+    if (!form.mensajeUsuario.trim()) {
+      setError('El mensaje al usuario es obligatorio');
+      return;
+    }
     if (!form.titleEs.trim()) {
-      setError('El título en español es obligatorio');
+      setError('El título técnico (ES) es obligatorio');
       return;
     }
     if (!form.model.trim()) {
@@ -129,6 +137,7 @@ export default function CatalogoAlarmas() {
     const payload = {
       code,
       model: form.model.trim(),
+      mensajeUsuario: form.mensajeUsuario.trim(),
       titleEs: form.titleEs.trim(),
       titleEn: form.titleEn.trim(),
       descriptionEs: form.descriptionEs.trim(),
@@ -152,7 +161,8 @@ export default function CatalogoAlarmas() {
   };
 
   const handleDelete = (e: AlarmCatalogEntry) => {
-    if (!window.confirm(`¿Eliminar alarma «${e.titleEs}» (código ${e.code})?`)) return;
+    const label = e.mensajeUsuario || e.titleEs;
+    if (!window.confirm(`¿Eliminar alarma «${label}» (código ${e.code})?`)) return;
     deleteAlarmCatalogEntry(e.id);
     reload();
     if (detailEntry?.id === e.id) setDetailEntry(null);
@@ -168,8 +178,8 @@ export default function CatalogoAlarmas() {
           </h1>
           <p className="text-gray-500 mt-1">
             {canManage
-              ? 'Gestión del catálogo MP4000 (53 alarmas semilla).'
-              : 'Consulta del catálogo MP4000: descripción y acción correctiva por código.'}{' '}
+              ? 'Gestión del catálogo MP4000. Edite el mensaje al usuario (texto simple) y la ficha técnica completa.'
+              : 'Consulta de alarmas: mensaje resumido por código. El detalle técnico es solo para administradores.'}{' '}
             Se relaciona con{' '}
             <code className="text-xs bg-muted px-1 rounded">numero_alarma</code> de cada
             dispositivo.
@@ -194,18 +204,24 @@ export default function CatalogoAlarmas() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 className="pl-9"
-                placeholder="Buscar por código, título o modelo…"
+                placeholder={
+                  canManage
+                    ? 'Buscar por código, mensaje, título o modelo…'
+                    : 'Buscar por código o mensaje…'
+                }
                 value={search}
                 onChange={(ev) => setSearch(ev.target.value)}
               />
             </div>
-            <label className="flex items-center gap-2 text-sm cursor-pointer">
-              <Checkbox
-                checked={showArchived}
-                onCheckedChange={(c) => setShowArchived(c === true)}
-              />
-              Incluir archivadas
-            </label>
+            {canManage && (
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <Checkbox
+                  checked={showArchived}
+                  onCheckedChange={(c) => setShowArchived(c === true)}
+                />
+                Incluir archivadas
+              </label>
+            )}
           </div>
         </CardHeader>
         <CardContent>
@@ -213,9 +229,10 @@ export default function CatalogoAlarmas() {
             <TableHeader>
               <TableRow>
                 <TableHead>Código</TableHead>
-                <TableHead>Modelo</TableHead>
-                <TableHead>Título (ES)</TableHead>
-                <TableHead>Estado</TableHead>
+                {canManage && <TableHead>Modelo</TableHead>}
+                <TableHead>Mensaje al usuario</TableHead>
+                {canManage && <TableHead>Título técnico</TableHead>}
+                {canManage && <TableHead>Estado</TableHead>}
                 {canManage && <TableHead className="text-right">Acciones</TableHead>}
               </TableRow>
             </TableHeader>
@@ -227,15 +244,24 @@ export default function CatalogoAlarmas() {
                   onClick={() => setDetailEntry(e)}
                 >
                   <TableCell className="font-mono">{e.code}</TableCell>
-                  <TableCell>{e.model}</TableCell>
-                  <TableCell className="max-w-md truncate">{e.titleEs}</TableCell>
-                  <TableCell>
-                    {e.archived ? (
-                      <Badge variant="secondary">Archivada</Badge>
-                    ) : (
-                      <Badge>Activa</Badge>
-                    )}
+                  {canManage && <TableCell>{e.model}</TableCell>}
+                  <TableCell className="max-w-md truncate font-medium">
+                    {e.mensajeUsuario || e.titleEs}
                   </TableCell>
+                  {canManage && (
+                    <TableCell className="max-w-xs truncate text-muted-foreground text-sm">
+                      {e.titleEs}
+                    </TableCell>
+                  )}
+                  {canManage && (
+                    <TableCell>
+                      {e.archived ? (
+                        <Badge variant="secondary">Archivada</Badge>
+                      ) : (
+                        <Badge>Activa</Badge>
+                      )}
+                    </TableCell>
+                  )}
                   {canManage && (
                     <TableCell className="text-right space-x-1">
                       <Button
@@ -268,103 +294,128 @@ export default function CatalogoAlarmas() {
       </Card>
 
       {detailEntry && (
-        <AlarmCatalogDetailPanel catalog={detailEntry} />
+        <AlarmCatalogDetailPanel
+          catalog={detailEntry}
+          showTechnical={canManage}
+        />
       )}
 
       {canManage && (
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{editingId ? 'Editar alarma' : 'Nueva alarma'}</DialogTitle>
-            <DialogDescription>
-              Defina el código que envía el controlador y la documentación asociada.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4 py-2">
-            <div className="grid grid-cols-2 gap-4">
+        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>{editingId ? 'Editar alarma' : 'Nueva alarma'}</DialogTitle>
+              <DialogDescription>
+                El mensaje al usuario es lo que ve el operador. Manténgalo corto y
+                claro. El resto es ficha técnica para admin/superadmin.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-2">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="grid gap-2">
+                  <Label>Código</Label>
+                  <Input
+                    type="number"
+                    value={form.code}
+                    onChange={(ev) => setForm((f) => ({ ...f, code: ev.target.value }))}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label>Modelo</Label>
+                  <Input
+                    value={form.model}
+                    onChange={(ev) => setForm((f) => ({ ...f, model: ev.target.value }))}
+                  />
+                </div>
+              </div>
+              <div className="grid gap-2 rounded-md border border-amber-200 bg-amber-50/60 p-3">
+                <Label className="text-amber-950">Mensaje al usuario (obligatorio)</Label>
+                <Textarea
+                  rows={2}
+                  placeholder="Ej. Sensor de suministro desconectado. Revisar cableado."
+                  value={form.mensajeUsuario}
+                  onChange={(ev) =>
+                    setForm((f) => ({ ...f, mensajeUsuario: ev.target.value }))
+                  }
+                />
+                <p className="text-xs text-amber-900/80">
+                  Texto simple y resumido: es lo único que ve el usuario estándar en
+                  listado, detalle y catálogo.
+                </p>
+              </div>
               <div className="grid gap-2">
-                <Label>Código</Label>
+                <Label>Título técnico (ES)</Label>
                 <Input
-                  type="number"
-                  value={form.code}
-                  onChange={(ev) => setForm((f) => ({ ...f, code: ev.target.value }))}
+                  value={form.titleEs}
+                  onChange={(ev) => setForm((f) => ({ ...f, titleEs: ev.target.value }))}
                 />
               </div>
               <div className="grid gap-2">
-                <Label>Modelo</Label>
+                <Label>Título técnico (EN)</Label>
                 <Input
-                  value={form.model}
-                  onChange={(ev) => setForm((f) => ({ ...f, model: ev.target.value }))}
+                  value={form.titleEn}
+                  onChange={(ev) => setForm((f) => ({ ...f, titleEn: ev.target.value }))}
                 />
               </div>
+              <div className="grid gap-2">
+                <Label>Descripción (ES)</Label>
+                <Textarea
+                  rows={4}
+                  value={form.descriptionEs}
+                  onChange={(ev) =>
+                    setForm((f) => ({ ...f, descriptionEs: ev.target.value }))
+                  }
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label>Descripción (EN)</Label>
+                <Textarea
+                  rows={3}
+                  value={form.descriptionEn}
+                  onChange={(ev) =>
+                    setForm((f) => ({ ...f, descriptionEn: ev.target.value }))
+                  }
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label>Acción correctiva (ES)</Label>
+                <Textarea
+                  rows={4}
+                  value={form.correctiveActionEs}
+                  onChange={(ev) =>
+                    setForm((f) => ({ ...f, correctiveActionEs: ev.target.value }))
+                  }
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label>Acción correctiva (EN)</Label>
+                <Textarea
+                  rows={3}
+                  value={form.correctiveActionEn}
+                  onChange={(ev) =>
+                    setForm((f) => ({ ...f, correctiveActionEn: ev.target.value }))
+                  }
+                />
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <Checkbox
+                  checked={form.archived}
+                  onCheckedChange={(c) =>
+                    setForm((f) => ({ ...f, archived: c === true }))
+                  }
+                />
+                <span className="text-sm">Archivada (no se muestra por defecto)</span>
+              </label>
+              {error && <p className="text-sm text-red-600">{error}</p>}
             </div>
-            <div className="grid gap-2">
-              <Label>Título (ES)</Label>
-              <Input
-                value={form.titleEs}
-                onChange={(ev) => setForm((f) => ({ ...f, titleEs: ev.target.value }))}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label>Título (EN)</Label>
-              <Input
-                value={form.titleEn}
-                onChange={(ev) => setForm((f) => ({ ...f, titleEn: ev.target.value }))}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label>Descripción (ES)</Label>
-              <Textarea
-                rows={4}
-                value={form.descriptionEs}
-                onChange={(ev) => setForm((f) => ({ ...f, descriptionEs: ev.target.value }))}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label>Descripción (EN)</Label>
-              <Textarea
-                rows={3}
-                value={form.descriptionEn}
-                onChange={(ev) => setForm((f) => ({ ...f, descriptionEn: ev.target.value }))}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label>Acción correctiva (ES)</Label>
-              <Textarea
-                rows={4}
-                value={form.correctiveActionEs}
-                onChange={(ev) =>
-                  setForm((f) => ({ ...f, correctiveActionEs: ev.target.value }))
-                }
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label>Acción correctiva (EN)</Label>
-              <Textarea
-                rows={3}
-                value={form.correctiveActionEn}
-                onChange={(ev) =>
-                  setForm((f) => ({ ...f, correctiveActionEn: ev.target.value }))
-                }
-              />
-            </div>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <Checkbox
-                checked={form.archived}
-                onCheckedChange={(c) => setForm((f) => ({ ...f, archived: c === true }))}
-              />
-              <span className="text-sm">Archivada (no se muestra por defecto)</span>
-            </label>
-            {error && <p className="text-sm text-red-600">{error}</p>}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>
-              Cancelar
-            </Button>
-            <Button onClick={submit}>Guardar</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDialogOpen(false)}>
+                Cancelar
+              </Button>
+              <Button onClick={submit}>Guardar</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   );

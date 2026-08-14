@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { DispositivoOrigenCodigo } from '../types';
 import { useAuth } from '../AuthContext';
-import { userIsMonitoreoNavigation } from '../modules/usuario';
+import { postAuditEvent, userIsMonitoreoNavigation } from '../modules/usuario';
+import { AUDIT_ACTIONS } from '../modules/usuario/auditActions';
 import {
   fetchAnalisisMensual,
   runAnalisisMensual,
@@ -421,6 +422,18 @@ export function AnalisisTelemetriaPanel({
       a.click();
       a.remove();
       URL.revokeObjectURL(a.href);
+      if (user?.username) {
+        void postAuditEvent(user.username, {
+          action:
+            format === 'csv'
+              ? AUDIT_ACTIONS.DOWNLOAD_HISTORIAL_CSV
+              : AUDIT_ACTIONS.DOWNLOAD_HISTORIAL_XLSX,
+          module: 'analisis',
+          summary: `Descargó análisis ${format.toUpperCase()} de ${imei} (${anio}-${mes})`,
+          targetId: imei,
+          detail: { imei, anio, mes, format, analisisId: data.analisis.id },
+        });
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error al exportar');
     }

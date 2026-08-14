@@ -1,5 +1,9 @@
 import type { AlarmCatalogEntry } from './types';
-import { buildBootstrapAlarmCatalog, catalogIdFor } from './bootstrapAlarms';
+import {
+  buildBootstrapAlarmCatalog,
+  catalogIdFor,
+  normalizeAlarmCatalogEntry,
+} from './bootstrapAlarms';
 
 const STORAGE_KEY = 'ztrack_alarm_catalog_v1';
 
@@ -23,6 +27,32 @@ function catalogKey(entry: Pick<AlarmCatalogEntry, 'model' | 'code'>): string {
   return `${entry.model}::${entry.code}`;
 }
 
+function migrateMensajeUsuario(entries: AlarmCatalogEntry[]): {
+  entries: AlarmCatalogEntry[];
+  changed: boolean;
+} {
+  let changed = false;
+  const next = entries.map((e) => {
+    const n = normalizeAlarmCatalogEntry(e);
+    const full: AlarmCatalogEntry = {
+      ...(n as AlarmCatalogEntry),
+      id: e.id || catalogIdFor(n.model, n.code),
+    };
+    if (
+      e.mensajeUsuario == null ||
+      String(e.mensajeUsuario).trim() === '' ||
+      e.mensajeUsuario !== full.mensajeUsuario
+    ) {
+      // Solo marcar changed si faltaba el campo o estaba vacío
+      if (e.mensajeUsuario == null || String(e.mensajeUsuario).trim() === '') {
+        changed = true;
+      }
+    }
+    return full;
+  });
+  return { entries: next, changed };
+}
+
 /** Carga el catálogo semilla si está vacío; fusiona entradas nuevas del seed sin sobrescribir edits. */
 export function ensureAlarmCatalog(): AlarmCatalogEntry[] {
   let entries = readRaw();
@@ -32,8 +62,11 @@ export function ensureAlarmCatalog(): AlarmCatalogEntry[] {
     return entries;
   }
 
+  const migrated = migrateMensajeUsuario(entries);
+  entries = migrated.entries;
+  let changed = migrated.changed;
+
   const byKey = new Set(entries.map((e) => catalogKey(e)));
-  let changed = false;
   for (const seed of buildBootstrapAlarmCatalog()) {
     const key = catalogKey(seed);
     if (!byKey.has(key)) {
@@ -80,9 +113,10 @@ export function addAlarmCatalogEntry(
   if (entries.some((e) => e.model === entry.model && e.code === entry.code)) {
     throw new Error(`Ya existe una alarma con código ${entry.code} para ${entry.model}`);
   }
+  const normalized = normalizeAlarmCatalogEntry(entry);
   const created: AlarmCatalogEntry = {
-    ...entry,
-    id: catalogIdFor(entry.model, entry.code),
+    ...(normalized as Omit<AlarmCatalogEntry, 'id'>),
+    id: catalogIdFor(normalized.model, normalized.code),
   };
   entries.push(created);
   writeRaw(entries);
@@ -111,9 +145,14 @@ export function updateAlarmCatalogEntry(
     throw new Error(`Ya existe una alarma con código ${nextCode} para ${nextModel}`);
   }
 
-  const next: AlarmCatalogEntry = {
+  const merged = normalizeAlarmCatalogEntry({
     ...prev,
     ...patch,
+    model: nextModel,
+    code: nextCode,
+  });
+  const next: AlarmCatalogEntry = {
+    ...(merged as Omit<AlarmCatalogEntry, 'id'>),
     id: catalogIdFor(nextModel, nextCode),
   };
   entries[idx] = next;
