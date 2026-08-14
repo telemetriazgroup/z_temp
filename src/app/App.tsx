@@ -4,6 +4,7 @@ import { ThemeProvider } from './ThemeContext';
 import { DispositivosFleetProvider } from './DispositivosFleetContext';
 import { router } from './routes';
 import { Toaster } from './components/ui/sonner';
+import { WhatsAppFloatingButton } from './components/WhatsAppFloatingButton';
 
 export default function App() {
   return (
@@ -11,6 +12,7 @@ export default function App() {
       <AuthProvider>
         <DispositivosFleetProvider>
           <RouterProvider router={router} />
+          <WhatsAppFloatingButton />
           <Toaster richColors position="top-right" />
         </DispositivosFleetProvider>
       </AuthProvider>

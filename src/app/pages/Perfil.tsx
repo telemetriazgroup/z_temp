@@ -3,6 +3,10 @@ import { useAuth } from '../AuthContext';
 import { updateOwnProfileOnServer } from '../modules/usuario/usersServerApi';
 import { fetchEmpresas } from '../modules/empresa';
 import { fileToAvatarDataUrl } from '../lib/avatarImage';
+import {
+  normalizeTemperaturaUnidad,
+  type TemperaturaUnidad,
+} from '../lib/temperatureUnit';
 import type { Empresa, UserSexo } from '../types';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -17,7 +21,17 @@ import {
   SelectValue,
 } from '../components/ui/select';
 import { Avatar, AvatarFallback, AvatarImage } from '../components/ui/avatar';
-import { UserCircle, KeyRound, Globe, Building2, Upload, Trash2, Sun, Moon } from 'lucide-react';
+import {
+  UserCircle,
+  KeyRound,
+  Globe,
+  Building2,
+  Upload,
+  Trash2,
+  Sun,
+  Moon,
+  Thermometer,
+} from 'lucide-react';
 import { useAppTheme } from '../ThemeContext';
 
 function initialsOf(user: {
@@ -56,6 +70,9 @@ export default function Perfil() {
   const [telefono, setTelefono] = useState(user?.telefono ?? '');
   const [sexo, setSexo] = useState<'' | UserSexo>(user?.sexo ?? '');
   const [zonaHoraria, setZonaHoraria] = useState(user?.zonaHoraria ?? 'GMT-5');
+  const [temperaturaUnidad, setTemperaturaUnidad] = useState(
+    normalizeTemperaturaUnidad(user?.temperaturaUnidad)
+  );
   const [avatarUrl, setAvatarUrl] = useState(user?.avatarUrl ?? '');
   const [avatarDirty, setAvatarDirty] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
@@ -76,6 +93,7 @@ export default function Perfil() {
     setTelefono(user?.telefono ?? '');
     setSexo(user?.sexo ?? '');
     setZonaHoraria(user?.zonaHoraria ?? 'GMT-5');
+    setTemperaturaUnidad(normalizeTemperaturaUnidad(user?.temperaturaUnidad));
     if (!avatarDirty) setAvatarUrl(user?.avatarUrl ?? '');
   }, [user, avatarDirty]);
 
@@ -144,6 +162,7 @@ export default function Perfil() {
           sexo: sexo || '',
           displayName: [nombres.trim(), apellidos.trim()].filter(Boolean).join(' '),
           zonaHoraria,
+          temperaturaUnidad,
           ...(avatarDirty ? { avatarUrl: avatarUrl || '' } : {}),
           ...(newPassword ? { currentPassword, newPassword } : {}),
         },
@@ -387,6 +406,37 @@ export default function Perfil() {
               <SelectContent>
                 <SelectItem value="GMT-5">GMT-5 (Lima / Bogotá)</SelectItem>
                 <SelectItem value="GMT-4">GMT-4 (Caracas / La Paz)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Thermometer className="h-4 w-4" />
+            Unidad de temperatura
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Aplica a listados e historiales. Por defecto Celsius (°C).
+          </p>
+          <div className="max-w-xs space-y-1.5">
+            <Label>Mostrar temperaturas en</Label>
+            <Select
+              value={temperaturaUnidad}
+              onValueChange={(v) =>
+                setTemperaturaUnidad(normalizeTemperaturaUnidad(v) as TemperaturaUnidad)
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="C">Celsius (°C)</SelectItem>
+                <SelectItem value="F">Fahrenheit (°F)</SelectItem>
               </SelectContent>
             </Select>
           </div>

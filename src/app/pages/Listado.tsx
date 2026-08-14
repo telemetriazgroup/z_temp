@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router';
 import type {
   UltimoEstadoDispositivosResponse,
@@ -23,6 +24,7 @@ import {
 import {
   usaRangoPersonalizado,
   evaluarEstadoRangoListado,
+  computeRangoLimites,
 } from '../modules/correo/rangoTemperatura';
 import type { DeviceAlertConfig } from '../modules/correo/types';
 import { Input } from '../components/ui/input';
@@ -58,7 +60,22 @@ import {
 } from '../modules/alarma';
 import { cn } from '../components/ui/utils';
 import { exportEquipoUltimoEstadoJson } from '../lib/exportEquipoJson';
-import { MapPin, RefreshCw, AlertCircle, Pencil, Download, History } from 'lucide-react';
+import {
+  formatTemperatura,
+  normalizeTemperaturaUnidad,
+  tendenciaHaciaRango,
+  tendenciaRangoPorFlujo,
+  type TendenciaRango,
+} from '../lib/temperatureUnit';
+import { TempConTendenciaRango } from '../components/TempConTendencia';
+import {
+  RefreshCw,
+  AlertCircle,
+  Pencil,
+  Download,
+  History,
+  Info,
+} from 'lucide-react';
 import { Historial3hModal, type Historial3hTarget } from '../components/Historial3hModal';
 import { dispositivoTieneHistorialOficial } from '../api/datosOficiales';
 import {
@@ -205,9 +222,143 @@ function mapDeviceToDisplay(
   };
 }
 
-function formatTemp(value: number | null): string {
-  if (value == null) return '—';
-  return String(value);
+function formatTemp(
+  value: number | null,
+  unidad: ReturnType<typeof normalizeTemperaturaUnidad> = 'C'
+): string {
+  return formatTemperatura(value, unidad);
+}
+
+type ListDevice = ReturnType<typeof mapDeviceToDisplay> & {
+  nombreAsignado: string;
+  nameLockedByProfile: boolean;
+  imei: string;
+  raw: DispositivoUltimoEstado;
+};
+
+function RangoBadge({
+  device,
+}: {
+  device: Pick<ListDevice, 'estadoRango' | 'enRangoPersonalizado'>;
+}) {
+  return (
+    <div
+      className={cn(
+        (device.estadoRango === 'fuera' || device.estadoRango === 'apagado') &&
+          'rounded px-1.5 py-0.5 bg-red-600/15 text-red-900 dark:text-red-100'
+      )}
+      title={
+        device.enRangoPersonalizado && device.estadoRango !== 'apagado'
+          ? 'Evaluado con rango EN RANGO personalizado'
+          : device.estadoRango === 'apagado'
+            ? 'Equipo apagado'
+            : undefined
+      }
+    >
+      {device.estadoRango === 'normal' && (
+        <Badge className="bg-emerald-600 hover:bg-emerald-600">NORMAL</Badge>
+      )}
+      {device.estadoRango === 'fuera' && (
+        <Badge className="bg-red-600 hover:bg-red-600">FUERA</Badge>
+      )}
+      {device.estadoRango === 'apagado' && (
+        <Badge className="bg-gray-700 hover:bg-gray-700">APAGADO</Badge>
+      )}
+      {device.estadoRango === 'indeterminado' && (
+        <span className="text-muted-foreground text-xs">—</span>
+      )}
+    </div>
+  );
+}
+
+function DeviceInfoPopover({
+  device,
+}: {
+  device: Pick<ListDevice, 'codigo' | 'status' | 'containerId'>;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="h-8 w-8 shrink-0 text-muted-foreground"
+        aria-label="Ver código, status e IMEI"
+        aria-expanded={open}
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          setOpen(true);
+        }}
+      >
+        <Info className="h-4 w-4" />
+      </Button>
+      {open &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 p-4"
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpen(false);
+            }}
+          >
+            <div
+              role="dialog"
+              aria-label="Información del equipo"
+              className="w-full max-w-sm rounded-lg border bg-popover p-4 text-popover-foreground shadow-xl space-y-3"
+              onClick={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <div className="text-sm font-medium">Información del equipo</div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-muted-foreground">Status</span>
+                <Badge className={getStatusColor(device.status)}>
+                  {device.status}
+                </Badge>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-muted-foreground">Código</span>
+                <Badge variant="outline" className="font-mono text-xs">
+                  {device.codigo}
+                </Badge>
+              </div>
+              <div className="space-y-0.5">
+                <span className="text-xs text-muted-foreground">
+                  IMEI / Container ID
+                </span>
+                <p className="font-mono text-sm break-all leading-snug">
+                  {device.containerId || '—'}
+                </p>
+              </div>
+              <p className="text-[11px] text-muted-foreground text-center pt-1">
+                Clic fuera para cerrar
+              </p>
+            </div>
+          </div>,
+          document.body
+        )}
+    </>
+  );
+}
+
+type TempSnapshot = {
+  returnAir: number | null;
+  tempSupply1: number | null;
+  setPoint: number | null;
+  stamp: string | null;
+};
+
+function stampOfDevice(d: DispositivoUltimoEstado): string | null {
+  const ud = d.ultimo_dato;
+  if (!ud) return null;
+  return (
+    ud.created_at ??
+    (ud.telemetria_id != null ? String(ud.telemetria_id) : null) ??
+    d.ultima_actualizacion
+  );
 }
 
 export default function Listado() {
@@ -236,6 +387,7 @@ export default function Listado() {
   const [alertLoading, setAlertLoading] = useState(true);
   const navigate = useNavigate();
   const { user } = useAuth();
+  const tempUnidad = normalizeTemperaturaUnidad(user?.temperaturaUnidad);
   const esSuperUser = user?.superUser === true;
   const {
     data,
@@ -246,6 +398,82 @@ export default function Listado() {
     refreshFleet,
     isStale,
   } = useDispositivosFleet();
+
+  const prevTempsRef = useRef<Record<string, TempSnapshot>>({});
+  const [tendenciasByRow, setTendenciasByRow] = useState<
+    Record<string, { retorno: TendenciaRango; suministro: TendenciaRango }>
+  >({});
+
+  useEffect(() => {
+    const dispositivos = data?.data?.dispositivos;
+    if (!dispositivos?.length) return;
+
+    const nextTend: Record<
+      string,
+      { retorno: TendenciaRango; suministro: TendenciaRango }
+    > = {};
+    const nextPrev: Record<string, TempSnapshot> = { ...prevTempsRef.current };
+
+    for (const d of dispositivos) {
+      const rk = deviceRowKey(d);
+      const cfg = alertConfigMap[rk] ?? null;
+      const setPoint = d.ultimo_dato?.set_point ?? null;
+      const returnAir = d.ultimo_dato?.return_air ?? null;
+      const tempSupply1 = d.ultimo_dato?.temp_supply_1 ?? null;
+      const stamp = stampOfDevice(d);
+      const rango = computeRangoLimites(setPoint, cfg);
+      const prev = prevTempsRef.current[rk];
+
+      let retorno: TendenciaRango = null;
+      let suministro: TendenciaRango = null;
+
+      if (prev && prev.stamp != null && stamp != null && prev.stamp !== stamp) {
+        retorno = tendenciaHaciaRango(
+          returnAir,
+          prev.returnAir,
+          rango?.min ?? null,
+          rango?.max ?? null,
+          setPoint
+        );
+        suministro = tendenciaHaciaRango(
+          tempSupply1,
+          prev.tempSupply1,
+          rango?.min ?? null,
+          rango?.max ?? null,
+          setPoint
+        );
+      }
+
+      if (retorno == null || retorno === 'flat') {
+        const flujo = tendenciaRangoPorFlujo(
+          returnAir,
+          setPoint,
+          rango?.min ?? null,
+          rango?.max ?? null,
+          tempSupply1,
+          returnAir
+        );
+        if (flujo) retorno = flujo;
+      }
+      if (suministro == null || suministro === 'flat') {
+        const flujo = tendenciaRangoPorFlujo(
+          tempSupply1,
+          setPoint,
+          rango?.min ?? null,
+          rango?.max ?? null,
+          tempSupply1,
+          returnAir
+        );
+        if (flujo) suministro = flujo;
+      }
+
+      nextTend[rk] = { retorno, suministro };
+      nextPrev[rk] = { returnAir, tempSupply1, setPoint, stamp };
+    }
+
+    prevTempsRef.current = nextPrev;
+    setTendenciasByRow(nextTend);
+  }, [data, alertConfigMap]);
 
   const syncFiltersToUrl = useCallback(
     (status: StatusFilter, rango: RangoFilter) => {
@@ -609,45 +837,190 @@ export default function Listado() {
         </div>
       </div>
 
-      <div className="border rounded-lg overflow-hidden">
+      {/* Móvil: cartas */}
+      <div className="md:hidden space-y-3">
+        {filteredDevices.map((device, index) => (
+          <div
+            key={device.rowKey}
+            className="rounded-lg border bg-card p-3 shadow-sm cursor-pointer active:bg-muted/40"
+            onClick={() => goDetalle(device.raw)}
+          >
+            <div className="flex items-start gap-2">
+              <span className="mt-1 w-6 shrink-0 text-sm tabular-nums text-muted-foreground">
+                {index + 1}
+              </span>
+              <div className="mt-0.5 shrink-0">
+                {device.power !== '—' ? (
+                  <Badge className={getPowerColor(device.power)}>
+                    {device.power}
+                  </Badge>
+                ) : (
+                  <span className="text-xs text-muted-foreground">—</span>
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-0.5">
+                  <span
+                    className={cn(
+                      'font-semibold text-base truncate min-w-0 flex-1',
+                      device.nombreAsignado === SIN_ASIGNAR && 'text-muted-foreground'
+                    )}
+                    title={device.nombreAsignado}
+                  >
+                    {device.nombreAsignado}
+                  </span>
+                  <DeviceInfoPopover device={device} />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 shrink-0"
+                    title="Editar nombre"
+                    disabled={device.nameLockedByProfile}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openNameEdit(device);
+                    }}
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-2 grid grid-cols-3 gap-2 text-center">
+              <div className="rounded-md bg-muted/50 px-1.5 py-1.5">
+                <div className="text-[10px] text-muted-foreground uppercase tracking-wide">
+                  Set
+                </div>
+                <div className="text-sm font-semibold tabular-nums text-black dark:text-foreground">
+                  {formatTemp(device.setPoint, tempUnidad)}
+                </div>
+              </div>
+              <div className="rounded-md bg-muted/50 px-1.5 py-1.5">
+                <div className="text-[10px] text-muted-foreground uppercase tracking-wide">
+                  Retorno
+                </div>
+                <div className="flex justify-center text-sm font-medium tabular-nums">
+                  <TempConTendenciaRango
+                    texto={formatTemp(device.returnAir, tempUnidad)}
+                    tendencia={tendenciasByRow[device.rowKey]?.retorno}
+                  />
+                </div>
+              </div>
+              <div className="rounded-md bg-muted/50 px-1.5 py-1.5">
+                <div className="text-[10px] text-muted-foreground uppercase tracking-wide">
+                  Suministro
+                </div>
+                <div className="flex justify-center text-sm font-medium tabular-nums">
+                  <TempConTendenciaRango
+                    texto={formatTemp(device.tempSupply1, tempUnidad)}
+                    tendencia={tendenciasByRow[device.rowKey]?.suministro}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
+              <RangoBadge device={device} />
+              <span className="text-muted-foreground">
+                {formatDate(device.ultimaConexion)}
+              </span>
+              <Badge
+                variant={device.alarmCount > 0 ? 'destructive' : 'secondary'}
+                className="tabular-nums"
+              >
+                {device.alarmCount}
+              </Badge>
+              <div className="ml-auto flex items-center gap-0.5">
+                {dispositivoTieneHistorialOficial(
+                  device.raw.codigo as DispositivoOrigenCodigo | undefined
+                ) && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    title="Ver últimas 3 h"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setHistorial3h({
+                        imei: device.raw.imei,
+                        codigo: device.raw.codigo as DispositivoOrigenCodigo,
+                        nombre: device.nombreAsignado,
+                        zonaHoraria: data?.data?.resumen?.zona_horaria ?? null,
+                      });
+                    }}
+                  >
+                    <History className="h-4 w-4" />
+                  </Button>
+                )}
+                {esSuperUser && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    title="Descargar JSON"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      exportEquipoUltimoEstadoJson(
+                        device.raw,
+                        device.nombreAsignado
+                      );
+                      if (user?.username) {
+                        void postAuditEvent(user.username, {
+                          action: AUDIT_ACTIONS.DOWNLOAD_EQUIPO_JSON,
+                          module: 'listado',
+                          summary: `Descargó JSON del equipo ${device.imei}`,
+                          targetId: device.imei,
+                          detail: {
+                            imei: device.imei,
+                            codigo: device.codigo,
+                          },
+                        });
+                      }
+                    }}
+                  >
+                    <Download className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Escritorio: tabla compacta */}
+      <div className="hidden md:block border rounded-lg overflow-hidden">
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Código</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Power</TableHead>
-                <TableHead>Container ID / IMEI</TableHead>
-                <TableHead>Nombre</TableHead>
-                <TableHead>Última Conexión</TableHead>
-                <TableHead>Set point</TableHead>
-                <TableHead>Return air</TableHead>
-                <TableHead>Temp. suministro</TableHead>
+                <TableHead className="w-12 text-center">#</TableHead>
+                <TableHead className="w-[72px]">Power</TableHead>
+                <TableHead className="min-w-[420px] w-[42%]">Nombre</TableHead>
+                <TableHead>Set</TableHead>
+                <TableHead>Retorno</TableHead>
+                <TableHead>Suministro</TableHead>
                 <TableHead>En rango</TableHead>
+                <TableHead>Última conexión</TableHead>
                 <TableHead>Alarmas</TableHead>
                 <TableHead className="w-[56px]" title="Últimas 3 h">
                   3h
                 </TableHead>
-                <TableHead>Ubicación</TableHead>
                 {esSuperUser && <TableHead className="w-[90px]">JSON</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredDevices.map((device) => (
+              {filteredDevices.map((device, index) => (
                 <TableRow
                   key={device.rowKey}
                   className="cursor-pointer hover:bg-muted/50"
                   onClick={() => goDetalle(device.raw)}
                 >
-                  <TableCell>
-                    <Badge variant="outline" className="font-mono text-xs">
-                      {device.codigo}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <Badge className={getStatusColor(device.status)}>
-                      {device.status}
-                    </Badge>
+                  <TableCell className="text-center text-sm tabular-nums text-muted-foreground">
+                    {index + 1}
                   </TableCell>
                   <TableCell>
                     {device.power !== '—' ? (
@@ -658,21 +1031,13 @@ export default function Listado() {
                       <span className="text-muted-foreground">—</span>
                     )}
                   </TableCell>
-                  <TableCell
-                    className="font-medium hover:text-blue-600"
-                    onDoubleClick={(e) => {
-                      e.stopPropagation();
-                      handleDeviceClick(device.id);
-                    }}
-                  >
-                    {device.containerId}
-                  </TableCell>
-                  <TableCell className="max-w-[220px]">
-                    <div className="flex items-center gap-2">
+                  <TableCell className="min-w-[420px] max-w-[520px]">
+                    <div className="flex items-center gap-0.5">
                       <span
                         className={cn(
-                          'truncate hover:text-blue-600 flex-1',
-                          device.nombreAsignado === SIN_ASIGNAR && 'text-muted-foreground'
+                          'truncate hover:text-blue-600 min-w-0 flex-1 font-medium',
+                          device.nombreAsignado === SIN_ASIGNAR &&
+                            'text-muted-foreground'
                         )}
                         title={device.nombreAsignado}
                         onDoubleClick={(e) => {
@@ -682,6 +1047,7 @@ export default function Listado() {
                       >
                         {device.nombreAsignado}
                       </span>
+                      <DeviceInfoPopover device={device} />
                       <Button
                         type="button"
                         variant="ghost"
@@ -698,67 +1064,34 @@ export default function Listado() {
                       </Button>
                     </div>
                   </TableCell>
-                  <TableCell className="text-sm">
-                    {formatDate(device.ultimaConexion)}
+                  <TableCell className="text-sm tabular-nums text-black dark:text-foreground font-semibold">
+                    {formatTemp(device.setPoint, tempUnidad)}
                   </TableCell>
                   <TableCell className="text-sm tabular-nums">
-                    {formatTemp(device.setPoint)}
+                    <TempConTendenciaRango
+                      texto={formatTemp(device.returnAir, tempUnidad)}
+                      tendencia={tendenciasByRow[device.rowKey]?.retorno}
+                    />
                   </TableCell>
                   <TableCell className="text-sm tabular-nums">
-                    {formatTemp(device.returnAir)}
-                  </TableCell>
-                  <TableCell className="text-sm tabular-nums">
-                    {formatTemp(device.tempSupply1)}
-                  </TableCell>
-                  <TableCell
-                    className={cn(
-                      (device.estadoRango === 'fuera' || device.estadoRango === 'apagado') &&
-                        'bg-red-600/15 text-red-900 dark:text-red-100 border-l-4 border-red-600 font-medium'
-                    )}
-                    title={
-                      device.enRangoPersonalizado && device.estadoRango !== 'apagado'
-                        ? 'Evaluado con rango EN RANGO personalizado (return_air, equipo ON)'
-                        : device.estadoRango === 'apagado'
-                          ? 'Equipo apagado (power_state 0). Prioridad sobre fuera de rango.'
-                          : undefined
-                    }
-                  >
-                    {device.estadoRango === 'normal' && (
-                      <Badge className="bg-emerald-600 hover:bg-emerald-600">
-                        NORMAL
-                      </Badge>
-                    )}
-                    {device.estadoRango === 'fuera' && (
-                      <Badge className="bg-red-600 hover:bg-red-600">FUERA DE RANGO</Badge>
-                    )}
-                    {device.estadoRango === 'apagado' && (
-                      <Badge className="bg-gray-700 hover:bg-gray-700">APAGADO</Badge>
-                    )}
-                    {device.estadoRango === 'indeterminado' && (
-                      <span className="text-muted-foreground">—</span>
-                    )}
-                    {device.enRangoPersonalizado && device.estadoRango !== 'apagado' && (
-                      <div className="text-[10px] text-muted-foreground mt-0.5">Rango pers.</div>
-                    )}
+                    <TempConTendenciaRango
+                      texto={formatTemp(device.tempSupply1, tempUnidad)}
+                      tendencia={tendenciasByRow[device.rowKey]?.suministro}
+                    />
                   </TableCell>
                   <TableCell>
-                    {device.alarmCount > 0 ? (
-                      <div className="space-y-1">
-                        <Badge variant="destructive">
-                          {device.alarmCount === 1
-                            ? `Cód. ${device.alarmCode}`
-                            : `${device.alarmCount} alarmas`}
-                        </Badge>
-                        <p
-                          className="text-xs text-muted-foreground max-w-[200px] line-clamp-2"
-                          title={device.alarmTitle ?? undefined}
-                        >
-                          {device.alarmTitle}
-                        </p>
-                      </div>
-                    ) : (
-                      <Badge variant="secondary">0</Badge>
-                    )}
+                    <RangoBadge device={device} />
+                  </TableCell>
+                  <TableCell className="text-sm whitespace-nowrap">
+                    {formatDate(device.ultimaConexion)}
+                  </TableCell>
+                  <TableCell>
+                    <Badge
+                      variant={device.alarmCount > 0 ? 'destructive' : 'secondary'}
+                      className="tabular-nums"
+                    >
+                      {device.alarmCount}
+                    </Badge>
                   </TableCell>
                   <TableCell>
                     {dispositivoTieneHistorialOficial(
@@ -786,24 +1119,6 @@ export default function Listado() {
                       <span className="text-muted-foreground">—</span>
                     )}
                   </TableCell>
-                  <TableCell>
-                    {device.hasUbicacion ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          navigate(
-                            `/ubicanos?lat=${device.lat}&lng=${device.lng}`
-                          );
-                        }}
-                      >
-                        <MapPin className="h-4 w-4" />
-                      </Button>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
-                  </TableCell>
                   {esSuperUser && (
                     <TableCell>
                       <Button
@@ -812,7 +1127,10 @@ export default function Listado() {
                         title="Descargar JSON del equipo"
                         onClick={(e) => {
                           e.stopPropagation();
-                          exportEquipoUltimoEstadoJson(device.raw, device.nombreAsignado);
+                          exportEquipoUltimoEstadoJson(
+                            device.raw,
+                            device.nombreAsignado
+                          );
                           if (user?.username) {
                             void postAuditEvent(user.username, {
                               action: AUDIT_ACTIONS.DOWNLOAD_EQUIPO_JSON,

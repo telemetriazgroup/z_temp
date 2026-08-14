@@ -94,15 +94,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     const current = readStoredSession();
-    if (current?.username) {
-      void postAuditEvent(current.username, {
-        action: AUDIT_ACTIONS.LOGOUT,
-        module: 'auth',
-        summary: `Cerró sesión (${current.username})`,
-      });
-    }
+    const username = current?.username;
+    // Limpiar sesión primero para que ProtectedRoute redirija de inmediato
     setUser(null);
     persistSession(null);
+    if (username) {
+      void postAuditEvent(username, {
+        action: AUDIT_ACTIONS.LOGOUT,
+        module: 'auth',
+        summary: `Cerró sesión (${username})`,
+      });
+    }
   }, []);
 
   const refreshUser = useCallback(async () => {

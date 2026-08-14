@@ -104,7 +104,7 @@ export default function Layout() {
 
   const handleLogout = () => {
     logout();
-    navigate('/login');
+    navigate('/login', { replace: true });
   };
 
   const menuMonitoreo = userIsMonitoreoNavigation(user);
@@ -412,7 +412,10 @@ export default function Layout() {
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
                     variant="destructive"
-                    onClick={handleLogout}
+                    onSelect={(e) => {
+                      e.preventDefault();
+                      handleLogout();
+                    }}
                   >
                     <LogOut className="h-4 w-4" />
                     Cerrar sesión

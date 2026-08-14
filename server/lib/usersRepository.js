@@ -33,6 +33,11 @@ function normalizeZonaHoraria(value) {
   return 'GMT-5';
 }
 
+function normalizeTemperaturaUnidad(value) {
+  const s = String(value ?? 'C').trim().toUpperCase();
+  return s === 'F' || s === 'FAHRENHEIT' ? 'F' : 'C';
+}
+
 function optStr(value) {
   const s = value?.toString().trim();
   return s ? s : undefined;
@@ -165,6 +170,7 @@ function validateUserShape(user, { requirePassword = false } = {}) {
       : undefined,
     displayName: buildDisplayName({ ...user, nombres, apellidos }),
     zonaHoraria: normalizeZonaHoraria(user.zonaHoraria ?? 'GMT-5'),
+    temperaturaUnidad: normalizeTemperaturaUnidad(user.temperaturaUnidad),
     avatarUrl,
     cargo: optStr(user.cargo),
     nombres,
@@ -423,6 +429,9 @@ export function updateOwnProfile(id, patch, actingUsername) {
   }
   if (patch.zonaHoraria !== undefined) {
     nextPatch.zonaHoraria = normalizeZonaHoraria(patch.zonaHoraria);
+  }
+  if (patch.temperaturaUnidad !== undefined) {
+    nextPatch.temperaturaUnidad = normalizeTemperaturaUnidad(patch.temperaturaUnidad);
   }
 
   const newPassword = patch.newPassword?.toString() ?? '';

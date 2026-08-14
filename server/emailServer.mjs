@@ -66,6 +66,10 @@ import {
   assignUserEmpresa,
   listUsersByEmpresa,
 } from './lib/empresasRepository.js';
+import {
+  getAyudaSoporte,
+  saveAyudaSoporte,
+} from './lib/ayudaSoporteRepository.js';
 
 import { createAnalisisRouter } from './lib/analisis/routes.js';
 import { createDashboardRouter } from './lib/dashboard/routes.js';
@@ -196,6 +200,30 @@ app.get('/reefer/api/correo/status', (_req, res) => {
       (i) => i.estado === 'pendiente' && i.archivado !== true
     ).length,
   });
+});
+
+app.get('/reefer/api/correo/ayuda-soporte', (_req, res) => {
+  try {
+    res.json({ ok: true, data: getAyudaSoporte() });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.put('/reefer/api/correo/ayuda-soporte', (req, res) => {
+  try {
+    if (!requireSuperUser(req, res)) return;
+    const actor = resolveActor(req);
+    const saved = saveAyudaSoporte(req.body ?? {}, actor?.username);
+    auditActorEvent(req, {
+      action: 'ayuda.update',
+      module: 'ayuda',
+      summary: 'Actualizó contenido de Ayuda y Soporte',
+    });
+    res.json({ ok: true, data: saved });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
 });
 
 /**

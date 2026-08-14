@@ -87,6 +87,8 @@ export interface User {
   displayName?: string;
   /** Preferencia de zona para visualización (GMT-4 / GMT-5). */
   zonaHoraria?: 'GMT-4' | 'GMT-5' | string;
+  /** Unidad de temperatura en tablas/listados. Default °C. */
+  temperaturaUnidad?: 'C' | 'F';
   /** URL opcional de avatar; si falta se usan iniciales. */
   avatarUrl?: string;
   /** Datos personales opcionales */

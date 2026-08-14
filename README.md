@@ -1,4 +1,6 @@
 
+  https://www.linkedin.com/in/luis-pablo-marcelo-perea-606558b9/
+  
   # ZTRACK Temperature Monitoring Platform
 
   This is a code bundle for ZTRACK Temperature Monitoring Platform. The original project is available at https://www.figma.com/design/QZojqUF00nxdT1OPFEI8ek/ZTRACK-Temperature-Monitoring-Platform.

@@ -5,6 +5,10 @@ import {
   resolveDisplayTimeZone,
   TELEMETRY_SOURCE_TZ,
 } from './telemetryTimezone';
+import {
+  formatTemperatura,
+  tendenciaTemperatura,
+} from './temperatureUnit';
 
 const MS_HORA = 60 * 60 * 1000;
 
@@ -147,17 +151,21 @@ function num(v: number | null | undefined): number | null {
 export const TABLA_HISTORIAL_COLUMNAS: {
   key: keyof DatoOficialHistorial | 'fecha_registro';
   header: string;
+  /** Columna de temperatura (aplica unidad °C/°F). */
+  esTemperatura?: boolean;
+  /** Mostrar flecha de tendencia vs muestra anterior. */
+  conTendencia?: boolean;
 }[] = [
   { key: 'fecha_registro', header: 'Fecha' },
-  { key: 'set_point', header: 'Set temperatura' },
-  { key: 'temp_supply_1', header: 'Suministro' },
-  { key: 'return_air', header: 'Retorno' },
-  { key: 'evaporation_coil', header: 'Evaporador' },
-  { key: 'ambient_air', header: 'Aire ambiente' },
-  { key: 'cargo_1_temp', header: 'USDA1' },
-  { key: 'cargo_2_temp', header: 'USDA2' },
-  { key: 'cargo_3_temp', header: 'USDA3' },
-  { key: 'cargo_4_temp', header: 'USDA4' },
+  { key: 'set_point', header: 'Set', esTemperatura: true },
+  { key: 'temp_supply_1', header: 'Suministro', esTemperatura: true, conTendencia: true },
+  { key: 'return_air', header: 'Retorno', esTemperatura: true, conTendencia: true },
+  { key: 'evaporation_coil', header: 'Evaporador', esTemperatura: true },
+  { key: 'ambient_air', header: 'Aire ambiente', esTemperatura: true },
+  { key: 'cargo_1_temp', header: 'USDA1', esTemperatura: true },
+  { key: 'cargo_2_temp', header: 'USDA2', esTemperatura: true },
+  { key: 'cargo_3_temp', header: 'USDA3', esTemperatura: true },
+  { key: 'cargo_4_temp', header: 'USDA4', esTemperatura: true },
   { key: 'line_voltage', header: 'Voltaje línea' },
   { key: 'line_frequency', header: 'Frecuencia línea' },
   { key: 'consumption_ph_1', header: 'Consumo fase 1' },
@@ -169,8 +177,10 @@ export const TABLA_HISTORIAL_COLUMNAS: {
 export function celdaHistorial(
   row: DatoOficialHistorial,
   key: keyof DatoOficialHistorial | 'fecha_registro',
-  zonaHoraria?: string | null
+  zonaHoraria?: string | null,
+  opts?: { unidad?: import('./temperatureUnit').TemperaturaUnidad }
 ): string {
+  const unidad = opts?.unidad ?? 'C';
   if (key === 'fecha_registro') {
     const raw = fechaRegistroHistorial(row);
     if (raw == null) return '—';
@@ -186,10 +196,34 @@ export function celdaHistorial(
     key === 'cargo_4_temp'
   ) {
     const n = cargoTempValida(v as number | null | undefined);
-    return n == null ? 'NA' : String(n);
+    if (n == null) return 'NA';
+    return formatTemperatura(n, unidad);
   }
+
+  const col = TABLA_HISTORIAL_COLUMNAS.find((c) => c.key === key);
+  if (col?.esTemperatura) {
+    return formatTemperatura(v as number | null | undefined, unidad);
+  }
+
   if (v == null || (typeof v === 'number' && Number.isNaN(v))) return '—';
   return String(v);
+}
+
+/**
+ * Tabla ordenada más reciente primero: tendencia = valor actual vs la fila siguiente
+ * (muestra más antigua).
+ */
+export function tendenciaEnTablaDesc(
+  filasDesc: DatoOficialHistorial[],
+  index: number,
+  key: 'return_air' | 'temp_supply_1'
+): import('./temperatureUnit').TempTendencia {
+  const actual = filasDesc[index]?.[key];
+  const anterior = filasDesc[index + 1]?.[key];
+  return tendenciaTemperatura(
+    actual as number | null | undefined,
+    anterior as number | null | undefined
+  );
 }
 
 /** Carga 1–4: válido solo en [-30, 24]; fuera se considera nulo. */

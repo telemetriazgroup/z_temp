@@ -89,6 +89,7 @@ export async function updateOwnProfileOnServer(
   patch: {
     displayName?: string;
     zonaHoraria?: string;
+    temperaturaUnidad?: 'C' | 'F' | string;
     avatarUrl?: string;
     cargo?: string;
     nombres?: string;

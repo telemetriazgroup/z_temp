@@ -28,8 +28,11 @@ import {
   filtrarDatosUltimasHoras,
   muestrearHistorialCada30Min,
   TABLA_HISTORIAL_COLUMNAS,
+  tendenciaEnTablaDesc,
 } from '../lib/historialOficial';
 import { resolveDisplayTimeZone } from '../lib/telemetryTimezone';
+import { normalizeTemperaturaUnidad } from '../lib/temperatureUnit';
+import { TempConTendencia } from './TempConTendencia';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 import { useAuth } from '../AuthContext';
 import { postAuditEvent } from '../modules/usuario';
@@ -51,6 +54,7 @@ interface Props {
 
 export function Historial3hModal({ open, onOpenChange, target }: Props) {
   const { user } = useAuth();
+  const tempUnidad = normalizeTemperaturaUnidad(user?.temperaturaUnidad);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [datos, setDatos] = useState<DatoOficialHistorial[]>([]);
@@ -226,7 +230,9 @@ export function Historial3hModal({ open, onOpenChange, target }: Props) {
                             key={col.key}
                             className="whitespace-nowrap text-xs sticky top-0 bg-card"
                           >
-                            {col.header}
+                            {col.esTemperatura
+                              ? `${col.header} (${tempUnidad === 'F' ? '°F' : '°C'})`
+                              : col.header}
                           </TableHead>
                         ))}
                       </TableRow>
@@ -234,14 +240,35 @@ export function Historial3hModal({ open, onOpenChange, target }: Props) {
                     <TableBody>
                       {tabla.map((row, i) => (
                         <TableRow key={claveFilaHistorial(row, i)}>
-                          {TABLA_HISTORIAL_COLUMNAS.map((col) => (
+                          {TABLA_HISTORIAL_COLUMNAS.map((col) => {
+                            const texto = celdaHistorial(
+                              row,
+                              col.key,
+                              target?.zonaHoraria,
+                              { unidad: tempUnidad }
+                            );
+                            const tendencia =
+                              col.conTendencia &&
+                              (col.key === 'return_air' ||
+                                col.key === 'temp_supply_1')
+                                ? tendenciaEnTablaDesc(tabla, i, col.key)
+                                : undefined;
+                            return (
                             <TableCell
                               key={col.key}
                               className="text-xs tabular-nums whitespace-nowrap"
                             >
-                              {celdaHistorial(row, col.key, target?.zonaHoraria)}
+                              {tendencia ? (
+                                <TempConTendencia
+                                  texto={texto}
+                                  tendencia={tendencia}
+                                />
+                              ) : (
+                                texto
+                              )}
                             </TableCell>
-                          ))}
+                            );
+                          })}
                         </TableRow>
                       ))}
                     </TableBody>

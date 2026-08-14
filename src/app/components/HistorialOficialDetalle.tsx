@@ -35,6 +35,7 @@ import {
   TABLA_HISTORIAL_COLUMNAS,
   celdaHistorial,
   claveFilaHistorial,
+  tendenciaEnTablaDesc,
 } from '../lib/historialOficial';
 import type { HistorialExportRango } from '../lib/exportHistorial';
 import {
@@ -51,6 +52,8 @@ import {
   rangoUltimasHorasInTz,
   resolveDisplayTimeZone,
 } from '../lib/telemetryTimezone';
+import { normalizeTemperaturaUnidad } from '../lib/temperatureUnit';
+import { TempConTendencia } from './TempConTendencia';
 import { useAuth } from '../AuthContext';
 import { postAuditEvent } from '../modules/usuario';
 import { AUDIT_ACTIONS } from '../modules/usuario/auditActions';
@@ -101,6 +104,7 @@ export function HistorialOficialDetalle({
 }: Props) {
   const { user } = useAuth();
   const esSuperUser = user?.superUser === true;
+  const tempUnidad = normalizeTemperaturaUnidad(user?.temperaturaUnidad);
   const displayTz = useMemo(
     () => resolveDisplayTimeZone(zonaHoraria),
     [zonaHoraria]
@@ -681,26 +685,56 @@ export function HistorialOficialDetalle({
                                 key={c.key}
                                 className="whitespace-nowrap text-xs"
                               >
-                                {c.header}
+                                {c.esTemperatura
+                                  ? `${c.header} (${tempUnidad === 'F' ? '°F' : '°C'})`
+                                  : c.header}
                               </TableHead>
                             ))}
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {filasPagina.map((row, i) => (
+                          {filasPagina.map((row, i) => {
+                            const idxGlobal = inicioSlice + i;
+                            return (
                             <TableRow
-                              key={claveFilaHistorial(row, inicioSlice + i)}
+                              key={claveFilaHistorial(row, idxGlobal)}
                             >
-                              {TABLA_HISTORIAL_COLUMNAS.map((c) => (
-                                <TableCell
-                                  key={c.key}
-                                  className="text-xs tabular-nums"
-                                >
-                                  {celdaHistorial(row, c.key, zonaHoraria)}
-                                </TableCell>
-                              ))}
+                              {TABLA_HISTORIAL_COLUMNAS.map((c) => {
+                                const texto = celdaHistorial(
+                                  row,
+                                  c.key,
+                                  zonaHoraria,
+                                  { unidad: tempUnidad }
+                                );
+                                const tendencia =
+                                  c.conTendencia &&
+                                  (c.key === 'return_air' ||
+                                    c.key === 'temp_supply_1')
+                                    ? tendenciaEnTablaDesc(
+                                        filasTabla,
+                                        idxGlobal,
+                                        c.key
+                                      )
+                                    : undefined;
+                                return (
+                              <TableCell
+                                key={c.key}
+                                className="text-xs tabular-nums"
+                              >
+                                {tendencia ? (
+                                  <TempConTendencia
+                                    texto={texto}
+                                    tendencia={tendencia}
+                                  />
+                                ) : (
+                                  texto
+                                )}
+                              </TableCell>
+                                );
+                              })}
                             </TableRow>
-                          ))}
+                            );
+                          })}
                         </TableBody>
                       </Table>
                     </div>

@@ -1,4 +1,5 @@
 import { createBrowserRouter, Navigate } from "react-router";
+import { useAuth } from "./AuthContext";
 import Layout from "./Layout";
 import Login from "./pages/Login";
 import Inicio from "./pages/Inicio";
@@ -19,14 +20,22 @@ import Perfil from "./pages/Perfil";
 import Empresas from "./pages/Empresas";
 import AuditoriaUsuarios from "./pages/AuditoriaUsuarios";
 
-// Protected Route Component
+/** Protege rutas: al cerrar sesión (user=null) redirige a /login. */
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const isAuthenticated = localStorage.getItem('ztrack_user') !== null;
-  
-  if (!isAuthenticated) {
+  const { user, authReady } = useAuth();
+
+  if (!authReady) {
+    const hasStored = localStorage.getItem("ztrack_user") !== null;
+    if (!hasStored) {
+      return <Navigate to="/login" replace />;
+    }
+    return <>{children}</>;
+  }
+
+  if (user == null) {
     return <Navigate to="/login" replace />;
   }
-  
+
   return <>{children}</>;
 }
 
