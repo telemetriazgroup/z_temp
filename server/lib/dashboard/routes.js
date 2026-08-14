@@ -377,6 +377,12 @@ export function createDashboardRouter() {
             recentlyRegistered: longestOffline,
             longestOffline,
           },
+          /** Flota completa ya cargada para hidratar listado sin reconsultar. */
+          fleet: {
+            dispositivos: visibles,
+            zona_horaria: 'GMT-5',
+            captured_at: liveCounts.captured_at ?? new Date().toISOString(),
+          },
           users: {
             recentLogins: superUser ? recentLogins : [],
           },

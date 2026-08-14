@@ -21,7 +21,13 @@ import type {
   DashboardPeriodAverage,
 } from '../modules/correo/types';
 import { useAuth } from '../AuthContext';
-import { userIsMonitoreoNavigation } from '../modules/usuario';
+import { userIsMonitoreoNavigation, userIsSuperAdmin } from '../modules/usuario';
+import {
+  listadoFilterPath,
+  useDispositivosFleet,
+} from '../DispositivosFleetContext';
+import type { DispositivoUltimoEstado } from '../types';
+import { takePreloadedOverview } from '../lib/dashboardPreload';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
@@ -102,12 +108,14 @@ function KpiCard({
   hint,
   tone,
   icon: Icon,
+  onClick,
 }: {
   label: string;
   value: number | string;
   hint?: string;
   tone?: 'ok' | 'warn' | 'bad' | 'muted';
   icon: React.ComponentType<{ className?: string }>;
+  onClick?: () => void;
 }) {
   const toneClass =
     tone === 'ok'
@@ -117,15 +125,24 @@ function KpiCard({
         : tone === 'bad'
           ? 'border-red-200 bg-red-50/40'
           : 'bg-card';
+  const Comp = onClick ? 'button' : 'div';
   return (
-    <div className={cn('rounded-lg border p-3 sm:p-4', toneClass)}>
+    <Comp
+      type={onClick ? 'button' : undefined}
+      onClick={onClick}
+      className={cn(
+        'rounded-lg border p-3 sm:p-4 text-left w-full',
+        toneClass,
+        onClick && 'cursor-pointer hover:ring-2 hover:ring-primary/30 transition-shadow'
+      )}
+    >
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs text-muted-foreground">{label}</span>
         <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
       </div>
       <div className="text-2xl font-semibold mt-1 tabular-nums">{value}</div>
       {hint ? <div className="text-[11px] text-muted-foreground mt-0.5">{hint}</div> : null}
-    </div>
+    </Comp>
   );
 }
 
@@ -166,6 +183,7 @@ function AvgBlock({
 export default function Inicio() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { hydrateFromDispositivos } = useDispositivosFleet();
   const esMonitoreo = userIsMonitoreoNavigation(user);
   const esSuper = user?.superUser === true;
 
@@ -175,21 +193,44 @@ export default function Inicio() {
   const [reviewing, setReviewing] = useState<string | null>(null);
   const [historial3h, setHistorial3h] = useState<Historial3hTarget | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { force?: boolean }) => {
     setError(null);
+    const force = opts?.force === true;
+
+    if (!force) {
+      const preloaded = takePreloadedOverview(user?.username);
+      if (preloaded != null) {
+        setData(preloaded);
+        const fleetDevices = preloaded.fleet?.dispositivos;
+        if (Array.isArray(fleetDevices) && fleetDevices.length > 0) {
+          hydrateFromDispositivos(fleetDevices as DispositivoUltimoEstado[], {
+            zonaHoraria: preloaded.fleet?.zona_horaria,
+          });
+        }
+        setLoading(false);
+        return;
+      }
+    }
+
     setLoading(true);
     try {
       const overview = await fetchDashboardOverview({
         username: user?.username,
-        superUser: user?.superUser === true,
+        superUser: userIsSuperAdmin(user) || user?.superUser === true,
       });
       setData(overview);
+      const fleetDevices = overview.fleet?.dispositivos;
+      if (Array.isArray(fleetDevices) && fleetDevices.length > 0) {
+        hydrateFromDispositivos(fleetDevices as DispositivoUltimoEstado[], {
+          zonaHoraria: overview.fleet?.zona_horaria,
+        });
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error al cargar dashboard');
     } finally {
       setLoading(false);
     }
-  }, [user?.username, user?.superUser]);
+  }, [user?.username, user?.superUser, user, hydrateFromDispositivos]);
 
   useEffect(() => {
     void load();
@@ -205,7 +246,7 @@ export default function Inicio() {
         username: user?.username,
         superUser: true,
       });
-      await load();
+      await load({ force: true });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo marcar revisión');
     } finally {
@@ -247,7 +288,7 @@ export default function Inicio() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
+          <Button variant="outline" size="sm" onClick={() => void load({ force: true })} disabled={loading}>
             <RefreshCw className={cn('h-4 w-4 mr-2', loading && 'animate-spin')} />
             Actualizar
           </Button>
@@ -279,7 +320,7 @@ export default function Inicio() {
         <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-6 flex flex-col items-center gap-3">
           <AlertCircle className="h-10 w-10 text-destructive" />
           <p className="text-sm text-destructive font-medium">{error}</p>
-          <Button variant="outline" onClick={() => void load()}>
+          <Button variant="outline" onClick={() => void load({ force: true })}>
             Reintentar
           </Button>
         </div>
@@ -302,21 +343,49 @@ export default function Inicio() {
           )}
 
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-            <KpiCard label="Online" value={live.online} tone="ok" icon={Wifi} hint={`${live.pct_online ?? 0}%`} />
-            <KpiCard label="Wait" value={live.wait} tone="warn" icon={Clock} />
-            <KpiCard label="Offline" value={live.offline} tone="muted" icon={WifiOff} />
+            <KpiCard
+              label="Online"
+              value={live.online}
+              tone="ok"
+              icon={Wifi}
+              hint={`${live.pct_online ?? 0}% · ver listado`}
+              onClick={() => navigate(listadoFilterPath({ status: 'ONLINE' }))}
+            />
+            <KpiCard
+              label="Wait"
+              value={live.wait}
+              tone="warn"
+              icon={Clock}
+              hint="Ver listado"
+              onClick={() => navigate(listadoFilterPath({ status: 'WAIT' }))}
+            />
+            <KpiCard
+              label="Offline"
+              value={live.offline}
+              tone="muted"
+              icon={WifiOff}
+              hint="Ver listado"
+              onClick={() => navigate(listadoFilterPath({ status: 'OFFLINE' }))}
+            />
             <KpiCard
               label="En rango"
               value={live.en_rango}
               tone="ok"
               icon={Thermometer}
-              hint={live.pct_en_rango != null ? `${live.pct_en_rango}%` : undefined}
+              hint={
+                live.pct_en_rango != null
+                  ? `${live.pct_en_rango}% · ver listado`
+                  : 'Ver listado'
+              }
+              onClick={() => navigate(listadoFilterPath({ rango: 'en' }))}
             />
             <KpiCard
               label="Fuera de rango"
               value={live.fuera_rango}
               tone={live.fuera_rango > 0 ? 'bad' : 'ok'}
               icon={ThermometerSnowflake}
+              hint="Ver listado"
+              onClick={() => navigate(listadoFilterPath({ rango: 'fuera' }))}
             />
           </div>
 

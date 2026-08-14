@@ -473,6 +473,15 @@ export interface DashboardOverview {
     /** @deprecated alias de longestOffline */
     recentlyRegistered: DashboardOfflineEquipo[];
   };
+  /**
+   * Flota visible completa (misma carga del overview).
+   * El cliente la hidrata en DispositivosFleetContext para no reconsultar en Listado.
+   */
+  fleet?: {
+    dispositivos: import('../../types').DispositivoUltimoEstado[];
+    zona_horaria?: string;
+    captured_at?: string;
+  };
   users: {
     recentLogins: DashboardUserLogin[];
   };

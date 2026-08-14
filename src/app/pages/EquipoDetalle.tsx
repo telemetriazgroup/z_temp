@@ -1,15 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
-import { fetchUltimoEstadoDispositivos } from '../api/termoking';
 import { dispositivoTieneHistorialOficial } from '../api/datosOficiales';
 import { HistorialOficialDetalle } from '../components/HistorialOficialDetalle';
 import { AnalisisTelemetriaPanel } from '../components/AnalisisTelemetriaPanel';
 import type {
   DispositivoUltimoEstado,
   UltimoDatoDispositivo,
-  UltimoEstadoDispositivosResponse,
 } from '../types';
 import { useAuth } from '../AuthContext';
+import { useDispositivosFleet } from '../DispositivosFleetContext';
 import { readDeviceLocalNames } from '../lib/deviceLocalNames';
 import {
   userMayAccessDispositivo,
@@ -273,21 +272,6 @@ function matchPassedDevice(
   return d;
 }
 
-function findDeviceInResponse(
-  response: UltimoEstadoDispositivosResponse,
-  imei: string,
-  codigoParam: string
-): DispositivoUltimoEstado | null {
-  const list = response.data.dispositivos;
-  return (
-    list.find((row) => {
-      if (row.imei !== imei) return false;
-      if (!codigoParam) return true;
-      return row.codigo === codigoParam;
-    }) ?? null
-  );
-}
-
 export default function EquipoDetalle() {
   const location = useLocation();
   const [searchParams] = useSearchParams();
@@ -295,6 +279,11 @@ export default function EquipoDetalle() {
   const codigoParam = searchParams.get('codigo') ?? '';
   const navigate = useNavigate();
   const { user } = useAuth();
+  const {
+    findDispositivo,
+    refreshFleet,
+    upsertDispositivo,
+  } = useDispositivosFleet();
   const localNames = useMemo(() => readDeviceLocalNames(), []);
 
   const passedDevice = useMemo(
@@ -327,13 +316,20 @@ export default function EquipoDetalle() {
     []
   );
 
-  const fetchDispositivoActual = useCallback(
-    async (): Promise<DispositivoUltimoEstado | null> => {
-      const response = await fetchUltimoEstadoDispositivos();
-      return findDeviceInResponse(response, imei, codigoParam);
-    },
-    [imei, codigoParam]
-  );
+  const fetchDispositivoActual = useCallback(async (): Promise<DispositivoUltimoEstado | null> => {
+    // Al abrir un equipo, recargamos la flota completa (actualiza listado en caché)
+    // y devolvemos el dispositivo seleccionado.
+    const response = await refreshFleet();
+    if (response == null) return findDispositivo(imei, codigoParam || null);
+    const found =
+      response.data.dispositivos.find((row) => {
+        if (row.imei !== imei) return false;
+        if (!codigoParam) return true;
+        return row.codigo === codigoParam;
+      }) ?? null;
+    if (found) upsertDispositivo(found);
+    return found;
+  }, [refreshFleet, findDispositivo, upsertDispositivo, imei, codigoParam]);
 
   useEffect(() => {
     if (!imei) {
@@ -341,26 +337,32 @@ export default function EquipoDetalle() {
       setLoading(false);
       return;
     }
-    if (passedDevice) {
-      setDispositivo(passedDevice);
+
+    const initial = passedDevice ?? findDispositivo(imei, codigoParam || null);
+    if (initial) {
+      setDispositivo(initial);
       setLoading(false);
       setError(null);
-      return;
+    } else {
+      setLoading(true);
+      setError(null);
     }
 
     let cancelled = false;
     (async () => {
-      setLoading(true);
-      setError(null);
       try {
         const found = await fetchDispositivoActual();
         if (cancelled) return;
-        setDispositivo(found);
-        if (!found) {
+        if (found) {
+          syncDeviceAlarmsFromTelemetry([found]);
+          setDispositivo(found);
+          setError(null);
+        } else if (!initial) {
           setError('No se encontró el equipo con ese IMEI y origen.');
+          setDispositivo(null);
         }
       } catch (e) {
-        if (!cancelled) {
+        if (!cancelled && !initial) {
           setError(e instanceof Error ? e.message : 'Error al cargar');
           setDispositivo(null);
         }
@@ -372,7 +374,9 @@ export default function EquipoDetalle() {
     return () => {
       cancelled = true;
     };
-  }, [imei, codigoParam, passedDevice, fetchDispositivoActual]);
+    // Solo al cambiar de equipo: refresca flota en vivo sin re-disparar por updates de caché
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imei, codigoParam]);
 
   const consultarActualizacion = useCallback(
     async (pantallaCompleta = false) => {
@@ -408,10 +412,10 @@ export default function EquipoDetalle() {
         );
         setError(null);
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Error al cargar');
+        setError(e instanceof Error ? e.message : 'Error al actualizar');
       } finally {
-        if (pantallaCompleta) setLoading(false);
-        else setRefreshing(false);
+        setLoading(false);
+        setRefreshing(false);
       }
     },
     [imei, fetchDispositivoActual]

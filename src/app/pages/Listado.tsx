@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router';
-import { fetchUltimoEstadoDispositivos } from '../api/termoking';
+import { useNavigate, useSearchParams } from 'react-router';
 import type {
   UltimoEstadoDispositivosResponse,
   DispositivoUltimoEstado,
@@ -52,7 +51,6 @@ import {
 } from '../modules/usuario';
 import {
   ensureAlarmCatalog,
-  syncDeviceAlarmsFromTelemetry,
   resolveAlarmTitle,
   extractActiveAlarmCodes,
 } from '../modules/alarma';
@@ -61,6 +59,13 @@ import { exportEquipoUltimoEstadoJson } from '../lib/exportEquipoJson';
 import { MapPin, RefreshCw, AlertCircle, Pencil, Download, History } from 'lucide-react';
 import { Historial3hModal, type Historial3hTarget } from '../components/Historial3hModal';
 import { dispositivoTieneHistorialOficial } from '../api/datosOficiales';
+import {
+  useDispositivosFleet,
+  parseFleetStatusParam,
+  parseFleetRangoParam,
+  type FleetStatusFilter,
+  type FleetRangoFilter,
+} from '../DispositivosFleetContext';
 
 const API_STATUS_MAP = {
   online: 'ONLINE',
@@ -75,8 +80,9 @@ const API_POWER_MAP = {
 
 const SIN_ASIGNAR = 'SIN ASIGNAR';
 
-type StatusFilter = 'ALL' | 'ONLINE' | 'WAIT' | 'OFFLINE';
+type StatusFilter = FleetStatusFilter;
 type CodigoFilter = 'ALL' | DispositivoOrigenCodigo;
+type RangoFilter = FleetRangoFilter;
 
 const CODIGO_FILTER_OPTIONS: { id: CodigoFilter; label: string }[] = [
   { id: 'ALL', label: 'Todos' },
@@ -140,6 +146,13 @@ const STATUS_FILTER_OPTIONS = [
   { id: 'OFFLINE' as const, label: 'Offline' },
 ] as const;
 
+const RANGO_FILTER_OPTIONS = [
+  { id: 'ALL' as const, label: 'Todos' },
+  { id: 'en' as const, label: 'En rango' },
+  { id: 'fuera' as const, label: 'Fuera de rango' },
+  { id: 'apagado' as const, label: 'Apagado' },
+] as const;
+
 function mapDeviceToDisplay(
   d: DispositivoUltimoEstado,
   alertCfg?: DeviceAlertConfig | null
@@ -194,8 +207,14 @@ function formatTemp(value: number | null): string {
 }
 
 export default function Listado() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(() =>
+    parseFleetStatusParam(searchParams.get('status'))
+  );
+  const [rangoFilter, setRangoFilter] = useState<RangoFilter>(() =>
+    parseFleetRangoParam(searchParams.get('rango'))
+  );
   const [codigoFilter, setCodigoFilter] = useState<CodigoFilter>('ALL');
   const [localNames, setLocalNames] = useState<DeviceLocalNameMap>(() =>
     readDeviceLocalNames()
@@ -209,35 +228,57 @@ export default function Listado() {
     draft: string;
   } | null>(null);
   const [historial3h, setHistorial3h] = useState<Historial3hTarget | null>(null);
-  const [data, setData] = useState<UltimoEstadoDispositivosResponse | null>(null);
   const [alertConfigMap, setAlertConfigMap] = useState<Record<string, DeviceAlertConfig>>({});
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [alertLoading, setAlertLoading] = useState(true);
   const navigate = useNavigate();
   const { user } = useAuth();
   const esSuperUser = user?.superUser === true;
+  const {
+    data,
+    loading: fleetLoading,
+    error: fleetError,
+    fetchedAt,
+    ensureFleet,
+    refreshFleet,
+    isStale,
+  } = useDispositivosFleet();
 
-  const load = useCallback(async () => {
-    setError(null);
-    setLoading(true);
-    try {
-      const [response, alertCfg] = await Promise.all([
-        fetchUltimoEstadoDispositivos(),
-        fetchDeviceAlertConfigMap().catch(() => ({} as Record<string, DeviceAlertConfig>)),
-      ]);
-      ensureAlarmCatalog();
-      syncDeviceAlarmsFromTelemetry(response.data.dispositivos);
-      setData(response);
-      setAlertConfigMap(alertCfg);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error al cargar dispositivos');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const syncFiltersToUrl = useCallback(
+    (status: StatusFilter, rango: RangoFilter) => {
+      const next = new URLSearchParams();
+      if (status !== 'ALL') next.set('status', status);
+      if (rango !== 'ALL') next.set('rango', rango);
+      setSearchParams(next, { replace: true });
+    },
+    [setSearchParams]
+  );
 
   useEffect(() => {
-    load();
+    setStatusFilter(parseFleetStatusParam(searchParams.get('status')));
+    setRangoFilter(parseFleetRangoParam(searchParams.get('rango')));
+  }, [searchParams]);
+
+  const load = useCallback(
+    async (force = false) => {
+      setAlertLoading(true);
+      try {
+        const [, alertCfg] = await Promise.all([
+          ensureFleet({ force }),
+          fetchDeviceAlertConfigMap().catch(
+            () => ({} as Record<string, DeviceAlertConfig>)
+          ),
+        ]);
+        ensureAlarmCatalog();
+        setAlertConfigMap(alertCfg);
+      } finally {
+        setAlertLoading(false);
+      }
+    },
+    [ensureFleet]
+  );
+
+  useEffect(() => {
+    void load(false);
   }, [load]);
 
   useEffect(() => {
@@ -249,6 +290,8 @@ export default function Listado() {
   }, []);
 
   const dispositivos = data?.data?.dispositivos ?? [];
+  const loading = (fleetLoading && !data) || alertLoading;
+  const error = fleetError;
 
   const visibleDispositivos = useMemo(
     () => dispositivos.filter((d) => userMayAccessDispositivo(user, d)),
@@ -275,6 +318,16 @@ export default function Listado() {
       }
       if (statusFilter !== 'ALL' && apiStatusOf(device) !== statusFilter) {
         return false;
+      }
+      if (rangoFilter !== 'ALL') {
+        const rk = deviceRowKey(device);
+        const estado = evaluarEstadoRangoListado(
+          device,
+          alertConfigMap[rk] ?? null
+        );
+        if (rangoFilter === 'en' && estado !== 'normal') return false;
+        if (rangoFilter === 'fuera' && estado !== 'fuera') return false;
+        if (rangoFilter === 'apagado' && estado !== 'apagado') return false;
       }
       const search = searchTerm.toLowerCase();
       const codigo = (device.codigo ?? '').toLowerCase();
@@ -406,7 +459,7 @@ export default function Listado() {
           <AlertCircle className="h-12 w-12 text-red-600" />
           <p className="text-red-800 font-medium">Error al cargar los datos</p>
           <p className="text-red-700 text-sm text-center">{error}</p>
-          <Button onClick={load} variant="outline">
+          <Button onClick={() => void load(true)} variant="outline">
             Reintentar
           </Button>
         </div>
@@ -419,28 +472,47 @@ export default function Listado() {
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold">Listado de Dispositivos</h1>
-          <p className="text-gray-500 mt-1">Gestión de equipos registrados</p>
+          <p className="text-gray-500 mt-1">
+            Gestión de equipos registrados
+            {fetchedAt != null && (
+              <span className="text-xs text-muted-foreground ml-2">
+                · caché{' '}
+                {new Date(fetchedAt).toLocaleTimeString('es-PE', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
+                {isStale ? ' (actualizando…)' : ''}
+                {' · auto 10 min'}
+              </span>
+            )}
+          </p>
         </div>
         <div className="flex items-center gap-4">
           <Button
             variant="outline"
             size="sm"
-            onClick={load}
-            disabled={loading}
+            onClick={() => void load(true)}
+            disabled={fleetLoading}
           >
             <RefreshCw
-              className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`}
+              className={`h-4 w-4 mr-2 ${fleetLoading ? 'animate-spin' : ''}`}
             />
             Actualizar
           </Button>
           <div className="text-right">
             <div className="text-sm text-gray-500">Total de Dispositivos</div>
             <div className="text-3xl font-bold">
-              {codigoFilter !== 'ALL' || statusFilter !== 'ALL' || searchTerm.trim()
+              {codigoFilter !== 'ALL' ||
+              statusFilter !== 'ALL' ||
+              rangoFilter !== 'ALL' ||
+              searchTerm.trim()
                 ? filteredDevices.length
                 : visibleDispositivos.length}
             </div>
-            {(codigoFilter !== 'ALL' || statusFilter !== 'ALL' || searchTerm.trim()) && (
+            {(codigoFilter !== 'ALL' ||
+              statusFilter !== 'ALL' ||
+              rangoFilter !== 'ALL' ||
+              searchTerm.trim()) && (
               <div className="text-xs text-muted-foreground">
                 de {visibleDispositivos.length} visibles
               </div>
@@ -466,7 +538,27 @@ export default function Listado() {
                 type="button"
                 variant={statusFilter === id ? 'default' : 'outline'}
                 size="sm"
-                onClick={() => setStatusFilter(id)}
+                onClick={() => {
+                  setStatusFilter(id);
+                  syncFiltersToUrl(id, rangoFilter);
+                }}
+              >
+                {label}
+              </Button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm text-muted-foreground">Rango:</span>
+            {RANGO_FILTER_OPTIONS.map(({ id, label }) => (
+              <Button
+                key={id}
+                type="button"
+                variant={rangoFilter === id ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => {
+                  setRangoFilter(id);
+                  syncFiltersToUrl(statusFilter, id);
+                }}
               >
                 {label}
               </Button>
