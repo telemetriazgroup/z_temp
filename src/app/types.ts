@@ -3,6 +3,14 @@ export type PowerStatus = 'ON' | 'OFF';
 export type DeviceType = 'Reefer' | 'Genset' | 'Ripener' | 'Blast-F' | 'Blast-C';
 export type UserRole = 'Administrador' | 'Monitoreo' | 'Solo Vista';
 
+/**
+ * Jerarquía de cuentas:
+ * - superadmin: acceso total + auditoría + gestión sin cuota
+ * - admin: ve todos los dispositivos, gestiona hasta N usuarios (default 3), sin auditoría
+ * - user: operativo / monitoreo según role y deviceAccess
+ */
+export type UserCategory = 'superadmin' | 'admin' | 'user';
+
 /** Origen del dispositivo en el listado agregado. */
 export type DispositivoOrigenCodigo =
   | 'TUNEL'
@@ -51,6 +59,8 @@ export interface Alarm {
   reportadaEmail: boolean;
 }
 
+export type UserSexo = 'M' | 'F' | 'O';
+
 export interface User {
   id: string;
   username: string;
@@ -58,12 +68,62 @@ export interface User {
   role: UserRole;
   /** `['all']` = todos los IMEI. Si no es superusuario, lista explícita de IMEI. */
   deviceAccess: string[];
-  /** Acceso global y gestión de usuarios (CRUD). */
+  /** Acceso global y gestión de usuarios (CRUD). Legacy: equivale a category superadmin. */
   superUser?: boolean;
+  /** Categoría jerárquica (preferida sobre solo superUser). */
+  category?: UserCategory;
+  /**
+   * Tope de usuarios que un admin puede crear (default 3).
+   * Solo el superadmin puede subir este valor.
+   */
+  maxManagedUsers?: number;
+  /** Username del creador (cuota de admin). */
+  createdBy?: string;
   /** Etiquetas fijas por IMEI (p. ej. cuenta IFF Perú). */
   deviceNames?: Record<string, string>;
   /** Orígenes visibles (TUNEL, STARCOOL, STARCOOL2, TERMOKING). Si se omite, todos. */
   allowedCodigos?: DispositivoOrigenCodigo[];
+  /** Nombre visible en navbar / perfil (derivable de nombres+apellidos). */
+  displayName?: string;
+  /** Preferencia de zona para visualización (GMT-4 / GMT-5). */
+  zonaHoraria?: 'GMT-4' | 'GMT-5' | string;
+  /** URL opcional de avatar; si falta se usan iniciales. */
+  avatarUrl?: string;
+  /** Datos personales opcionales */
+  cargo?: string;
+  nombres?: string;
+  apellidos?: string;
+  dni?: string;
+  correo?: string;
+  telefono?: string;
+  sexo?: UserSexo;
+  /** Empresa asignada (módulo empresa). */
+  empresaId?: string;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  at: string;
+  actorUsername: string;
+  actorId?: string;
+  action: string;
+  module: string;
+  summary: string;
+  targetUsername?: string;
+  targetId?: string;
+  detail?: Record<string, unknown>;
+}
+
+export interface Empresa {
+  id: string;
+  nombre: string;
+  ruc?: string;
+  direccion?: string;
+  telefono?: string;
+  correo?: string;
+  activo?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface AlarmConfig {

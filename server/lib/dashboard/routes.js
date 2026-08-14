@@ -17,7 +17,6 @@ import {
 import { getLinkStatuses, getLinkProbeHistory } from './linkHealth.js';
 import {
   listDevicesPendingReview,
-  listRecentlyRegistered,
   markDeviceReviewed,
 } from './deviceRegistry.js';
 import { listRecentLogins } from './userActivity.js';
@@ -100,7 +99,7 @@ function weekStatusFromSeries(series, averages) {
   };
 }
 
-function buildUrgent(dispositivosVisibles, imeisFilter, limit = 8) {
+function buildUrgent(dispositivosVisibles, imeisFilter, limit = 5) {
   const allowed =
     Array.isArray(imeisFilter) && imeisFilter.length > 0
       ? new Set(imeisFilter)
@@ -174,6 +173,43 @@ function buildUrgent(dispositivosVisibles, imeisFilter, limit = 8) {
     }));
 
   return { envios, alarmas, conectados, fueraRango };
+}
+
+/** Equipos fuera de línea (offline/wait) con más minutos sin dato, descendente. */
+function buildLongestOffline(dispositivosVisibles, limit = 5) {
+  return dispositivosVisibles
+    .filter((d) => {
+      const s = String(d.estado_conexion ?? '').toLowerCase();
+      return s === 'offline' || s === 'wait';
+    })
+    .map((d) => {
+      const minutos =
+        d.minutos_desde_ultimo_dato != null &&
+        Number.isFinite(Number(d.minutos_desde_ultimo_dato))
+          ? Number(d.minutos_desde_ultimo_dato)
+          : null;
+      return {
+        imei: d.imei,
+        codigo: d.codigo ?? null,
+        rowKey: deviceRowKey(d),
+        nombre:
+          getDeviceNameByImei(d.imei) ||
+          d.ultimo_dato?.nombre_contenedor ||
+          d.imei,
+        estado_conexion: String(d.estado_conexion ?? 'offline').toLowerCase(),
+        minutos_desde_ultimo_dato: minutos,
+        ultima_actualizacion: d.ultima_actualizacion ?? null,
+      };
+    })
+    .sort((a, b) => {
+      const ma = a.minutos_desde_ultimo_dato;
+      const mb = b.minutos_desde_ultimo_dato;
+      if (ma == null && mb == null) return 0;
+      if (ma == null) return 1;
+      if (mb == null) return -1;
+      return mb - ma;
+    })
+    .slice(0, limit);
 }
 
 function emptyLive() {
@@ -276,7 +312,6 @@ export function createDashboardRouter() {
         linkStatuses,
         linkProbes,
         pendingReview,
-        recentlyRegistered,
         recentLogins,
         latest,
       ] = await Promise.all([
@@ -285,14 +320,14 @@ export function createDashboardRouter() {
         getDailySeries({ days: 14, imeis }),
         getLinkStatuses(),
         getLinkProbeHistory({ hours: 3 }),
-        superUser ? listDevicesPendingReview({ limit: 15 }) : Promise.resolve([]),
-        listRecentlyRegistered({ limit: 10 }),
-        superUser ? listRecentLogins({ limit: 12 }) : Promise.resolve([]),
+        superUser ? listDevicesPendingReview({ limit: 5 }) : Promise.resolve([]),
+        superUser ? listRecentLogins({ limit: 5 }) : Promise.resolve([]),
         imeis ? Promise.resolve(null) : getLatestFleetSnapshot(),
       ]);
 
       const weekStatus = weekStatusFromSeries(prevWeekSeries, averages);
-      const urgent = buildUrgent(visibles, imeis);
+      const urgent = buildUrgent(visibles, imeis, 5);
+      const longestOffline = buildLongestOffline(visibles, 5);
 
       const linksDown = linkStatuses.filter((l) => !l.ok);
       const linkAlert =
@@ -338,10 +373,9 @@ export function createDashboardRouter() {
           },
           devices: {
             pendingReview: superUser ? pendingReview : [],
-            recentlyRegistered: recentlyRegistered.map((d) => ({
-              ...d,
-              nombre: getDeviceNameByImei(d.imei) || d.imei,
-            })),
+            /** @deprecated alias — usar longestOffline */
+            recentlyRegistered: longestOffline,
+            longestOffline,
           },
           users: {
             recentLogins: superUser ? recentLogins : [],

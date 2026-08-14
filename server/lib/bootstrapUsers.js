@@ -38,8 +38,36 @@ export const BOOTSTRAP_SUPERADMIN = {
   username: 'superadmin',
   password: bootstrapPasswordForUsername('superadmin'),
   role: 'Administrador',
+  category: 'superadmin',
   deviceAccess: ['all'],
   superUser: true,
+};
+
+/** Admins con visibilidad a toda la flota; sin acceso a auditoría. */
+export const BOOTSTRAP_JEFEDESARROLLO = {
+  id: 'user-jefedesarrollo',
+  username: 'jefedesarrollo',
+  password: bootstrapPasswordForUsername('jefedesarrollo'),
+  role: 'Administrador',
+  category: 'admin',
+  deviceAccess: ['all'],
+  superUser: false,
+  maxManagedUsers: 3,
+  displayName: 'Jefe Desarrollo',
+  cargo: 'Administrador',
+};
+
+export const BOOTSTRAP_ELECTRONICOZ = {
+  id: 'user-electronicoz',
+  username: 'electronicoz',
+  password: bootstrapPasswordForUsername('electronicoz'),
+  role: 'Administrador',
+  category: 'admin',
+  deviceAccess: ['all'],
+  superUser: false,
+  maxManagedUsers: 3,
+  displayName: 'Electrónico Z',
+  cargo: 'Administrador',
 };
 
 export const BOOTSTRAP_IIFPERU = {
@@ -47,6 +75,7 @@ export const BOOTSTRAP_IIFPERU = {
   username: 'iifperu',
   password: bootstrapPasswordForUsername('iifperu'),
   role: 'Monitoreo',
+  category: 'user',
   deviceAccess: IFF_ALL_IMEIS,
   superUser: false,
   deviceNames: { ...IFF_DEVICE_NAMES },
@@ -141,6 +170,8 @@ export const BOOTSTRAP_OVO_SURCHINCHA = {
 
 export const BOOTSTRAP_USERS = [
   BOOTSTRAP_SUPERADMIN,
+  BOOTSTRAP_JEFEDESARROLLO,
+  BOOTSTRAP_ELECTRONICOZ,
   BOOTSTRAP_IIFPERU,
   BOOTSTRAP_OVO_SURCHINCHA,
   ...BOOTSTRAP_IFF_NAMED_USERS,

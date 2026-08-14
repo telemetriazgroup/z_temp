@@ -15,6 +15,7 @@ interface AuthContextType {
   login: (username: string, password: string) => Promise<User | null>;
   logout: () => void;
   refreshUser: () => Promise<void>;
+  applyUser: (user: User) => void;
   isAuthenticated: boolean;
   authReady: boolean;
 }
@@ -27,7 +28,13 @@ function readStoredSession(): User | null {
     if (!stored) return null;
     const parsed = JSON.parse(stored) as User;
     if (parsed != null && !Array.isArray(parsed.deviceAccess)) {
-      parsed.deviceAccess = parsed.superUser === true ? ['all'] : [];
+      parsed.deviceAccess =
+        parsed.superUser === true || parsed.category === 'admin' || parsed.category === 'superadmin'
+          ? ['all']
+          : [];
+    }
+    if (parsed?.superUser === true && !parsed.category) {
+      parsed.category = 'superadmin';
     }
     return parsed;
   } catch {
@@ -102,9 +109,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const applyUser = useCallback((next: User) => {
+    setUser(next);
+    persistSession(next);
+  }, []);
+
   return (
     <AuthContext.Provider
-      value={{ user, login, logout, refreshUser, isAuthenticated: !!user, authReady }}
+      value={{
+        user,
+        login,
+        logout,
+        refreshUser,
+        applyUser,
+        isAuthenticated: !!user,
+        authReady,
+      }}
     >
       {children}
     </AuthContext.Provider>

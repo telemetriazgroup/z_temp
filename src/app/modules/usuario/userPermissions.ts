@@ -1,5 +1,38 @@
-import type { User, DispositivoUltimoEstado } from '../../types';
+import type { User, UserCategory } from '../../types';
 import { IFF_STYLE_ACCOUNT_USERNAMES } from './bootstrapUsers';
+
+export function resolveUserCategory(user: User | null | undefined): UserCategory {
+  if (user == null) return 'user';
+  if (user.superUser === true) return 'superadmin';
+  const c = (user.category ?? '').trim().toLowerCase();
+  if (c === 'superadmin' || c === 'admin' || c === 'user') return c;
+  return 'user';
+}
+
+export function userIsSuperAdmin(user: User | null | undefined): boolean {
+  return resolveUserCategory(user) === 'superadmin';
+}
+
+export function userIsAdmin(user: User | null | undefined): boolean {
+  return resolveUserCategory(user) === 'admin';
+}
+
+/** Superadmin o admin: pueden gestionar usuarios. */
+export function userCanManageUsers(user: User | null | undefined): boolean {
+  const c = resolveUserCategory(user);
+  return c === 'superadmin' || c === 'admin';
+}
+
+/** Solo superadmin ve auditoría de cambios / telemetría por usuario. */
+export function userCanAccessAudit(user: User | null | undefined): boolean {
+  return userIsSuperAdmin(user);
+}
+
+export function adminMaxManagedUsers(user: User | null | undefined): number {
+  const n = Number(user?.maxManagedUsers);
+  if (Number.isFinite(n) && n >= 0) return Math.floor(n);
+  return 3;
+}
 
 /** Normaliza `deviceAccess` aunque falte en sesiones/usuarios antiguos. */
 export function deviceAccessList(user: User | null | undefined): string[] {
@@ -7,15 +40,16 @@ export function deviceAccessList(user: User | null | undefined): string[] {
   return Array.isArray(user.deviceAccess) ? user.deviceAccess : [];
 }
 
-/** Menú restringido para rol Monitoreo (no superusuario). */
+/** Menú restringido para rol Monitoreo (no superadmin/admin). */
 export function userIsMonitoreoNavigation(user: User | null): boolean {
-  if (user == null || user.superUser === true) return false;
+  if (user == null) return false;
+  if (userCanManageUsers(user)) return false;
   return user.role === 'Monitoreo';
 }
 
 /** Operativo restringido: cuentas semilla tipo IFF o correo `@iff.com` (no superusuario). */
 export function userIsIffRestrictedNavigation(user: User | null): boolean {
-  if (user == null || user.superUser === true) return false;
+  if (user == null || userCanManageUsers(user)) return false;
   const u = user.username?.trim().toLowerCase() ?? '';
   if ((IFF_STYLE_ACCOUNT_USERNAMES as readonly string[]).includes(u)) return true;
   return u.endsWith('@iff.com');
@@ -23,7 +57,7 @@ export function userIsIffRestrictedNavigation(user: User | null): boolean {
 
 export function userHasFullDeviceAccess(user: User | null): boolean {
   if (user == null) return false;
-  if (user.superUser === true) return true;
+  if (userCanManageUsers(user)) return true;
   return deviceAccessList(user).includes('all');
 }
 
@@ -36,7 +70,7 @@ export function userMayAccessImei(user: User | null, imei: string): boolean {
 /** IMEI + origen (TUNEL / STARCOOL / STARCOOL2 / TERMOKING) según perfil del usuario. */
 export function userMayAccessDispositivo(
   user: User | null,
-  dispositivo: DispositivoUltimoEstado
+  dispositivo: import('../../types').DispositivoUltimoEstado
 ): boolean {
   if (!userMayAccessImei(user, dispositivo.imei)) return false;
   const allowed = user?.allowedCodigos;
@@ -59,5 +93,12 @@ export function displayNameForDevice(
 }
 
 export function countSuperUsers(users: User[]): number {
-  return users.filter((u) => u.superUser === true).length;
+  return users.filter((u) => userIsSuperAdmin(u)).length;
+}
+
+export function categoryLabel(user: User | null | undefined): string {
+  const c = resolveUserCategory(user);
+  if (c === 'superadmin') return 'Superadmin';
+  if (c === 'admin') return 'Admin';
+  return user?.role ?? 'Usuario';
 }

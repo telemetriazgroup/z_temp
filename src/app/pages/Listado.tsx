@@ -58,7 +58,9 @@ import {
 } from '../modules/alarma';
 import { cn } from '../components/ui/utils';
 import { exportEquipoUltimoEstadoJson } from '../lib/exportEquipoJson';
-import { MapPin, RefreshCw, AlertCircle, Pencil, Download } from 'lucide-react';
+import { MapPin, RefreshCw, AlertCircle, Pencil, Download, History } from 'lucide-react';
+import { Historial3hModal, type Historial3hTarget } from '../components/Historial3hModal';
+import { dispositivoTieneHistorialOficial } from '../api/datosOficiales';
 
 const API_STATUS_MAP = {
   online: 'ONLINE',
@@ -206,6 +208,7 @@ export default function Listado() {
     nombreAnterior: string;
     draft: string;
   } | null>(null);
+  const [historial3h, setHistorial3h] = useState<Historial3hTarget | null>(null);
   const [data, setData] = useState<UltimoEstadoDispositivosResponse | null>(null);
   const [alertConfigMap, setAlertConfigMap] = useState<Record<string, DeviceAlertConfig>>({});
   const [loading, setLoading] = useState(true);
@@ -511,6 +514,9 @@ export default function Listado() {
                 <TableHead>Temp. suministro</TableHead>
                 <TableHead>En rango</TableHead>
                 <TableHead>Alarmas</TableHead>
+                <TableHead className="w-[56px]" title="Últimas 3 h">
+                  3h
+                </TableHead>
                 <TableHead>Ubicación</TableHead>
                 {esSuperUser && <TableHead className="w-[90px]">JSON</TableHead>}
               </TableRow>
@@ -644,6 +650,32 @@ export default function Listado() {
                     )}
                   </TableCell>
                   <TableCell>
+                    {dispositivoTieneHistorialOficial(
+                      device.raw.codigo as DispositivoOrigenCodigo | undefined
+                    ) ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        title="Ver últimas 3 h acumuladas"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setHistorial3h({
+                            imei: device.raw.imei,
+                            codigo: device.raw.codigo as DispositivoOrigenCodigo,
+                            nombre: device.nombreAsignado,
+                            zonaHoraria: data?.data?.resumen?.zona_horaria ?? null,
+                          });
+                        }}
+                      >
+                        <History className="h-4 w-4" />
+                      </Button>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
                     {device.hasUbicacion ? (
                       <Button
                         variant="ghost"
@@ -688,6 +720,14 @@ export default function Listado() {
           No se encontraron dispositivos que coincidan con la búsqueda
         </div>
       )}
+
+      <Historial3hModal
+        open={historial3h != null}
+        onOpenChange={(open) => {
+          if (!open) setHistorial3h(null);
+        }}
+        target={historial3h}
+      />
 
       <Dialog
         open={nameEdit != null}

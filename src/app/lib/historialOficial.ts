@@ -226,3 +226,49 @@ export function claveFilaHistorial(row: DatoOficialHistorial, index: number): st
   const f = fechaRegistroHistorial(row);
   return f != null ? `${f}-${row.id ?? index}` : `sin-fecha-${row.id ?? index}`;
 }
+
+const MS_30MIN = 30 * 60 * 1000;
+
+/**
+ * Muestreo ~cada 30 min desde el último registro hacia atrás (trazabilidad 3h).
+ * Devuelve filas más reciente primero, sin duplicar el mismo punto.
+ */
+export function muestrearHistorialCada30Min(
+  datos: DatoOficialHistorial[],
+  horas = 3,
+  referencia: Date = new Date()
+): DatoOficialHistorial[] {
+  const ventana = filtrarDatosUltimasHoras(datos, horas, referencia);
+  if (ventana.length === 0) return [];
+
+  const sorted = ventana
+    .map((row) => ({ row, ts: timestampRegistroHistorial(row) }))
+    .filter(({ ts }) => !Number.isNaN(ts))
+    .sort((a, b) => a.ts - b.ts);
+
+  if (sorted.length === 0) return [];
+
+  const cutoff = referencia.getTime() - horas * MS_HORA;
+  const seen = new Set<number>();
+  const out: DatoOficialHistorial[] = [];
+  let targetTs = sorted[sorted.length - 1].ts;
+
+  while (targetTs >= cutoff) {
+    let best = sorted[0];
+    let bestDiff = Math.abs(best.ts - targetTs);
+    for (const item of sorted) {
+      const diff = Math.abs(item.ts - targetTs);
+      if (diff < bestDiff) {
+        best = item;
+        bestDiff = diff;
+      }
+    }
+    if (!seen.has(best.ts)) {
+      seen.add(best.ts);
+      out.push(best.row);
+    }
+    targetTs -= MS_30MIN;
+  }
+
+  return out.sort((a, b) => timestampRegistroHistorial(b) - timestampRegistroHistorial(a));
+}

@@ -53,14 +53,42 @@ export function bootstrapPasswordForUsername(username: string): string {
   return `${local}2026`;
 }
 
-/** Superusuario: acceso total y módulo Usuarios. */
+/** Superusuario: acceso total, auditoría y gestión sin cuota. */
 export const BOOTSTRAP_SUPERADMIN: User = {
   id: 'user-superadmin',
   username: 'superadmin',
   password: bootstrapPasswordForUsername('superadmin'),
   role: 'Administrador',
+  category: 'superadmin',
   deviceAccess: ['all'],
   superUser: true,
+};
+
+/** Admins: todos los dispositivos; crean hasta 3 usuarios; sin auditoría. */
+export const BOOTSTRAP_JEFEDESARROLLO: User = {
+  id: 'user-jefedesarrollo',
+  username: 'jefedesarrollo',
+  password: bootstrapPasswordForUsername('jefedesarrollo'),
+  role: 'Administrador',
+  category: 'admin',
+  deviceAccess: ['all'],
+  superUser: false,
+  maxManagedUsers: 3,
+  displayName: 'Jefe Desarrollo',
+  cargo: 'Administrador',
+};
+
+export const BOOTSTRAP_ELECTRONICOZ: User = {
+  id: 'user-electronicoz',
+  username: 'electronicoz',
+  password: bootstrapPasswordForUsername('electronicoz'),
+  role: 'Administrador',
+  category: 'admin',
+  deviceAccess: ['all'],
+  superUser: false,
+  maxManagedUsers: 3,
+  displayName: 'Electrónico Z',
+  cargo: 'Administrador',
 };
 
 /** IFF Perú: solo IMEI indicados con nombres definidos. */
@@ -69,6 +97,7 @@ export const BOOTSTRAP_IIFPERU: User = {
   username: 'iifperu',
   password: bootstrapPasswordForUsername('iifperu'),
   role: 'Monitoreo',
+  category: 'user',
   deviceAccess: IFF_ALL_IMEIS,
   superUser: false,
   deviceNames: { ...IFF_DEVICE_NAMES },
@@ -165,6 +194,8 @@ export const BOOTSTRAP_OVO_SURCHINCHA: User = {
 
 export const BOOTSTRAP_USERS: User[] = [
   BOOTSTRAP_SUPERADMIN,
+  BOOTSTRAP_JEFEDESARROLLO,
+  BOOTSTRAP_ELECTRONICOZ,
   BOOTSTRAP_IIFPERU,
   BOOTSTRAP_OVO_SURCHINCHA,
   ...BOOTSTRAP_IFF_NAMED_USERS,

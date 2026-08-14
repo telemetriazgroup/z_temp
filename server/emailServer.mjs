@@ -39,7 +39,27 @@ import {
   migrateUsersFromClient,
   getUserByUsername,
   getUserByIdPublic,
+  updateOwnProfile,
+  listUsersForActor,
+  canManageUsers,
+  canAccessAudit,
+  isSuperAdminUser,
+  publicUserView,
 } from './lib/usersRepository.js';
+import {
+  appendAuditEvent,
+  listAuditEvents,
+} from './lib/auditLogRepository.js';
+import {
+  listEmpresas,
+  getEmpresaById,
+  addEmpresa,
+  updateEmpresa,
+  deleteEmpresa,
+  assignUserEmpresa,
+  listUsersByEmpresa,
+} from './lib/empresasRepository.js';
+
 import { createAnalisisRouter } from './lib/analisis/routes.js';
 import { createDashboardRouter } from './lib/dashboard/routes.js';
 import { ensureAnalisisSchema } from './lib/db.js';
@@ -55,7 +75,7 @@ const DASHBOARD_SNAPSHOT_MS = Number(
 const EXTERNAL_API_KEY = process.env.CORREO_EXTERNAL_API_KEY?.trim() || '';
 const app = express();
 
-app.use(express.json({ limit: '512kb' }));
+app.use(express.json({ limit: '2mb' }));
 app.use('/reefer/api/analisis', createAnalisisRouter());
 app.use('/reefer/api/correo/dashboard', createDashboardRouter());
 
@@ -71,16 +91,54 @@ function getUser(req) {
   );
 }
 
+function resolveActor(req) {
+  const username = getUser(req);
+  if (!username || username === 'sistema') return null;
+  ensureUserRegistry();
+  return getUserByUsername(username) ?? null;
+}
+
 function isSuperUserRequest(req) {
+  const actor = resolveActor(req);
+  if (actor && isSuperAdminUser(actor)) return true;
   return req.headers['x-ztrack-super-user']?.toString().toLowerCase() === 'true';
 }
 
 function requireSuperUser(req, res) {
+  const actor = resolveActor(req);
+  if (actor && isSuperAdminUser(actor)) return true;
   if (!isSuperUserRequest(req)) {
-    res.status(403).json({ ok: false, error: 'Se requiere superusuario' });
+    res.status(403).json({ ok: false, error: 'Se requiere superadmin' });
     return false;
   }
   return true;
+}
+
+function requireUserManager(req, res) {
+  const actor = resolveActor(req);
+  if (!actor || !canManageUsers(actor)) {
+    res.status(403).json({ ok: false, error: 'Se requiere admin o superadmin' });
+    return false;
+  }
+  return actor;
+}
+
+function requireAuditAccess(req, res) {
+  const actor = resolveActor(req);
+  if (!actor || !canAccessAudit(actor)) {
+    res.status(403).json({ ok: false, error: 'Se requiere superadmin para auditoría' });
+    return false;
+  }
+  return actor;
+}
+
+function auditSafeDetail(obj) {
+  if (obj == null || typeof obj !== 'object') return undefined;
+  const clone = { ...obj };
+  delete clone.password;
+  delete clone.currentPassword;
+  delete clone.newPassword;
+  return clone;
 }
 
 function requireExternalApiKey(req, res) {
@@ -176,8 +234,9 @@ app.get('/reefer/api/correo/grupos', (_req, res) => {
 app.get('/reefer/api/correo/users', (req, res) => {
   try {
     ensureUserRegistry();
-    if (!requireSuperUser(req, res)) return;
-    res.json({ ok: true, data: getUsersPublic() });
+    const actor = requireUserManager(req, res);
+    if (!actor) return;
+    res.json({ ok: true, data: listUsersForActor(actor) });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -193,6 +252,17 @@ app.post('/reefer/api/correo/users/login', async (req, res) => {
     const user = authenticate(username, password);
     if (user == null) {
       return res.status(401).json({ ok: false, error: 'Usuario o contraseña incorrectos' });
+    }
+    try {
+      appendAuditEvent({
+        actorUsername: user.username,
+        actorId: user.id,
+        action: 'login',
+        module: 'auth',
+        summary: `Inicio de sesión de ${user.username}`,
+      });
+    } catch {
+      // ignore
     }
     try {
       const { ensureDashboardSchema } = await import('./lib/db.js');
@@ -216,8 +286,7 @@ app.get('/reefer/api/correo/users/by-username/:username', (req, res) => {
     if (user == null) {
       return res.status(404).json({ ok: false, error: 'Usuario no encontrado' });
     }
-    const { password: _p, ...publicUser } = user;
-    res.json({ ok: true, data: publicUser });
+    res.json({ ok: true, data: publicUserView(user) });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -225,8 +294,27 @@ app.get('/reefer/api/correo/users/by-username/:username', (req, res) => {
 
 app.post('/reefer/api/correo/users', (req, res) => {
   try {
-    if (!requireSuperUser(req, res)) return;
-    const created = addUser(req.body ?? {});
+    const actor = requireUserManager(req, res);
+    if (!actor) return;
+    const created = addUser(req.body ?? {}, { actor });
+    try {
+      appendAuditEvent({
+        actorUsername: actor.username,
+        actorId: actor.id,
+        action: 'user.create',
+        module: 'usuarios',
+        summary: `Creó usuario ${created.username}`,
+        targetUsername: created.username,
+        targetId: created.id,
+        detail: auditSafeDetail({
+          role: created.role,
+          category: created.category,
+          deviceAccess: created.deviceAccess,
+        }),
+      });
+    } catch {
+      // ignore
+    }
     res.json({ ok: true, data: created });
   } catch (e) {
     res.status(400).json({ ok: false, error: e.message });
@@ -248,19 +336,123 @@ app.get('/reefer/api/correo/users/:id', (req, res) => {
 
 app.put('/reefer/api/correo/users/:id', (req, res) => {
   try {
-    if (!requireSuperUser(req, res)) return;
-    const updated = updateUser(req.params.id, req.body ?? {});
+    const actor = requireUserManager(req, res);
+    if (!actor) return;
+    const updated = updateUser(req.params.id, req.body ?? {}, { actor });
+    try {
+      appendAuditEvent({
+        actorUsername: actor.username,
+        actorId: actor.id,
+        action: 'user.update',
+        module: 'usuarios',
+        summary: `Modificó usuario ${updated.username}`,
+        targetUsername: updated.username,
+        targetId: updated.id,
+        detail: auditSafeDetail(req.body),
+      });
+    } catch {
+      // ignore
+    }
     res.json({ ok: true, data: updated });
   } catch (e) {
     res.status(400).json({ ok: false, error: e.message });
   }
 });
 
+app.put('/reefer/api/correo/users/:id/profile', (req, res) => {
+  try {
+    const acting = getUser(req);
+    if (!acting || acting === 'sistema') {
+      return res.status(401).json({ ok: false, error: 'Usuario no autenticado' });
+    }
+    const updated = updateOwnProfile(req.params.id, req.body ?? {}, acting);
+    try {
+      appendAuditEvent({
+        actorUsername: acting,
+        actorId: updated.id,
+        action: 'user.profile_update',
+        module: 'perfil',
+        summary: 'Actualizó su perfil',
+        targetUsername: updated.username,
+        targetId: updated.id,
+        detail: auditSafeDetail({
+          ...req.body,
+          passwordChanged: Boolean(req.body?.newPassword),
+        }),
+      });
+    } catch {
+      // ignore
+    }
+    res.json({ ok: true, data: updated });
+  } catch (e) {
+    const msg = e.message ?? 'Error';
+    const status =
+      msg.includes('incorrecta') || msg.includes('propio perfil') ? 403 : 400;
+    res.status(status).json({ ok: false, error: msg });
+  }
+});
+
 app.delete('/reefer/api/correo/users/:id', (req, res) => {
   try {
-    if (!requireSuperUser(req, res)) return;
-    deleteUser(req.params.id);
+    const actor = requireUserManager(req, res);
+    if (!actor) return;
+    const before = getUserByIdPublic(req.params.id);
+    deleteUser(req.params.id, { actor });
+    try {
+      appendAuditEvent({
+        actorUsername: actor.username,
+        actorId: actor.id,
+        action: 'user.delete',
+        module: 'usuarios',
+        summary: `Eliminó usuario ${before?.username ?? req.params.id}`,
+        targetUsername: before?.username,
+        targetId: req.params.id,
+      });
+    } catch {
+      // ignore
+    }
     res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/reefer/api/correo/audit', (req, res) => {
+  try {
+    if (!requireAuditAccess(req, res)) return;
+    const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 100));
+    const offset = Math.max(0, Number(req.query.offset) || 0);
+    const result = listAuditEvents({
+      limit,
+      offset,
+      actorUsername: req.query.actor?.toString(),
+      action: req.query.action?.toString(),
+      module: req.query.module?.toString(),
+    });
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/reefer/api/correo/audit', (req, res) => {
+  try {
+    const actor = resolveActor(req);
+    if (!actor) {
+      return res.status(401).json({ ok: false, error: 'Usuario no autenticado' });
+    }
+    const body = req.body ?? {};
+    const row = appendAuditEvent({
+      actorUsername: actor.username,
+      actorId: actor.id,
+      action: body.action ?? 'event',
+      module: body.module ?? 'app',
+      summary: body.summary ?? '',
+      targetUsername: body.targetUsername,
+      targetId: body.targetId,
+      detail: auditSafeDetail(body.detail),
+    });
+    res.json({ ok: true, data: row });
   } catch (e) {
     res.status(400).json({ ok: false, error: e.message });
   }
@@ -270,6 +462,83 @@ app.post('/reefer/api/correo/users/migrate', (req, res) => {
   try {
     const result = migrateUsersFromClient(req.body?.users);
     res.json({ ok: true, data: result });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/reefer/api/correo/empresas', (_req, res) => {
+  try {
+    res.json({ ok: true, data: listEmpresas() });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/reefer/api/correo/empresas/:id', (req, res) => {
+  try {
+    const emp = getEmpresaById(req.params.id);
+    if (!emp) return res.status(404).json({ ok: false, error: 'Empresa no encontrada' });
+    const usuarios = listUsersByEmpresa(emp.id);
+    res.json({ ok: true, data: { ...emp, usuarios } });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/reefer/api/correo/empresas', (req, res) => {
+  try {
+    if (!requireSuperUser(req, res)) return;
+    const created = addEmpresa(req.body ?? {});
+    res.json({ ok: true, data: created });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+app.put('/reefer/api/correo/empresas/:id', (req, res) => {
+  try {
+    if (!requireSuperUser(req, res)) return;
+    const updated = updateEmpresa(req.params.id, req.body ?? {});
+    res.json({ ok: true, data: updated });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+app.delete('/reefer/api/correo/empresas/:id', (req, res) => {
+  try {
+    if (!requireSuperUser(req, res)) return;
+    deleteEmpresa(req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/reefer/api/correo/empresas/:id/assign', (req, res) => {
+  try {
+    if (!requireSuperUser(req, res)) return;
+    const userId = req.body?.userId?.toString().trim();
+    if (!userId) {
+      return res.status(400).json({ ok: false, error: 'userId obligatorio' });
+    }
+    const updated = assignUserEmpresa(userId, req.params.id);
+    res.json({ ok: true, data: updated });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/reefer/api/correo/empresas/unassign', (req, res) => {
+  try {
+    if (!requireSuperUser(req, res)) return;
+    const userId = req.body?.userId?.toString().trim();
+    if (!userId) {
+      return res.status(400).json({ ok: false, error: 'userId obligatorio' });
+    }
+    const updated = assignUserEmpresa(userId, null);
+    res.json({ ok: true, data: updated });
   } catch (e) {
     res.status(400).json({ ok: false, error: e.message });
   }

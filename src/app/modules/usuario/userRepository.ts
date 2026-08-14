@@ -50,16 +50,12 @@ export async function migrateLegacyUsersIfNeeded(): Promise<void> {
 /** Inicializa registro en servidor y migra datos locales si existen. */
 export async function ensureUserRegistry(): Promise<User[]> {
   await migrateLegacyUsersIfNeeded();
-  try {
-    return await fetchServerUsers('sistema', true);
-  } catch {
-    return [...BOOTSTRAP_USERS];
-  }
+  return [];
 }
 
 export async function getUsers(actingUser?: string): Promise<User[]> {
   try {
-    return await fetchServerUsers(actingUser ?? 'sistema', true);
+    return await fetchServerUsers(actingUser ?? 'sistema', false);
   } catch {
     return readLegacyLocal();
   }

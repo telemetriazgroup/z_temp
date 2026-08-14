@@ -19,10 +19,23 @@ export {
   userMayAccessDispositivo,
   displayNameForDevice,
   countSuperUsers,
+  resolveUserCategory,
+  userIsSuperAdmin,
+  userIsAdmin,
+  userCanManageUsers,
+  userCanAccessAudit,
+  adminMaxManagedUsers,
+  categoryLabel,
 } from './userPermissions';
 export { resumenFromDispositivos } from './listResumen';
 export {
   BOOTSTRAP_USERS,
   BOOTSTRAP_SUPERADMIN,
   BOOTSTRAP_IIFPERU,
+  BOOTSTRAP_JEFEDESARROLLO,
+  BOOTSTRAP_ELECTRONICOZ,
 } from './bootstrapUsers';
+export {
+  fetchAuditLog,
+  postAuditEvent,
+} from './auditServerApi';

@@ -468,11 +468,24 @@ export interface DashboardOverview {
   };
   devices: {
     pendingReview: DashboardKnownDevice[];
-    recentlyRegistered: DashboardKnownDevice[];
+    /** Equipos con más tiempo fuera de línea (offline/wait), máx. 5. */
+    longestOffline: DashboardOfflineEquipo[];
+    /** @deprecated alias de longestOffline */
+    recentlyRegistered: DashboardOfflineEquipo[];
   };
   users: {
     recentLogins: DashboardUserLogin[];
   };
+}
+
+export interface DashboardOfflineEquipo {
+  imei: string;
+  codigo: string | null;
+  rowKey: string;
+  nombre: string;
+  estado_conexion: string;
+  minutos_desde_ultimo_dato: number | null;
+  ultima_actualizacion: string | null;
 }
 
 export interface DashboardLinkStatus {

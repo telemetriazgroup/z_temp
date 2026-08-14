@@ -19,10 +19,10 @@ async function parseRes<T>(res: Response): Promise<T> {
 
 export async function fetchServerUsers(
   actingUser?: string | null,
-  superUser?: boolean
+  _superUser?: boolean
 ): Promise<User[]> {
   const res = await fetch(`${BASE}/users`, {
-    headers: headers(actingUser, superUser),
+    headers: headers(actingUser, false),
   });
   const body = await parseRes<{ data: User[] }>(res);
   return body.data;
@@ -63,7 +63,7 @@ export async function createUserOnServer(
 ): Promise<User> {
   const res = await fetch(`${BASE}/users`, {
     method: 'POST',
-    headers: headers(actingUser, true),
+    headers: headers(actingUser, false),
     body: JSON.stringify(user),
   });
   const body = await parseRes<{ data: User }>(res);
@@ -77,7 +77,34 @@ export async function updateUserOnServer(
 ): Promise<User> {
   const res = await fetch(`${BASE}/users/${encodeURIComponent(id)}`, {
     method: 'PUT',
-    headers: headers(actingUser, true),
+    headers: headers(actingUser, false),
+    body: JSON.stringify(patch),
+  });
+  const body = await parseRes<{ data: User }>(res);
+  return body.data;
+}
+
+export async function updateOwnProfileOnServer(
+  id: string,
+  patch: {
+    displayName?: string;
+    zonaHoraria?: string;
+    avatarUrl?: string;
+    cargo?: string;
+    nombres?: string;
+    apellidos?: string;
+    dni?: string;
+    correo?: string;
+    telefono?: string;
+    sexo?: string;
+    currentPassword?: string;
+    newPassword?: string;
+  },
+  actingUser: string
+): Promise<User> {
+  const res = await fetch(`${BASE}/users/${encodeURIComponent(id)}/profile`, {
+    method: 'PUT',
+    headers: headers(actingUser, false),
     body: JSON.stringify(patch),
   });
   const body = await parseRes<{ data: User }>(res);
@@ -87,7 +114,7 @@ export async function updateUserOnServer(
 export async function deleteUserOnServer(id: string, actingUser: string): Promise<void> {
   const res = await fetch(`${BASE}/users/${encodeURIComponent(id)}`, {
     method: 'DELETE',
-    headers: headers(actingUser, true),
+    headers: headers(actingUser, false),
   });
   await parseRes<{ ok: true }>(res);
 }

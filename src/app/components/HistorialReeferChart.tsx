@@ -33,6 +33,8 @@ interface Props {
   rangoLabel?: string | null;
   /** zona_horaria del listado (GMT-4 / GMT-5). */
   zonaHoraria?: string | null;
+  /** Altura reducida para modales / paneles estrechos. */
+  compact?: boolean;
 }
 
 function formatFechaTooltip(ts: number, iana: string): string {
@@ -136,6 +138,7 @@ export function HistorialReeferChart({
   nombreContenedor,
   rangoLabel,
   zonaHoraria,
+  compact = false,
 }: Props) {
   const displayIana = resolveDisplayTimeZone(zonaHoraria).iana;
   const disponibles = useMemo(() => seriesConDatos(data), [data]);
@@ -209,20 +212,22 @@ export function HistorialReeferChart({
   }
 
   return (
-    <div className="space-y-3">
+    <div className={cn('space-y-3', compact && 'space-y-2')}>
       <div className="text-center space-y-1">
-        <h3 className="text-sm font-semibold leading-snug">
+        <h3 className={cn('font-semibold leading-snug', compact ? 'text-xs' : 'text-sm')}>
           Reefer Monitoring Data {imei}({nombreContenedor})
         </h3>
         {rangoLabel != null && rangoLabel !== '' && (
           <p className="text-xs text-muted-foreground">Search by Date: {rangoLabel}</p>
         )}
-        <p className="text-[11px] text-muted-foreground">
-          Use la barra inferior para zoom · etiquetas de Suministro / Retorno al acercar
-        </p>
+        {!compact && (
+          <p className="text-[11px] text-muted-foreground">
+            Use la barra inferior para zoom · etiquetas de Suministro / Retorno al acercar
+          </p>
+        )}
       </div>
 
-      <div className="flex flex-col lg:flex-row gap-3">
+      <div className={cn('flex gap-3', compact ? 'flex-col' : 'flex-col lg:flex-row')}>
         <div className="flex-1 min-w-0 space-y-2">
           {zoomActivo && (
             <div className="flex justify-end">
@@ -232,9 +237,17 @@ export function HistorialReeferChart({
               </Button>
             </div>
           )}
-          <div className="h-[460px]">
+          <div className={compact ? 'h-[260px] w-full min-h-[260px]' : 'h-[460px]'}>
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={data} margin={{ top: 20, right: 8, left: 4, bottom: 8 }}>
+              <LineChart
+                data={data}
+                margin={{
+                  top: compact ? 12 : 20,
+                  right: 8,
+                  left: 4,
+                  bottom: compact ? 4 : 8,
+                }}
+              >
                 <CartesianGrid stroke="#e0e0e0" strokeDasharray="3 3" />
                 <XAxis
                   dataKey="ts"
@@ -243,31 +256,41 @@ export function HistorialReeferChart({
                   tickFormatter={tickFormateador}
                   angle={-35}
                   textAnchor="end"
-                  height={56}
+                  height={compact ? 44 : 56}
                   tick={{ fontSize: 10, fill: '#616161' }}
                   allowDataOverflow
                 />
                 <YAxis
                   yAxisId="temp"
                   tick={{ fontSize: 10, fill: '#616161' }}
-                  label={{
-                    value: 'Temperature (C°)',
-                    angle: -90,
-                    position: 'insideLeft',
-                    style: { fontSize: 11, fill: '#424242' },
-                  }}
+                  width={compact ? 40 : 60}
+                  label={
+                    compact
+                      ? undefined
+                      : {
+                          value: 'Temperature (C°)',
+                          angle: -90,
+                          position: 'insideLeft',
+                          style: { fontSize: 11, fill: '#424242' },
+                        }
+                  }
                 />
                 {tienePct && (
                   <YAxis
                     yAxisId="pct"
                     orientation="right"
                     tick={{ fontSize: 10, fill: '#616161' }}
-                    label={{
-                      value: 'Percentage (%)',
-                      angle: 90,
-                      position: 'insideRight',
-                      style: { fontSize: 11, fill: '#424242' },
-                    }}
+                    width={compact ? 36 : 60}
+                    label={
+                      compact
+                        ? undefined
+                        : {
+                            value: 'Percentage (%)',
+                            angle: 90,
+                            position: 'insideRight',
+                            style: { fontSize: 11, fill: '#424242' },
+                          }
+                    }
                   />
                 )}
                 <Tooltip
@@ -286,7 +309,7 @@ export function HistorialReeferChart({
                     connectNulls
                     isAnimationActive={false}
                   >
-                    {s.showValueLabels === true && (
+                    {s.showValueLabels === true && !compact && (
                       <LabelList
                         dataKey={s.key}
                         content={(props) => (
@@ -303,7 +326,7 @@ export function HistorialReeferChart({
                 ))}
                 <Brush
                   dataKey="ts"
-                  height={32}
+                  height={compact ? 24 : 32}
                   stroke="#757575"
                   fill="#f5f5f5"
                   travellerWidth={10}
@@ -317,11 +340,22 @@ export function HistorialReeferChart({
           </div>
         </div>
 
-        <aside className="lg:w-[148px] shrink-0 rounded-md border bg-muted/20 px-2 py-3">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-2 px-1">
+        <aside
+          className={cn(
+            'shrink-0 rounded-md border bg-muted/20 px-2 py-3',
+            compact
+              ? 'w-full flex flex-wrap gap-1 content-start max-h-none'
+              : 'lg:w-[148px]'
+          )}
+        >
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-2 px-1 w-full">
             Leyenda
           </p>
-          <div className="flex flex-col gap-1">
+          <div
+            className={cn(
+              compact ? 'flex flex-wrap gap-1' : 'flex flex-col gap-1'
+            )}
+          >
             {disponibles.map((s) => {
               const on = visible[s.key] !== false;
               return (

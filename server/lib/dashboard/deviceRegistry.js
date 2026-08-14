@@ -2,8 +2,11 @@ import { query } from '../db.js';
 import { deviceRowKey } from '../telemetry.js';
 
 /**
- * Upsert flota vista. Devuelve equipos que aparecen por primera vez
- * (tras el bootstrap inicial de la tabla).
+ * Upsert flota vista desde último-estado.
+ * Un equipo es "nuevo" solo si su row_key (codigo-imei) no existía antes
+ * en dashboard_known_device (no registrado previamente).
+ * El primer llenado de la tabla (bootstrap) marca todos como revisado.
+ * Devuelve los INSERT posteriores a ese bootstrap.
  */
 export async function upsertKnownDevices(dispositivos) {
   const nuevos = [];

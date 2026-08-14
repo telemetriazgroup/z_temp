@@ -47,7 +47,11 @@ import {
   PackagePlus,
   Link2,
   Check,
+  History,
 } from 'lucide-react';
+import { Historial3hModal, type Historial3hTarget } from '../components/Historial3hModal';
+import { dispositivoTieneHistorialOficial } from '../api/datosOficiales';
+import type { DispositivoOrigenCodigo } from '../types';
 
 function detallePath(imei: string, codigo?: string | null): string {
   const q = new URLSearchParams({ imei });
@@ -63,15 +67,33 @@ function formatDayLabel(day: string): string {
 function formatWhen(iso: string | null | undefined): string {
   if (!iso) return '—';
   try {
-    return new Date(iso).toLocaleString('es-PE', {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    const todayKey = new Date().toLocaleDateString('en-CA', {
+      timeZone: 'America/Lima',
+    });
+    const dayKey = d.toLocaleDateString('en-CA', {
+      timeZone: 'America/Lima',
+    });
+    const stamp = d.toLocaleString('es-PE', {
+      timeZone: 'America/Lima',
       day: '2-digit',
       month: '2-digit',
       hour: '2-digit',
       minute: '2-digit',
     });
+    return dayKey === todayKey ? stamp : `${stamp} · pasado`;
   } catch {
     return iso;
   }
+}
+
+function formatOfflineDuration(minutos: number | null | undefined): string {
+  if (minutos == null || !Number.isFinite(minutos)) return 'sin dato';
+  if (minutos < 60) return `${Math.round(minutos)} min`;
+  const h = minutos / 60;
+  if (h < 48) return `${Math.round(h * 10) / 10} h`;
+  return `${Math.round((h / 24) * 10) / 10} d`;
 }
 
 function KpiCard({
@@ -151,6 +173,7 @@ export default function Inicio() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState<string | null>(null);
+  const [historial3h, setHistorial3h] = useState<Historial3hTarget | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -208,18 +231,18 @@ export default function Inicio() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold">
-            {esMonitoreo ? 'Bienvenido/a' : 'Dashboard'}
-          </h1>
+          <h1 className="text-3xl font-bold">Panel de control</h1>
           <p className="text-muted-foreground mt-1">
             {esMonitoreo ? (
               <>
                 Hola,{' '}
-                <span className="font-medium text-foreground">{user?.username}</span>.
-                Resumen operativo de sus equipos.
+                <span className="font-medium text-foreground">
+                  {user?.displayName || user?.username}
+                </span>
+                .
               </>
             ) : (
-              'Resúmenes, links API, equipos nuevos y extractos urgentes.'
+              'Resumen operativo de la flota y extractos urgentes.'
             )}
           </p>
         </div>
@@ -574,17 +597,21 @@ export default function Inicio() {
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm flex items-center gap-2">
                     <PackagePlus className="h-4 w-4" />
-                    Últimos equipos registrados
+                    Más tiempo fuera de línea
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  {(data.devices?.recentlyRegistered ?? []).length === 0 ? (
+                  {(data.devices?.longestOffline ?? data.devices?.recentlyRegistered ?? [])
+                    .length === 0 ? (
                     <p className="text-xs text-muted-foreground py-4 text-center">
-                      Aún no hay registro histórico
+                      No hay equipos wait/offline
                     </p>
                   ) : (
                     <ul className="divide-y text-sm">
-                      {data.devices.recentlyRegistered.map((d) => (
+                      {(
+                        data.devices.longestOffline ??
+                        data.devices.recentlyRegistered
+                      ).map((d) => (
                         <li key={d.rowKey} className="py-2">
                           <Link
                             to={detallePath(d.imei, d.codigo)}
@@ -596,11 +623,14 @@ export default function Inicio() {
                             {d.codigo ? `${d.codigo} · ` : ''}
                             {d.imei}
                           </div>
-                          <div className="text-[11px] text-muted-foreground">
-                            1ª conexión {formatWhen(d.first_seen_at)}
-                            {d.review_status === 'pendiente'
-                              ? ' · pendiente revisión'
-                              : ''}
+                          <div className="text-[11px] text-muted-foreground flex flex-wrap gap-x-2">
+                            <span className="uppercase">{d.estado_conexion}</span>
+                            <span>
+                              {formatOfflineDuration(d.minutos_desde_ultimo_dato)}
+                            </span>
+                            <span>
+                              último dato {formatWhen(d.ultima_actualizacion)}
+                            </span>
                           </div>
                         </li>
                       ))}
@@ -654,6 +684,10 @@ export default function Inicio() {
                       <PackagePlus className="h-4 w-4 text-amber-700" />
                       Revisión rápida — equipos nuevos
                     </CardTitle>
+                    <p className="text-[11px] text-muted-foreground font-normal pt-1">
+                      Solo IMEI/código que aún no estaban registrados en la flota
+                      (primer avistamiento tras el registro de últimos estados).
+                    </p>
                   </CardHeader>
                   <CardContent>
                     {(data.devices?.pendingReview ?? []).length === 0 ? (
@@ -674,7 +708,26 @@ export default function Inicio() {
                               {d.codigo ?? '—'} · 1ª vez {formatWhen(d.first_seen_at)} ·{' '}
                               {d.first_estado_conexion ?? d.last_estado_conexion ?? '—'}
                             </div>
-                            <div className="flex gap-2">
+                            <div className="flex flex-wrap gap-2">
+                              {dispositivoTieneHistorialOficial(
+                                d.codigo as DispositivoOrigenCodigo | undefined
+                              ) && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 text-xs"
+                                  onClick={() =>
+                                    setHistorial3h({
+                                      imei: d.imei,
+                                      codigo: d.codigo as DispositivoOrigenCodigo,
+                                      nombre: d.imei,
+                                    })
+                                  }
+                                >
+                                  <History className="h-3 w-3 mr-1" />
+                                  Últimas 3 h
+                                </Button>
+                              )}
                               <Button
                                 size="sm"
                                 variant="outline"
@@ -706,6 +759,14 @@ export default function Inicio() {
           </div>
         </>
       )}
+
+      <Historial3hModal
+        open={historial3h != null}
+        onOpenChange={(open) => {
+          if (!open) setHistorial3h(null);
+        }}
+        target={historial3h}
+      />
     </div>
   );
 }

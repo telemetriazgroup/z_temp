@@ -15,6 +15,9 @@ import ConfiguracionCorreo from "./pages/ConfiguracionCorreo";
 import IncidentesCorreo from "./pages/IncidentesCorreo";
 import Ubicanos from "./pages/Ubicanos";
 import AyudaSoporte from "./pages/AyudaSoporte";
+import Perfil from "./pages/Perfil";
+import Empresas from "./pages/Empresas";
+import AuditoriaUsuarios from "./pages/AuditoriaUsuarios";
 
 // Protected Route Component
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -95,6 +98,18 @@ const routeTree = [
       {
         path: "ayuda",
         element: <AyudaSoporte />,
+      },
+      {
+        path: "perfil",
+        element: <Perfil />,
+      },
+      {
+        path: "empresas",
+        element: <Empresas />,
+      },
+      {
+        path: "auditoria",
+        element: <AuditoriaUsuarios />,
       },
     ],
   },
