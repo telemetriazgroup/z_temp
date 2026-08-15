@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import type { DispositivoUltimoEstado } from '../types';
 import { useAuth } from '../AuthContext';
+import { userMayControlTemperatura } from '../modules/usuario';
 import {
   COMANDO_DEFROST_DATO,
   COMANDO_DEFROST_TIPO,
@@ -68,6 +69,13 @@ export function IffControlPanel({ dispositivo, onComandoOk }: Props) {
   const ejecutarComando = async (tipo: Accion, fn: () => Promise<void>) => {
     if (user == null) {
       setMensaje({ tipo: 'err', text: 'Debe iniciar sesión para enviar comandos.' });
+      return;
+    }
+    if (!userMayControlTemperatura(user)) {
+      setMensaje({
+        tipo: 'err',
+        text: 'No tiene permiso de control de temperaturas. Solicite habilitación a un administrador.',
+      });
       return;
     }
     setMensaje(null);
@@ -178,10 +186,10 @@ export function IffControlPanel({ dispositivo, onComandoOk }: Props) {
         <CardHeader className="pb-3 border-b bg-muted/20">
           <CardTitle className="text-base flex items-center gap-2">
             <Zap className="h-4 w-4 text-primary" />
-            Panel de control
+            Panel de control de temperaturas
           </CardTitle>
           <p className="text-xs text-muted-foreground">
-            Comandos remotos IFF vía túnel. Solo temperatura, defrost y stop plan.
+            Comandos remotos reefer (setpoint, defrost, stop plan).
             {user != null && (
               <>
                 {' '}

@@ -3,6 +3,7 @@ import {
   isAdminUser,
   canManageUsers,
 } from './usersRepository.js';
+import { resolveUserEffectiveImeis } from './gruposEquiposRepository.js';
 
 export const ADMIN_MAX_CORREO_GRUPOS = 2;
 export const ADMIN_MAX_CORREO_EMAILS_POR_GRUPO = 3;
@@ -24,16 +25,9 @@ export function filterGruposForActor(actor, grupos) {
 
 export function actorMayAccessImei(actor, imei) {
   if (!actor) return false;
-  if (isSuperAdminUser(actor)) return true;
-  if (isAdminUser(actor)) {
-    // admin con deviceAccess all → todos; si no, lista
-    const access = Array.isArray(actor.deviceAccess) ? actor.deviceAccess : [];
-    if (access.includes('all')) return true;
-    return access.includes(String(imei));
-  }
-  const access = Array.isArray(actor.deviceAccess) ? actor.deviceAccess : [];
-  if (access.includes('all')) return true;
-  return access.includes(String(imei));
+  const allowed = resolveUserEffectiveImeis(actor);
+  if (allowed == null) return true;
+  return allowed.includes(String(imei));
 }
 
 /**

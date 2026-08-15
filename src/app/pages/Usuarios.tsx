@@ -21,7 +21,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
-import { Textarea } from '../components/ui/textarea';
+import { Checkbox } from '../components/ui/checkbox';
 import {
   Select,
   SelectContent,
@@ -29,7 +29,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
+import { Badge } from '../components/ui/badge';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../components/ui/table';
 import {
   Dialog,
   DialogContent,
@@ -38,42 +46,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../components/ui/dialog';
-import { Badge } from '../components/ui/badge';
-import { Plus, Pencil, Trash2, Shield } from 'lucide-react';
-
-function parseImeiList(text: string): string[] {
-  return text
-    .split(/[\n,;]+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
-function parseDeviceNamesBlock(text: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const line of text.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const eq = trimmed.indexOf('=');
-    const pipe = trimmed.indexOf('|');
-    const sep = eq >= 0 ? eq : pipe;
-    if (sep < 0) continue;
-    const imei = trimmed.slice(0, sep).trim();
-    const name = trimmed.slice(sep + 1).trim();
-    if (imei && name) out[imei] = name;
-  }
-  return out;
-}
-
-function imeiListToText(list: string[]): string {
-  return list.filter((x) => x !== 'all').join('\n');
-}
-
-function deviceNamesToText(map: Record<string, string> | undefined): string {
-  if (map == null) return '';
-  return Object.entries(map)
-    .map(([k, v]) => `${k}=${v}`)
-    .join('\n');
-}
+import { Plus, Pencil, Trash2, Shield, Thermometer } from 'lucide-react';
 
 const emptyForm = {
   username: '',
@@ -82,8 +55,6 @@ const emptyForm = {
   category: 'user' as UserCategory,
   superUser: false,
   maxManagedUsers: '3',
-  imeiText: '',
-  namesText: '',
   nombres: '',
   apellidos: '',
   cargo: '',
@@ -93,6 +64,7 @@ const emptyForm = {
   sexo: '' as '' | UserSexo,
   empresaId: '' as string,
   zonaHoraria: 'GMT-5',
+  puedeControlTemperatura: false,
 };
 
 function personalPayload(form: typeof emptyForm) {
@@ -179,10 +151,6 @@ export default function Usuarios() {
       category: cat,
       superUser: cat === 'superadmin',
       maxManagedUsers: String(u.maxManagedUsers ?? 3),
-      imeiText:
-        cat === 'superadmin' || cat === 'admin' ? '' : imeiListToText(u.deviceAccess),
-      namesText:
-        cat === 'superadmin' || cat === 'admin' ? '' : deviceNamesToText(u.deviceNames),
       nombres: u.nombres ?? '',
       apellidos: u.apellidos ?? '',
       cargo: u.cargo ?? '',
@@ -192,6 +160,7 @@ export default function Usuarios() {
       sexo: (u.sexo as UserSexo) ?? '',
       empresaId: u.empresaId ?? '',
       zonaHoraria: u.zonaHoraria ?? 'GMT-5',
+      puedeControlTemperatura: u.puedeControlTemperatura === true,
     });
     setError(null);
     setDialogOpen(true);
@@ -222,6 +191,7 @@ export default function Usuarios() {
         role: form.role,
         category,
         superUser: category === 'superadmin',
+        puedeControlTemperatura: form.puedeControlTemperatura === true,
         ...personal,
       };
 
@@ -230,16 +200,33 @@ export default function Usuarios() {
         const adminFields =
           category === 'admin'
             ? {
-                deviceAccess: ['all'] as string[],
+                // Flota la asigna el superadmin en Administración (no 'all').
+                deviceAccess: [] as string[],
+                groupIds: [] as string[],
                 maxManagedUsers: Number.isFinite(maxN) ? maxN : 3,
                 deviceNames: undefined,
               }
             : { deviceAccess: ['all'] as string[], deviceNames: undefined };
 
         if (editingId) {
+          const prev = users.find((x) => x.id === editingId);
+          const keepAccess =
+            category === 'admin' && editingId
+              ? {
+                  deviceAccess: prev?.deviceAccess?.includes('all')
+                    ? []
+                    : (prev?.deviceAccess ?? []),
+                  groupIds: prev?.groupIds ?? [],
+                  maxManagedUsers: Number.isFinite(maxN) ? maxN : 3,
+                  deviceNames: undefined,
+                }
+              : adminFields;
           await updateUser(
             editingId,
-            { ...payloadBase, ...adminFields },
+            {
+              ...payloadBase,
+              ...(category === 'admin' ? keepAccess : adminFields),
+            },
             currentUser!.username
           );
           if (currentUser?.id === editingId) await refreshUser();
@@ -254,32 +241,17 @@ export default function Usuarios() {
           );
         }
       } else {
-        const imeis = parseImeiList(form.imeiText);
-        if (imeis.length === 0) {
-          setError('Indique al menos un IMEI');
-          setSaving(false);
-          return;
-        }
-        const deviceNames = parseDeviceNamesBlock(form.namesText);
-        const hasNames = Object.keys(deviceNames).length > 0;
+        // Flota solo vía Administración (sin IMEI libre en este formulario).
         if (editingId) {
-          await updateUser(
-            editingId,
-            {
-              ...payloadBase,
-              deviceAccess: imeis,
-              deviceNames: hasNames ? deviceNames : undefined,
-            },
-            currentUser!.username
-          );
+          await updateUser(editingId, { ...payloadBase }, currentUser!.username);
           if (currentUser?.id === editingId) await refreshUser();
         } else {
           await addUser(
             {
               id: generateUserId(),
               ...payloadBase,
-              deviceAccess: imeis,
-              deviceNames: hasNames ? deviceNames : undefined,
+              deviceAccess: [],
+              groupIds: [],
             } as User,
             currentUser!.username
           );
@@ -321,7 +293,7 @@ export default function Usuarios() {
           </h1>
           <p className="text-gray-500 mt-1">
             {isAdmin
-              ? `Admin: puede crear hasta ${quotaMax} usuarios (${managedCount}/${quotaMax}). Asigne IMEI por cuenta.`
+              ? `Admin: puede crear hasta ${quotaMax} usuarios (${managedCount}/${quotaMax}). Los equipos se asignan en Administración.`
               : 'Superadmin: gestión completa de categorías, cuotas y flota.'}
           </p>
         </div>
@@ -369,17 +341,29 @@ export default function Usuarios() {
                     <TableCell className="text-sm">{empresaLabel(u.empresaId)}</TableCell>
                     <TableCell>{u.role}</TableCell>
                     <TableCell>
-                      <Badge
-                        variant={
-                          resolveUserCategory(u) === 'superadmin'
-                            ? 'default'
-                            : resolveUserCategory(u) === 'admin'
-                              ? 'outline'
-                              : 'secondary'
-                        }
-                      >
-                        {categoryLabel(u)}
-                      </Badge>
+                      <div className="flex flex-wrap items-center gap-1">
+                        <Badge
+                          variant={
+                            resolveUserCategory(u) === 'superadmin'
+                              ? 'default'
+                              : resolveUserCategory(u) === 'admin'
+                                ? 'outline'
+                                : 'secondary'
+                          }
+                        >
+                          {categoryLabel(u)}
+                        </Badge>
+                        {u.puedeControlTemperatura === true && (
+                          <Badge
+                            variant="outline"
+                            className="gap-1 text-[10px]"
+                            title="Control de temperaturas"
+                          >
+                            <Thermometer className="h-3 w-3" />
+                            Control
+                          </Badge>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="text-right space-x-1">
                       <Button
@@ -426,7 +410,7 @@ export default function Usuarios() {
             <DialogDescription>
               {editingId
                 ? 'Deje la contraseña vacía para no cambiarla. Campos personales son opcionales.'
-                : 'Defina credenciales, datos opcionales y alcance de dispositivos.'}
+                : 'Defina credenciales y datos opcionales. Los equipos pueden asignarse después en Administración.'}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-2">
@@ -611,36 +595,46 @@ export default function Usuarios() {
               </>
             )}
 
-            {isAdmin && (
+            {(isAdmin || form.category === 'user') && (
               <p className="text-xs text-muted-foreground rounded-md border bg-muted/40 px-3 py-2">
-                Como admin crea usuarios operativos y les asigna IMEI. No tiene acceso a
-                auditoría. Cuota: {managedCount}/{quotaMax}.
+                Los equipos no se escriben aquí (evita IMEI ajenos). Asigne grupos o
+                equipos en Administración → Asignaciones
+                {isAdmin ? ` · Cuota: ${managedCount}/${quotaMax}` : ''}.
+                {isSuper
+                  ? ' Solo el superadmin define grupos e IMEI de flota.'
+                  : ''}
               </p>
             )}
 
-            {(form.category === 'user' || isAdmin) && (
-              <>
-                <div className="grid gap-2">
-                  <Label>IMEI permitidos (uno por línea o separados por coma)</Label>
-                  <Textarea
-                    rows={4}
-                    value={form.imeiText}
-                    onChange={(e) => setForm((f) => ({ ...f, imeiText: e.target.value }))}
-                    placeholder="866262034327402"
-                    className="font-mono text-sm"
-                  />
+            <div className="rounded-md border p-3 space-y-2">
+              <div className="flex items-start gap-3">
+                <Checkbox
+                  id="puede-control-temp"
+                  checked={form.puedeControlTemperatura}
+                  onCheckedChange={(v) =>
+                    setForm((f) => ({
+                      ...f,
+                      puedeControlTemperatura: v === true,
+                    }))
+                  }
+                />
+                <div className="grid gap-1 leading-none">
+                  <Label
+                    htmlFor="puede-control-temp"
+                    className="flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Thermometer className="h-3.5 w-3.5" />
+                    Control de temperaturas
+                  </Label>
+                  <p className="text-[11px] text-muted-foreground">
+                    Permite ver y usar el panel de control remoto (setpoint, defrost,
+                    stop) en equipos reefer TUNEL. Desactivado por defecto. El
+                    superadmin siempre tiene este acceso.
+                  </p>
                 </div>
-                <div className="grid gap-2">
-                  <Label>Nombres por IMEI (opcional, IMEI=nombre)</Label>
-                  <Textarea
-                    rows={3}
-                    value={form.namesText}
-                    onChange={(e) => setForm((f) => ({ ...f, namesText: e.target.value }))}
-                    className="font-mono text-sm"
-                  />
-                </div>
-              </>
-            )}
+              </div>
+            </div>
+
             {error && <p className="text-sm text-red-600">{error}</p>}
           </div>
           <DialogFooter>

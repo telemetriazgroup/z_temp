@@ -405,3 +405,19 @@ export async function markDashboardDeviceReviewed(
   );
   await parseRes(res);
 }
+
+export async function fetchDashboardUserActivity(
+  targetUsername: string,
+  opts?: { username?: string | null; superUser?: boolean; limit?: number }
+): Promise<import('./types').DashboardUserActivityDetail> {
+  const q = new URLSearchParams();
+  if (opts?.limit != null) q.set('limit', String(opts.limit));
+  const res = await fetch(
+    `${BASE}/dashboard/users/${encodeURIComponent(targetUsername)}/activity?${q.toString()}`,
+    { headers: headers(opts?.username, opts?.superUser) }
+  );
+  const body = await parseRes<{
+    data: import('./types').DashboardUserActivityDetail;
+  }>(res);
+  return body.data;
+}

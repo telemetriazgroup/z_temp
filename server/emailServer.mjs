@@ -67,6 +67,13 @@ import {
   listUsersByEmpresa,
 } from './lib/empresasRepository.js';
 import {
+  listGruposEquipos,
+  getGrupoEquipoById,
+  addGrupoEquipo,
+  updateGrupoEquipo,
+  deleteGrupoEquipo,
+} from './lib/gruposEquiposRepository.js';
+import {
   getAyudaSoporte,
   saveAyudaSoporte,
 } from './lib/ayudaSoporteRepository.js';
@@ -663,6 +670,128 @@ app.post('/reefer/api/correo/empresas/unassign', (req, res) => {
       targetId: userId,
     });
     res.json({ ok: true, data: updated });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+/** Grupos de equipos reefer (ACL / asignaciones). Admin + superadmin. */
+app.get('/reefer/api/correo/grupos-equipos', (req, res) => {
+  try {
+    const actor = requireUserManager(req, res);
+    if (!actor) return;
+    res.json({ ok: true, data: listGruposEquipos() });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/** Lectura para expandir ACL en sesión. */
+app.get('/reefer/api/correo/grupos-equipos/public', (req, res) => {
+  try {
+    const actor = resolveActor(req);
+    if (!actor) {
+      return res.status(401).json({ ok: false, error: 'No autenticado' });
+    }
+    const all = listGruposEquipos();
+    if (canManageUsers(actor)) {
+      return res.json({ ok: true, data: all });
+    }
+    const ids = new Set(
+      Array.isArray(actor.groupIds) ? actor.groupIds.map(String) : []
+    );
+    res.json({ ok: true, data: all.filter((g) => ids.has(g.id)) });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/reefer/api/correo/grupos-equipos/:id', (req, res) => {
+  try {
+    const actor = requireUserManager(req, res);
+    if (!actor) return;
+    const g = getGrupoEquipoById(req.params.id);
+    if (!g) return res.status(404).json({ ok: false, error: 'Grupo no encontrado' });
+    res.json({ ok: true, data: g });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/reefer/api/correo/grupos-equipos', (req, res) => {
+  try {
+    if (!requireSuperUser(req, res)) return;
+    const actor = resolveActor(req);
+    const created = addGrupoEquipo(req.body ?? {}, actor?.username ?? getUser(req));
+    auditActorEvent(req, {
+      action: 'grupo_equipo.create',
+      module: 'administracion',
+      summary: `Creó grupo de equipos ${created.nombre}`,
+      targetId: created.id,
+      detail: {
+        nombre: created.nombre,
+        empresaId: created.empresaId,
+        imeis: created.imeis?.length ?? 0,
+      },
+    });
+    res.json({ ok: true, data: created });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+app.put('/reefer/api/correo/grupos-equipos/:id', (req, res) => {
+  try {
+    if (!requireSuperUser(req, res)) return;
+    const updated = updateGrupoEquipo(req.params.id, req.body ?? {});
+    auditActorEvent(req, {
+      action: 'grupo_equipo.update',
+      module: 'administracion',
+      summary: `Actualizó grupo de equipos ${updated.nombre}`,
+      targetId: updated.id,
+      detail: {
+        nombre: updated.nombre,
+        empresaId: updated.empresaId,
+        imeis: updated.imeis?.length ?? 0,
+      },
+    });
+    res.json({ ok: true, data: updated });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+app.delete('/reefer/api/correo/grupos-equipos/:id', (req, res) => {
+  try {
+    if (!requireSuperUser(req, res)) return;
+    const id = req.params.id;
+    const prev = getGrupoEquipoById(id);
+    if (!prev) {
+      return res.status(404).json({ ok: false, error: 'Grupo no encontrado' });
+    }
+    const actor = resolveActor(req);
+    const users = getUsersPublic();
+    for (const u of users) {
+      const gids = Array.isArray(u.groupIds) ? u.groupIds : [];
+      if (!gids.includes(id)) continue;
+      try {
+        updateUser(
+          u.id,
+          { groupIds: gids.filter((x) => x !== id) },
+          { actor: actor ?? undefined }
+        );
+      } catch (err) {
+        console.warn('[grupos-equipos] detach user', u.username, err.message);
+      }
+    }
+    deleteGrupoEquipo(id);
+    auditActorEvent(req, {
+      action: 'grupo_equipo.delete',
+      module: 'administracion',
+      summary: `Eliminó grupo de equipos ${prev.nombre}`,
+      targetId: id,
+    });
+    res.json({ ok: true });
   } catch (e) {
     res.status(400).json({ ok: false, error: e.message });
   }

@@ -5,6 +5,8 @@ import {
   type ComandoControlTunelResult,
   type ComandoControlTunelTipo,
 } from '../../api/comandoControlTunel';
+import { userMayControlTemperatura } from '../usuario/userPermissions';
+import { esEquipoConControlTemperatura } from './iffTunelControl';
 import { logControlCommand } from './commandLogRepository';
 import type { ControlComandoCambio, ControlEquipoSnapshot } from './commandSnapshot';
 
@@ -27,6 +29,16 @@ export async function ejecutarComandoTunel(
 ): Promise<ComandoControlTunelResult> {
   const { user, imei, codigo = null, tipo, dato, label, estadoAnterior = null, cambios = [] } =
     params;
+
+  if (!userMayControlTemperatura(user)) {
+    throw new Error(
+      'No tiene permiso de control de temperaturas. Solicite habilitación a un administrador.'
+    );
+  }
+  if (!esEquipoConControlTemperatura(imei, codigo)) {
+    throw new Error('Este origen de equipo no admite control remoto de temperatura.');
+  }
+
   try {
     const result = await enviarComandoControlTunel(imei, tipo, dato);
     logControlCommand({

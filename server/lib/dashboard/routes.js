@@ -19,8 +19,9 @@ import {
   listDevicesPendingReview,
   markDeviceReviewed,
 } from './deviceRegistry.js';
-import { listRecentLogins } from './userActivity.js';
+import { listRecentLogins, getUserConnectionDetail } from './userActivity.js';
 import { appendAuditEvent } from '../auditLogRepository.js';
+import { resolveUserEffectiveImeis } from '../gruposEquiposRepository.js';
 
 function resolveAccessUser(req) {
   const username = String(req.headers['x-ztrack-user'] ?? '').trim();
@@ -36,10 +37,7 @@ function isSuper(req, user) {
 }
 
 function restrictedImeis(user) {
-  if (!user || user.superUser === true || user.deviceAccess?.includes('all')) {
-    return null;
-  }
-  return (user.deviceAccess ?? []).map(String).filter((x) => x && x !== 'all');
+  return resolveUserEffectiveImeis(user);
 }
 
 function weekStatusFromSeries(series, averages) {
@@ -335,7 +333,7 @@ export function createDashboardRouter() {
         getLinkStatuses(),
         getLinkProbeHistory({ hours: 3 }),
         superUser ? listDevicesPendingReview({ limit: 5 }) : Promise.resolve([]),
-        superUser ? listRecentLogins({ limit: 5 }) : Promise.resolve([]),
+        superUser ? listRecentLogins({ limit: 8 }) : Promise.resolve([]),
         imeis ? Promise.resolve(null) : getLatestFleetSnapshot(),
       ]);
 
@@ -416,6 +414,26 @@ export function createDashboardRouter() {
       const series = await getDailySeries({ days, imeis });
       const averages = await getPeriodAverages({ imeis });
       res.json({ ok: true, data: { series, averages } });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  /** Historial de accesos y acciones de un usuario (solo super). */
+  router.get('/users/:username/activity', async (req, res) => {
+    try {
+      await ensureDashboardSchema();
+      const user = resolveAccessUser(req);
+      if (!isSuper(req, user)) {
+        return res.status(403).json({ ok: false, error: 'Solo superusuario' });
+      }
+      const username = String(req.params.username ?? '').trim();
+      if (!username) {
+        return res.status(400).json({ ok: false, error: 'username requerido' });
+      }
+      const limit = Math.min(Math.max(Number(req.query.limit ?? 80) || 80, 1), 200);
+      const detail = await getUserConnectionDetail(username, { limit });
+      res.json({ ok: true, data: detail });
     } catch (e) {
       res.status(500).json({ ok: false, error: e.message });
     }

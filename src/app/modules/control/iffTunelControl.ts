@@ -13,11 +13,28 @@ export const COMANDO_STOP_PLAN_TIPO = 10 as const;
 export const COMANDO_STOP_MIN_MINUTOS = 5;
 export const COMANDO_STOP_MAX_MINUTOS = 60;
 
+/**
+ * Equipo reefer con API de control de temperaturas (comando_control_tunel).
+ * Universal para origen TUNEL (no limitado a lista IFF).
+ */
+export function esEquipoConControlTemperatura(
+  _imei: string,
+  codigo: string | undefined | null
+): boolean {
+  return codigo === 'TUNEL';
+}
+
+/** @deprecated Usar esEquipoConControlTemperatura */
 export function esEquipoIffControlable(
   imei: string,
   codigo: string | undefined | null
 ): boolean {
-  return codigo === 'TUNEL' && TUNEL_CONTROL_ALL_IMEIS.includes(imei);
+  return esEquipoConControlTemperatura(imei, codigo);
+}
+
+/** IMEI históricos IFF/OVO (referencia; el control ya no se limita a esta lista). */
+export function esImeiControlHistoricoIff(imei: string): boolean {
+  return TUNEL_CONTROL_ALL_IMEIS.includes(imei);
 }
 
 export function clampTemperaturaComando(valor: number): number {

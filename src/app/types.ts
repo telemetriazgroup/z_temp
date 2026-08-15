@@ -83,6 +83,17 @@ export interface User {
   deviceNames?: Record<string, string>;
   /** Orígenes visibles (TUNEL, STARCOOL, STARCOOL2, TERMOKING). Si se omite, todos. */
   allowedCodigos?: DispositivoOrigenCodigo[];
+  /**
+   * Grupos de equipos asignados a la cuenta.
+   * El acceso efectivo = deviceAccess ∪ IMEIs de estos grupos.
+   */
+  groupIds?: string[];
+  /**
+   * Permite ver y usar el panel de control de temperaturas (setpoint, defrost, stop).
+   * Desactivado por defecto para usuarios/admin; el superadmin siempre lo tiene.
+   * Solo admin/superadmin puede habilitarlo a otros usuarios.
+   */
+  puedeControlTemperatura?: boolean;
   /** Nombre visible en navbar / perfil (derivable de nombres+apellidos). */
   displayName?: string;
   /** Preferencia de zona para visualización (GMT-4 / GMT-5). */
@@ -138,6 +149,23 @@ export interface AlarmConfig {
   emails: string[];
 }
 
+/**
+ * Grupo de equipos reefer para ACL / asignaciones (Administración).
+ * Opcionalmente referenciado a una empresa.
+ */
+export interface GrupoEquipo {
+  id: string;
+  nombre: string;
+  /** Empresa de referencia (opcional). */
+  empresaId?: string | null;
+  /** IMEIs de equipos en el grupo. */
+  imeis: string[];
+  createdBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/** @deprecated Usar GrupoEquipo. Alias legacy del mock de Administración. */
 export interface Group {
   id: string;
   nombre: string;

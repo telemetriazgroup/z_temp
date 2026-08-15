@@ -9,8 +9,25 @@ import {
 } from './modules/usuario';
 import { AUDIT_ACTIONS } from './modules/usuario/auditActions';
 import { ensureAlarmCatalog } from './modules/alarma';
+import {
+  fetchGruposEquiposPublic,
+  setGruposEquiposCache,
+} from './modules/administracion';
 
 const SESSION_KEY = 'ztrack_user';
+
+async function hydrateGruposCache(username: string | undefined | null) {
+  if (!username?.trim()) {
+    setGruposEquiposCache([]);
+    return;
+  }
+  try {
+    const grupos = await fetchGruposEquiposPublic(username);
+    setGruposEquiposCache(grupos);
+  } catch {
+    // sin grupos en cache: acceso solo por deviceAccess directo
+  }
+}
 
 interface AuthContextType {
   user: User | null;
@@ -31,7 +48,7 @@ function readStoredSession(): User | null {
     const parsed = JSON.parse(stored) as User;
     if (parsed != null && !Array.isArray(parsed.deviceAccess)) {
       parsed.deviceAccess =
-        parsed.superUser === true || parsed.category === 'admin' || parsed.category === 'superadmin'
+        parsed.superUser === true || parsed.category === 'superadmin'
           ? ['all']
           : [];
     }
@@ -70,6 +87,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (!cancelled && fresh != null) {
             setUser(fresh);
             persistSession(fresh);
+            await hydrateGruposCache(fresh.username);
           }
         } catch {
           // mantener sesión almacenada si el servidor no responde
@@ -87,6 +105,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (foundUser) {
       setUser(foundUser);
       persistSession(foundUser);
+      await hydrateGruposCache(foundUser.username);
       return foundUser;
     }
     return null;
@@ -98,6 +117,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Limpiar sesión primero para que ProtectedRoute redirija de inmediato
     setUser(null);
     persistSession(null);
+    setGruposEquiposCache([]);
     if (username) {
       void postAuditEvent(username, {
         action: AUDIT_ACTIONS.LOGOUT,
@@ -115,6 +135,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (latest != null) {
         setUser(latest);
         persistSession(latest);
+        await hydrateGruposCache(latest.username);
       }
     } catch {
       // sin cambios

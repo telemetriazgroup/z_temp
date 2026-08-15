@@ -14,6 +14,7 @@ import {
   userMayAccessDispositivo,
   displayNameForDevice,
   postAuditEvent,
+  userMayControlTemperatura,
 } from '../modules/usuario';
 import { AUDIT_ACTIONS } from '../modules/usuario/auditActions';
 import {
@@ -34,7 +35,7 @@ import {
 } from '../modules/alarma';
 import { DeviceAlarmasPanel } from '../components/DeviceAlarmasPanel';
 import { EquipoDetalleIffLayout } from '../components/EquipoDetalleIffLayout';
-import { esEquipoIffControlable } from '../modules/control';
+import { esEquipoConControlTemperatura } from '../modules/control';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Card, CardContent } from '../components/ui/card';
@@ -450,8 +451,10 @@ export default function EquipoDetalle() {
     return partitionDetalleItems(dispositivo.ultimo_dato);
   }, [dispositivo]);
 
-  const esIffControl =
-    dispositivo != null && esEquipoIffControlable(dispositivo.imei, dispositivo.codigo);
+  const esLayoutReeferControl =
+    dispositivo != null &&
+    esEquipoConControlTemperatura(dispositivo.imei, dispositivo.codigo);
+  const puedeMostrarControl = userMayControlTemperatura(user);
 
   if (!imei) {
     return (
@@ -549,7 +552,7 @@ export default function EquipoDetalle() {
         </Button>
       </div>
 
-      {!esIffControl && (
+      {!esLayoutReeferControl && (
       <div className="rounded-xl border bg-card p-6 shadow-sm">
         <div className="flex flex-col lg:flex-row lg:items-start gap-6">
           <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
@@ -617,7 +620,7 @@ export default function EquipoDetalle() {
       </div>
       )}
 
-      {esIffControl ? (
+      {esLayoutReeferControl ? (
         <EquipoDetalleIffLayout
           dispositivo={dispositivo}
           tituloPrincipal={tituloPrincipal}
@@ -627,6 +630,7 @@ export default function EquipoDetalle() {
           onRefresh={() => void consultarActualizacion(false)}
           historialFocus={historialFocus}
           onVerEventoEnGrafica={verEventoEnGraficaPrincipal}
+          mostrarControl={puedeMostrarControl}
         />
       ) : (
         <>

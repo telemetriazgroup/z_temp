@@ -28,6 +28,8 @@ interface Props {
   tieneUbicacion?: boolean;
   historialFocus?: HistorialFocusRango | null;
   onVerEventoEnGrafica?: (rango: { since: string; until: string }) => void;
+  /** Mostrar panel de control (permiso de usuario). Default false. */
+  mostrarControl?: boolean;
 }
 
 export function EquipoDetalleIffLayout({
@@ -39,6 +41,7 @@ export function EquipoDetalleIffLayout({
   tieneUbicacion,
   historialFocus = null,
   onVerEventoEnGrafica,
+  mostrarControl = false,
 }: Props) {
   const ud = dispositivo.ultimo_dato;
   const powerOn = dispositivo.power_state_texto === 'on';
@@ -125,31 +128,56 @@ export function EquipoDetalleIffLayout({
 
       <DeviceAlarmasPanel ultimoDato={ud} compact />
 
-      <div className="rounded-lg border border-dashed bg-muted/30 px-4 py-3 flex items-start gap-3">
-        <Settings2 className="h-5 w-5 text-primary shrink-0 mt-0.5" />
-        <div>
-          <p className="text-sm font-medium">Módulo control IFF</p>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Comandos vía <code className="text-[10px]">comando_control_tunel</code> con
-            registro de la cuenta ejecutora. Alarmas desde{' '}
-            <code className="text-[10px]">numero_alarma</code> y{' '}
-            <code className="text-[10px]">alarma_01…</code> enlazadas al catálogo MP4000.
-          </p>
-        </div>
-      </div>
+      {mostrarControl && (
+        <>
+          <div className="rounded-lg border border-dashed bg-muted/30 px-4 py-3 flex items-start gap-3">
+            <Settings2 className="h-5 w-5 text-primary shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-medium">Control de temperaturas</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Comandos remotos (setpoint, defrost, stop plan) vía{' '}
+                <code className="text-[10px]">comando_control_tunel</code>. Cada
+                acción queda registrada con la cuenta ejecutora.
+              </p>
+            </div>
+          </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
-        <div className="xl:col-span-4 space-y-6">
-          <IffControlPanel
-            dispositivo={dispositivo}
-            onComandoOk={handleComandoOk}
-          />
-          <ControlCommandLogPanel
-            imei={dispositivo.imei}
-            refreshKey={commandLogKey}
-          />
-        </div>
-        <div className="xl:col-span-8 min-w-0 space-y-6">
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
+            <div className="xl:col-span-4 space-y-6">
+              <IffControlPanel
+                dispositivo={dispositivo}
+                onComandoOk={handleComandoOk}
+              />
+              <ControlCommandLogPanel
+                imei={dispositivo.imei}
+                refreshKey={commandLogKey}
+              />
+            </div>
+            <div className="xl:col-span-8 min-w-0 space-y-6">
+              <HistorialOficialDetalle
+                imei={dispositivo.imei}
+                codigo={dispositivo.codigo!}
+                nombreContenedor={tituloPrincipal}
+                embedded
+                focusRango={historialFocus}
+                zonaHoraria={dispositivo.zona_horaria}
+              />
+              {dispositivo.codigo != null && (
+                <AnalisisTelemetriaPanel
+                  imei={dispositivo.imei}
+                  codigo={dispositivo.codigo}
+                  nombreContenedor={tituloPrincipal}
+                  setPointInicial={dispositivo.ultimo_dato?.set_point ?? null}
+                  onVerEnGraficaPrincipal={onVerEventoEnGrafica}
+                />
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
+      {!mostrarControl && (
+        <div className="space-y-6">
           <HistorialOficialDetalle
             imei={dispositivo.imei}
             codigo={dispositivo.codigo!}
@@ -168,7 +196,7 @@ export function EquipoDetalleIffLayout({
             />
           )}
         </div>
-      </div>
+      )}
     </div>
   );
 }

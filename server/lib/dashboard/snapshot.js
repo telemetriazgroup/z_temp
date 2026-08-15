@@ -8,6 +8,7 @@ import {
   saveSnapshotTransaction,
   pruneDashboardHistory,
 } from './repository.js';
+import { resolveUserEffectiveImeis } from '../gruposEquiposRepository.js';
 
 function conexionOf(d) {
   const s = String(d.estado_conexion ?? '').toLowerCase();
@@ -135,10 +136,15 @@ export function computeFleetCounts(dispositivos, configMap = null) {
 }
 
 export function filterDispositivosForUser(dispositivos, user) {
-  if (!user || user.superUser === true || user.deviceAccess?.includes('all')) {
+  if (!user || user.superUser === true || user.category === 'superadmin') {
     return dispositivos;
   }
-  const allowed = new Set((user.deviceAccess ?? []).map(String));
+  if (user.deviceAccess?.includes('all')) {
+    return dispositivos;
+  }
+  const allowedList = resolveUserEffectiveImeis(user);
+  if (allowedList == null) return dispositivos;
+  const allowed = new Set(allowedList.map(String));
   const codigos = Array.isArray(user.allowedCodigos)
     ? new Set(user.allowedCodigos.map((c) => String(c).toUpperCase()))
     : null;

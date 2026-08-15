@@ -1,5 +1,9 @@
 import { readJson, writeJson, uid } from './store.js';
 import { BOOTSTRAP_USERS } from './bootstrapUsers.js';
+import {
+  resolveUserEffectiveImeis,
+  getGrupoEquipoById,
+} from './gruposEquiposRepository.js';
 
 const USERS_FILE = 'users.json';
 const VALID_ROLES = new Set(['Administrador', 'Monitoreo', 'Solo Vista']);
@@ -116,6 +120,46 @@ export function countUsersCreatedBy(creatorUsername, users = getUsers()) {
   ).length;
 }
 
+/**
+ * Un admin solo puede asignar IMEIs/grupos dentro de su propia flota
+ * (la que le dio el superadmin).
+ */
+function assertActorMayAssignFleet(actor, deviceAccess, groupIds) {
+  if (!actor || isSuperAdminUser(actor)) return;
+  if (!isAdminUser(actor)) {
+    throw new Error('No autorizado a asignar equipos');
+  }
+  const allowed = resolveUserEffectiveImeis(actor);
+  if (allowed == null) return;
+  const allowedSet = new Set(allowed.map(String));
+  const imeis = Array.isArray(deviceAccess)
+    ? deviceAccess.map(String).filter((x) => x && x !== 'all')
+    : [];
+  for (const imei of imeis) {
+    if (!allowedSet.has(imei)) {
+      throw new Error(
+        `No puede asignar el equipo ${imei}: no está en su flota autorizada`
+      );
+    }
+  }
+  const gids = Array.isArray(groupIds) ? groupIds.map(String) : [];
+  const actorGroupIds = new Set(
+    Array.isArray(actor.groupIds) ? actor.groupIds.map(String) : []
+  );
+  for (const gid of gids) {
+    if (actorGroupIds.has(gid)) continue;
+    const g = getGrupoEquipoById(gid);
+    if (!g) throw new Error(`Grupo no encontrado: ${gid}`);
+    for (const imei of g.imeis ?? []) {
+      if (!allowedSet.has(String(imei))) {
+        throw new Error(
+          `No puede asignar el grupo «${g.nombre}»: contiene equipos fuera de su flota`
+        );
+      }
+    }
+  }
+}
+
 function validateUserShape(user, { requirePassword = false } = {}) {
   if (!user || typeof user !== 'object') throw new Error('Usuario inválido');
   const username = user.username?.toString().trim();
@@ -134,12 +178,16 @@ function validateUserShape(user, { requirePassword = false } = {}) {
   let deviceAccess = Array.isArray(user.deviceAccess)
     ? user.deviceAccess.map(String)
     : [];
-  if (superUser || category === 'admin') {
+  // Solo superadmin tiene flota completa por defecto.
+  if (superUser) {
     deviceAccess = ['all'];
   }
-  if (!superUser && category !== 'admin' && !deviceAccess.includes('all') && deviceAccess.length === 0) {
-    throw new Error('Indique al menos un IMEI o asigne categoría admin/superadmin');
-  }
+
+  const groupIds = Array.isArray(user.groupIds)
+    ? [...new Set(user.groupIds.map(String).filter(Boolean))]
+    : [];
+
+  // Sin equipos al crear está permitido; se asignan luego en Administración.
 
   let maxManagedUsers;
   if (category === 'admin') {
@@ -161,6 +209,7 @@ function validateUserShape(user, { requirePassword = false } = {}) {
     superUser,
     maxManagedUsers,
     createdBy: optStr(user.createdBy),
+    groupIds: groupIds.length ? groupIds : undefined,
     deviceNames:
       user.deviceNames && typeof user.deviceNames === 'object' && !Array.isArray(user.deviceNames)
         ? { ...user.deviceNames }
@@ -168,6 +217,8 @@ function validateUserShape(user, { requirePassword = false } = {}) {
     allowedCodigos: Array.isArray(user.allowedCodigos)
       ? user.allowedCodigos.map(String)
       : undefined,
+    /** Desactivado por defecto; solo true si se asigna explícitamente. */
+    puedeControlTemperatura: user.puedeControlTemperatura === true,
     displayName: buildDisplayName({ ...user, nombres, apellidos }),
     zonaHoraria: normalizeZonaHoraria(user.zonaHoraria ?? 'GMT-5'),
     temperaturaUnidad: normalizeTemperaturaUnidad(user.temperaturaUnidad),
@@ -251,8 +302,9 @@ function migrateCategoryFields(users) {
       changed = true;
     }
     if (cat === 'admin') {
-      if (!Array.isArray(u.deviceAccess) || !u.deviceAccess.includes('all')) {
-        u.deviceAccess = ['all'];
+      // Admin ya no recibe flota completa automáticamente; el superadmin asigna equipos.
+      if (!Array.isArray(u.deviceAccess)) {
+        u.deviceAccess = [];
         changed = true;
       }
       if (u.maxManagedUsers == null) {
@@ -316,9 +368,9 @@ export function addUser(input, opts = {}) {
     nextInput.superUser = false;
     nextInput.createdBy = actor.username;
     delete nextInput.maxManagedUsers;
-    if (Array.isArray(nextInput.deviceAccess) && nextInput.deviceAccess.includes('all')) {
-      throw new Error('Un admin no puede asignar acceso a todos los dispositivos');
-    }
+    // Flota solo vía Administración (update), no al crear con IMEI libres.
+    nextInput.deviceAccess = [];
+    nextInput.groupIds = [];
   } else if (isSuperAdminUser(actor)) {
     if (nextInput.createdBy == null) {
       nextInput.createdBy = actor.username;
@@ -366,6 +418,11 @@ export function updateUser(id, patch, opts = {}) {
     if (Array.isArray(patch.deviceAccess) && patch.deviceAccess.includes('all')) {
       throw new Error('Un admin no puede asignar acceso a todos los dispositivos');
     }
+    assertActorMayAssignFleet(
+      actor,
+      patch.deviceAccess !== undefined ? patch.deviceAccess : prev.deviceAccess,
+      patch.groupIds !== undefined ? patch.groupIds : prev.groupIds
+    );
     patch = {
       ...patch,
       category: 'user',

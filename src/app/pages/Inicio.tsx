@@ -15,10 +15,13 @@ import {
 import {
   fetchDashboardOverview,
   markDashboardDeviceReviewed,
+  fetchDashboardUserActivity,
 } from '../modules/correo/correoServerApi';
 import type {
   DashboardOverview,
   DashboardPeriodAverage,
+  DashboardUserActivityDetail,
+  DashboardUserLogin,
 } from '../modules/correo/types';
 import { useAuth } from '../AuthContext';
 import { userIsMonitoreoNavigation, userIsSuperAdmin } from '../modules/usuario';
@@ -31,6 +34,13 @@ import { takePreloadedOverview } from '../lib/dashboardPreload';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '../components/ui/dialog';
 import { cn } from '../components/ui/utils';
 import {
   RefreshCw,
@@ -54,6 +64,7 @@ import {
   Link2,
   Check,
   History,
+  LogIn,
 } from 'lucide-react';
 import { Historial3hModal, type Historial3hTarget } from '../components/Historial3hModal';
 import { dispositivoTieneHistorialOficial } from '../api/datosOficiales';
@@ -192,6 +203,12 @@ export default function Inicio() {
   const [error, setError] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState<string | null>(null);
   const [historial3h, setHistorial3h] = useState<Historial3hTarget | null>(null);
+  const [userDetailTarget, setUserDetailTarget] =
+    useState<DashboardUserLogin | null>(null);
+  const [userDetail, setUserDetail] =
+    useState<DashboardUserActivityDetail | null>(null);
+  const [userDetailLoading, setUserDetailLoading] = useState(false);
+  const [userDetailError, setUserDetailError] = useState<string | null>(null);
 
   const load = useCallback(async (opts?: { force?: boolean }) => {
     setError(null);
@@ -251,6 +268,27 @@ export default function Inicio() {
       setError(e instanceof Error ? e.message : 'No se pudo marcar revisión');
     } finally {
       setReviewing(null);
+    }
+  };
+
+  const openUserActivity = async (login: DashboardUserLogin) => {
+    setUserDetailTarget(login);
+    setUserDetail(null);
+    setUserDetailError(null);
+    setUserDetailLoading(true);
+    try {
+      const detail = await fetchDashboardUserActivity(login.username, {
+        username: user?.username,
+        superUser: true,
+        limit: 100,
+      });
+      setUserDetail(detail);
+    } catch (e) {
+      setUserDetailError(
+        e instanceof Error ? e.message : 'No se pudo cargar el historial'
+      );
+    } finally {
+      setUserDetailLoading(false);
     }
   };
 
@@ -715,6 +753,10 @@ export default function Inicio() {
                       <Users className="h-4 w-4" />
                       Últimos usuarios conectados
                     </CardTitle>
+                    <p className="text-[11px] text-muted-foreground font-normal pt-1">
+                      Usuarios distintos. Clic para ver historial de accesos y
+                      acciones.
+                    </p>
                   </CardHeader>
                   <CardContent>
                     {(data.users?.recentLogins ?? []).length === 0 ? (
@@ -724,20 +766,36 @@ export default function Inicio() {
                     ) : (
                       <ul className="divide-y text-sm">
                         {data.users.recentLogins.map((u) => (
-                          <li
-                            key={u.id}
-                            className="py-2 flex items-center justify-between gap-2"
-                          >
-                            <div className="min-w-0">
-                              <div className="font-medium truncate">{u.username}</div>
-                              <div className="text-[11px] text-muted-foreground">
-                                {u.role ?? '—'}
-                                {u.superUser ? ' · super' : ''}
+                          <li key={u.username}>
+                            <button
+                              type="button"
+                              className="w-full py-2 flex items-center justify-between gap-2 text-left hover:bg-muted/40 rounded-md px-1 -mx-1 transition-colors"
+                              onClick={() => void openUserActivity(u)}
+                            >
+                              <div className="min-w-0">
+                                <div className="font-medium truncate flex items-center gap-1.5">
+                                  {u.username}
+                                  {(u.loginCount ?? 1) > 1 && (
+                                    <Badge
+                                      variant="secondary"
+                                      className="text-[10px] h-5 px-1.5 font-normal"
+                                    >
+                                      {u.loginCount} accesos
+                                    </Badge>
+                                  )}
+                                </div>
+                                <div className="text-[11px] text-muted-foreground">
+                                  {u.role ?? '—'}
+                                  {u.superUser ? ' · super' : ''}
+                                </div>
                               </div>
-                            </div>
-                            <span className="text-[11px] text-muted-foreground shrink-0">
-                              {formatWhen(u.logged_in_at)}
-                            </span>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <span className="text-[11px] text-muted-foreground">
+                                  {formatWhen(u.logged_in_at)}
+                                </span>
+                                <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                              </div>
+                            </button>
                           </li>
                         ))}
                       </ul>
@@ -828,6 +886,99 @@ export default function Inicio() {
           </div>
         </>
       )}
+
+      <Dialog
+        open={userDetailTarget != null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setUserDetailTarget(null);
+            setUserDetail(null);
+            setUserDetailError(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <History className="h-4 w-4" />
+              Historial de {userDetailTarget?.username}
+            </DialogTitle>
+            <DialogDescription>
+              Línea de tiempo de accesos y acciones realizadas
+              {userDetail
+                ? ` · ${userDetail.loginCount} login(s) registrados`
+                : ''}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto min-h-0 pr-1">
+            {userDetailLoading && (
+              <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+                <RefreshCw className="h-4 w-4 animate-spin" />
+                Cargando historial…
+              </div>
+            )}
+            {userDetailError && (
+              <p className="text-sm text-destructive py-4 text-center">
+                {userDetailError}
+              </p>
+            )}
+            {!userDetailLoading &&
+              !userDetailError &&
+              (userDetail?.timeline?.length ?? 0) === 0 && (
+                <p className="text-sm text-muted-foreground py-8 text-center">
+                  Sin eventos registrados para este usuario
+                </p>
+              )}
+            {!userDetailLoading &&
+              (userDetail?.timeline?.length ?? 0) > 0 && (
+                <ol className="relative border-l border-border ml-3 space-y-0">
+                  {userDetail!.timeline.map((item) => (
+                    <li key={item.id} className="ml-4 pb-4 last:pb-0">
+                      <span
+                        className={cn(
+                          'absolute -left-1.5 mt-1.5 h-3 w-3 rounded-full border-2 border-background',
+                          item.kind === 'login'
+                            ? 'bg-emerald-500'
+                            : 'bg-sky-500'
+                        )}
+                      />
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                        <Badge
+                          variant={
+                            item.kind === 'login' ? 'default' : 'secondary'
+                          }
+                          className="text-[10px] h-5"
+                        >
+                          {item.kind === 'login' ? (
+                            <span className="inline-flex items-center gap-1">
+                              <LogIn className="h-3 w-3" />
+                              Acceso
+                            </span>
+                          ) : (
+                            item.action
+                          )}
+                        </Badge>
+                        <span className="text-[11px] text-muted-foreground">
+                          {formatWhen(item.at)}
+                        </span>
+                      </div>
+                      <p className="text-sm mt-1 leading-snug">
+                        {item.summary || item.action}
+                      </p>
+                      {item.module && item.kind === 'action' && (
+                        <p className="text-[11px] text-muted-foreground mt-0.5">
+                          Módulo: {item.module}
+                          {item.targetId ? ` · ${item.targetId}` : ''}
+                        </p>
+                      )}
+                    </li>
+                  ))}
+                </ol>
+              )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Historial3hModal
         open={historial3h != null}

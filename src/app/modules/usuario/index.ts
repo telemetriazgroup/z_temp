@@ -26,6 +26,8 @@ export {
   userCanAccessAudit,
   adminMaxManagedUsers,
   categoryLabel,
+  userMayControlTemperatura,
+  userHasNoFleetAccess,
 } from './userPermissions';
 export { resumenFromDispositivos } from './listResumen';
 export {

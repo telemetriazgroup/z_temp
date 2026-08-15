@@ -2,7 +2,11 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Outlet, Link, useNavigate, useLocation } from 'react-router';
 import { useAuth } from './AuthContext';
 import { useAppTheme } from './ThemeContext';
-import { userIsMonitoreoNavigation, userCanManageUsers, userCanAccessAudit, categoryLabel } from './modules/usuario';
+import { userIsMonitoreoNavigation, userCanManageUsers, userCanAccessAudit, categoryLabel, userHasNoFleetAccess } from './modules/usuario';
+import {
+  SinEquiposAsignados,
+  pathRequiresFleet,
+} from './components/SinEquiposAsignados';
 import { fetchServerGrupos, syncDeviceNamesToServer } from './modules/correo/correoServerApi';
 import { refreshDeviceNamesFromServer } from './lib/deviceLocalNames';
 import { userHasCorreoIncidentAccess } from './modules/correo/incidentAccess';
@@ -133,6 +137,7 @@ export default function Layout() {
       location.pathname === '/listado' ||
       location.pathname.startsWith('/listado/') ||
       location.pathname === '/catalogo-alarmas' ||
+      location.pathname === '/ayuda' ||
       location.pathname === '/perfil';
     if (!permitido) {
       navigate('/', { replace: true });
@@ -164,6 +169,7 @@ export default function Layout() {
         { path: '/', label: 'Inicio', icon: Home },
         { path: '/listado', label: 'Listado', icon: List },
         { path: '/catalogo-alarmas', label: 'Catálogo Alarmas', icon: BookOpen },
+        { path: '/ayuda', label: 'Ayuda/Soporte', icon: HelpCircle },
       ];
     }
 
@@ -175,7 +181,9 @@ export default function Layout() {
     return [
       { path: '/', label: 'Inicio', icon: Home },
       { path: '/listado', label: 'Listado', icon: List },
-      { path: '/administracion', label: 'Administración', icon: Settings },
+      ...(canManage
+        ? [{ path: '/administracion' as const, label: 'Administración', icon: Settings }]
+        : []),
       ...(canManage
         ? [{ path: '/usuarios' as const, label: 'Usuarios', icon: Shield }]
         : []),
@@ -427,7 +435,30 @@ export default function Layout() {
         </header>
 
         <main className="flex-1 overflow-auto p-6 bg-background">
-          <Outlet />
+          {userHasNoFleetAccess(user) &&
+          pathRequiresFleet(location.pathname) &&
+          !userCanManageUsers(user) ? (
+            <SinEquiposAsignados />
+          ) : userHasNoFleetAccess(user) &&
+            pathRequiresFleet(location.pathname) &&
+            userCanManageUsers(user) ? (
+            <div className="space-y-4">
+              <SinEquiposAsignados />
+              <p className="text-center text-sm text-muted-foreground">
+                Como administrador puede ir a{' '}
+                <Link to="/administracion" className="underline font-medium">
+                  Administración
+                </Link>{' '}
+                cuando el superadmin le asigne flota, o gestionar usuarios desde{' '}
+                <Link to="/usuarios" className="underline font-medium">
+                  Usuarios
+                </Link>
+                .
+              </p>
+            </div>
+          ) : (
+            <Outlet />
+          )}
         </main>
       </div>
     </div>

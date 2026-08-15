@@ -1,5 +1,6 @@
 import type { User, UserCategory } from '../../types';
 import { IFF_STYLE_ACCOUNT_USERNAMES } from './bootstrapUsers';
+import { effectiveDeviceAccessForUser } from '../administracion/gruposEquiposCache';
 
 export function resolveUserCategory(user: User | null | undefined): UserCategory {
   if (user == null) return 'user';
@@ -57,14 +58,28 @@ export function userIsIffRestrictedNavigation(user: User | null): boolean {
 
 export function userHasFullDeviceAccess(user: User | null): boolean {
   if (user == null) return false;
-  if (userCanManageUsers(user)) return true;
+  if (userIsSuperAdmin(user)) return true;
   return deviceAccessList(user).includes('all');
+}
+
+/**
+ * Usuario sin flota efectiva (ni IMEI directo ni grupos).
+ * Superadmin nunca; admin/user con lista vacía sí.
+ */
+export function userHasNoFleetAccess(user: User | null | undefined): boolean {
+  if (user == null) return true;
+  if (userIsSuperAdmin(user)) return false;
+  const eff = effectiveDeviceAccessForUser(user);
+  if (eff === 'all') return false;
+  return eff.length === 0;
 }
 
 export function userMayAccessImei(user: User | null, imei: string): boolean {
   if (user == null) return false;
   if (userHasFullDeviceAccess(user)) return true;
-  return deviceAccessList(user).includes(imei);
+  const eff = effectiveDeviceAccessForUser(user);
+  if (eff === 'all') return true;
+  return eff.includes(imei);
 }
 
 /** IMEI + origen (TUNEL / STARCOOL / STARCOOL2 / TERMOKING) según perfil del usuario. */
@@ -100,5 +115,17 @@ export function categoryLabel(user: User | null | undefined): string {
   const c = resolveUserCategory(user);
   if (c === 'superadmin') return 'Superadmin';
   if (c === 'admin') return 'Admin';
-  return user?.role ?? 'Usuario';
+  return 'Usuario';
+}
+
+/**
+ * Panel de control de temperaturas (comandos reefer).
+ * Superadmin: siempre habilitado.
+ * Resto: solo si un admin/superadmin lo habilitó explícitamente (`puedeControlTemperatura`).
+ * Por defecto desactivado para usuarios no superadmin.
+ */
+export function userMayControlTemperatura(user: User | null | undefined): boolean {
+  if (user == null) return false;
+  if (userIsSuperAdmin(user)) return true;
+  return user.puedeControlTemperatura === true;
 }

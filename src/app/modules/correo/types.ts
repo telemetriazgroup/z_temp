@@ -552,6 +552,29 @@ export interface DashboardUserLogin {
   role: string | null;
   superUser: boolean;
   logged_in_at: string;
+  /** Accesos del usuario en los últimos 30 días. */
+  loginCount?: number;
+}
+
+export interface DashboardUserActivityItem {
+  id: string;
+  at: string;
+  kind: 'login' | 'action';
+  action: string;
+  module: string;
+  summary: string;
+  detail?: Record<string, unknown>;
+  targetId?: string;
+  targetUsername?: string;
+}
+
+export interface DashboardUserActivityDetail {
+  username: string;
+  role: string | null;
+  superUser: boolean;
+  loginCount: number;
+  logins: DashboardUserLogin[];
+  timeline: DashboardUserActivityItem[];
 }
 
 /** Vista pública del SMTP guardado en servidor (sin contraseña). */
