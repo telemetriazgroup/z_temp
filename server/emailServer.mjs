@@ -80,6 +80,7 @@ import {
 
 import { createAnalisisRouter } from './lib/analisis/routes.js';
 import { createDashboardRouter } from './lib/dashboard/routes.js';
+import { createSenalRouter } from './lib/senal/routes.js';
 import { ensureAnalisisSchema } from './lib/db.js';
 import { captureDashboardSnapshotSafe } from './lib/dashboard/snapshot.js';
 import { buildExternalAlertMonitor } from './lib/externalAlertMonitor.js';
@@ -96,6 +97,7 @@ const app = express();
 app.use(express.json({ limit: '2mb' }));
 app.use('/reefer/api/analisis', createAnalisisRouter());
 app.use('/reefer/api/correo/dashboard', createDashboardRouter());
+app.use('/reefer/api/senal', createSenalRouter());
 
 function isValidEmail(s) {
   return typeof s === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -1260,7 +1262,11 @@ app.listen(PORT, '0.0.0.0', () => {
   // Una sola cadena de migración (analisis → dashboard). Evita CREATE TABLE
   // concurrente que dispara pg_type_typname_nsp_index.
   ensureAnalisisSchema()
-    .then(() => {
+    .then(async () => {
+      const { ensureSenalSchema } = await import('./lib/db.js');
+      await ensureSenalSchema().catch((e) =>
+        console.warn('[senal] esquema diferido:', e.message)
+      );
       setTimeout(() => {
         captureDashboardSnapshotSafe()
           .then((r) => console.log('[dashboard] snapshot inicial', r?.id ?? r?.skipped ?? 'ok'))

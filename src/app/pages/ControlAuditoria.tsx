@@ -1,10 +1,11 @@
 import React, { useMemo, useState } from 'react';
-import { Link } from 'react-router';
+import { Link, Navigate } from 'react-router';
 import { useAuth } from '../AuthContext';
 import {
   displayNameForDevice,
   userHasFullDeviceAccess,
   userMayAccessImei,
+  userCanAccessAudit,
 } from '../modules/usuario';
 import { getControlCommandLogsForUser, type ControlCommandLogEntry } from '../modules/control';
 import { readDeviceLocalNames } from '../lib/deviceLocalNames';
@@ -58,6 +59,10 @@ export default function ControlAuditoria() {
   const { user } = useAuth();
   const localNames = useMemo(() => readDeviceLocalNames(), []);
   const [filtroImei, setFiltroImei] = useState<string>('all');
+
+  if (!userCanAccessAudit(user)) {
+    return <Navigate to="/" replace />;
+  }
 
   const logs = useMemo(() => getControlCommandLogsForUser(user, 200), [user]);
 

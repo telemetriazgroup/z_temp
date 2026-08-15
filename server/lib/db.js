@@ -17,6 +17,9 @@ let analisisMigrating = null;
 let dashboardMigrated = false;
 /** @type {Promise<boolean> | null} */
 let dashboardMigrating = null;
+let senalMigrated = false;
+/** @type {Promise<boolean> | null} */
+let senalMigrating = null;
 
 export function isDbConfigured() {
   return Boolean(DATABASE_URL?.trim());
@@ -120,8 +123,6 @@ export async function ensureDashboardSchema() {
   if (dashboardMigrating) return dashboardMigrating;
   dashboardMigrating = runDashboardMigration()
     .catch((e) => {
-      // CREATE TABLE IF NOT EXISTS no es atómico entre sesiones: si otra
-      // conexión ya creó el tipo/tabla, reintentar es seguro.
       const msg = String(e?.message ?? e);
       if (
         msg.includes('pg_type_typname_nsp_index') ||
@@ -138,6 +139,42 @@ export async function ensureDashboardSchema() {
       dashboardMigrating = null;
     });
   return dashboardMigrating;
+}
+
+async function runSenalMigration() {
+  if (senalMigrated) return true;
+  if (!isDbConfigured()) return false;
+  await ensureDashboardSchema();
+  const sqlPath = path.join(__dirname, '../sql/003_senal.sql');
+  const sql = fs.readFileSync(sqlPath, 'utf8');
+  await query(sql);
+  senalMigrated = true;
+  console.log('[senal] esquema PostgreSQL listo');
+  return true;
+}
+
+export async function ensureSenalSchema() {
+  if (senalMigrated) return true;
+  if (!isDbConfigured()) return false;
+  if (senalMigrating) return senalMigrating;
+  senalMigrating = runSenalMigration()
+    .catch((e) => {
+      const msg = String(e?.message ?? e);
+      if (
+        msg.includes('pg_type_typname_nsp_index') ||
+        msg.includes('already exists')
+      ) {
+        senalMigrated = true;
+        console.log('[senal] esquema ya existente (carrera inofensiva)');
+        return true;
+      }
+      console.error('[senal] no se pudo migrar esquema:', e.message);
+      throw e;
+    })
+    .finally(() => {
+      senalMigrating = null;
+    });
+  return senalMigrating;
 }
 
 export async function checkDbHealth() {

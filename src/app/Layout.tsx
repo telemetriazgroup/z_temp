@@ -46,6 +46,7 @@ import {
   Building2,
   Sun,
   Moon,
+  RadioTower,
 } from 'lucide-react';
 import type { GrupoCorreo } from './modules/correo/types';
 import { cn } from './components/ui/utils';
@@ -159,7 +160,8 @@ export default function Layout() {
     if (userCanAccessAudit(user)) return;
     if (
       location.pathname === '/auditoria' ||
-      location.pathname === '/control-auditoria'
+      location.pathname === '/control-auditoria' ||
+      location.pathname === '/analisis-senal'
     ) {
       navigate('/', { replace: true });
     }
@@ -222,6 +224,7 @@ export default function Layout() {
         ? [
             { path: '/control-auditoria' as const, label: t('nav.controlAuditoria'), icon: History },
             { path: '/auditoria' as const, label: t('nav.auditoriaUsuarios'), icon: History },
+            { path: '/analisis-senal' as const, label: t('nav.analisisSenal'), icon: RadioTower },
           ]
         : []),
       { path: '/alarmas', label: t('nav.alarmas'), icon: Bell },

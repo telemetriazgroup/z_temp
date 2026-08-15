@@ -70,7 +70,7 @@ export async function insertDeviceSamples(client, snapshotId, samples) {
 
 export async function pruneDashboardHistory({
   fleetDays = 180,
-  deviceDays = 45,
+  deviceDays = 120,
 } = {}) {
   await query(
     `DELETE FROM dashboard_fleet_snapshot

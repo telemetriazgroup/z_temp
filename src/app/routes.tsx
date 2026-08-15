@@ -19,6 +19,7 @@ import AyudaSoporte from "./pages/AyudaSoporte";
 import Perfil from "./pages/Perfil";
 import Empresas from "./pages/Empresas";
 import AuditoriaUsuarios from "./pages/AuditoriaUsuarios";
+import AnalisisSenal from "./pages/AnalisisSenal";
 
 /** Protege rutas: al cerrar sesión (user=null) redirige a /login. */
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -119,6 +120,10 @@ const routeTree = [
       {
         path: "auditoria",
         element: <AuditoriaUsuarios />,
+      },
+      {
+        path: "analisis-senal",
+        element: <AnalisisSenal />,
       },
     ],
   },
