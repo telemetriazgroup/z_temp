@@ -34,6 +34,7 @@ import {
   TableRow,
 } from '../components/ui/table';
 import { Bell, CheckCircle2, AlertCircle, RefreshCw, BookOpen } from 'lucide-react';
+import { useT } from '../i18n';
 
 const SIN_ASIGNAR = 'SIN ASIGNAR';
 
@@ -55,6 +56,7 @@ function formatDate(dateString: string | null): string {
 }
 
 export default function Alarmas() {
+  const t = useT();
   const { user } = useAuth();
   const showTechnical = userCanManageUsers(user);
   const localNames = useMemo(() => readDeviceLocalNames(), []);
@@ -120,7 +122,7 @@ export default function Alarmas() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4">
         <div>
-          <h1 className="text-3xl font-bold">Alarmas</h1>
+          <h1 className="text-3xl font-bold">{t('alarmas.title')}</h1>
           <p className="text-gray-500 mt-1">
             Eventos detectados desde telemetría (<code className="text-xs">numero_alarma</code>)
             enlazados al catálogo MP4000.
@@ -149,7 +151,7 @@ export default function Alarmas() {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Activas ahora</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('alarmas.activeNow')}</CardTitle>
             <AlertCircle className="h-4 w-4 text-red-600" />
           </CardHeader>
           <CardContent>
@@ -159,7 +161,7 @@ export default function Alarmas() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total registradas</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('alarmas.totalRegistered')}</CardTitle>
             <Bell className="h-4 w-4 text-blue-600" />
           </CardHeader>
           <CardContent>
@@ -169,7 +171,7 @@ export default function Alarmas() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Atendidas</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('alarmas.attended')}</CardTitle>
             <CheckCircle2 className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
@@ -178,7 +180,7 @@ export default function Alarmas() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Por atender</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('alarmas.pending')}</CardTitle>
             <AlertCircle className="h-4 w-4 text-orange-600" />
           </CardHeader>
           <CardContent>

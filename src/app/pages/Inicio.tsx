@@ -24,6 +24,7 @@ import type {
   DashboardUserLogin,
 } from '../modules/correo/types';
 import { useAuth } from '../AuthContext';
+import { useT } from '../i18n';
 import { userIsMonitoreoNavigation, userIsSuperAdmin } from '../modules/usuario';
 import {
   listadoFilterPath,
@@ -192,6 +193,7 @@ function AvgBlock({
 }
 
 export default function Inicio() {
+  const t = useT();
   const navigate = useNavigate();
   const { user } = useAuth();
   const { hydrateFromDispositivos } = useDispositivosFleet();
@@ -243,11 +245,11 @@ export default function Inicio() {
         });
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error al cargar dashboard');
+      setError(e instanceof Error ? e.message : t('inicio.loadError'));
     } finally {
       setLoading(false);
     }
-  }, [user?.username, user?.superUser, user, hydrateFromDispositivos]);
+  }, [user?.username, user?.superUser, user, hydrateFromDispositivos, t]);
 
   useEffect(() => {
     void load();
@@ -310,7 +312,7 @@ export default function Inicio() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold">Panel de control</h1>
+          <h1 className="text-3xl font-bold">{t('inicio.title')}</h1>
           <p className="text-muted-foreground mt-1">
             {esMonitoreo ? (
               <>
@@ -328,11 +330,11 @@ export default function Inicio() {
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" size="sm" onClick={() => void load({ force: true })} disabled={loading}>
             <RefreshCw className={cn('h-4 w-4 mr-2', loading && 'animate-spin')} />
-            Actualizar
+            {t('inicio.refresh')}
           </Button>
           <Button variant="outline" size="sm" onClick={() => navigate('/listado')}>
             <List className="h-4 w-4 mr-2" />
-            Listado
+            {t('inicio.viewList')}
           </Button>
           {esMonitoreo && (
             <Button
@@ -386,7 +388,7 @@ export default function Inicio() {
               value={live.online}
               tone="ok"
               icon={Wifi}
-              hint={`${live.pct_online ?? 0}% · ver listado`}
+              hint={`${live.pct_online ?? 0}% · ${t('inicio.viewList').toLowerCase()}`}
               onClick={() => navigate(listadoFilterPath({ status: 'ONLINE' }))}
             />
             <KpiCard
@@ -394,7 +396,7 @@ export default function Inicio() {
               value={live.wait}
               tone="warn"
               icon={Clock}
-              hint="Ver listado"
+              hint={t('inicio.viewList')}
               onClick={() => navigate(listadoFilterPath({ status: 'WAIT' }))}
             />
             <KpiCard
@@ -402,7 +404,7 @@ export default function Inicio() {
               value={live.offline}
               tone="muted"
               icon={WifiOff}
-              hint="Ver listado"
+              hint={t('inicio.viewList')}
               onClick={() => navigate(listadoFilterPath({ status: 'OFFLINE' }))}
             />
             <KpiCard
@@ -412,8 +414,8 @@ export default function Inicio() {
               icon={Thermometer}
               hint={
                 live.pct_en_rango != null
-                  ? `${live.pct_en_rango}% · ver listado`
-                  : 'Ver listado'
+                  ? `${live.pct_en_rango}% · ${t('inicio.viewList').toLowerCase()}`
+                  : t('inicio.viewList')
               }
               onClick={() => navigate(listadoFilterPath({ rango: 'en' }))}
             />
@@ -422,7 +424,7 @@ export default function Inicio() {
               value={live.fuera_rango}
               tone={live.fuera_rango > 0 ? 'bad' : 'ok'}
               icon={ThermometerSnowflake}
-              hint="Ver listado"
+              hint={t('inicio.viewList')}
               onClick={() => navigate(listadoFilterPath({ rango: 'fuera' }))}
             />
           </div>

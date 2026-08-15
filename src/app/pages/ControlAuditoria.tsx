@@ -28,6 +28,7 @@ import {
   TableRow,
 } from '../components/ui/table';
 import { History, Zap } from 'lucide-react';
+import { useT } from '../i18n';
 
 const SIN_ASIGNAR = 'SIN ASIGNAR';
 
@@ -53,6 +54,7 @@ function deviceLabel(
 }
 
 export default function ControlAuditoria() {
+  const t = useT();
   const { user } = useAuth();
   const localNames = useMemo(() => readDeviceLocalNames(), []);
   const [filtroImei, setFiltroImei] = useState<string>('all');
@@ -79,7 +81,7 @@ export default function ControlAuditoria() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
           <History className="h-7 w-7 text-primary" />
-          Auditoría de control
+          {t('controlAuditoria.title')}
         </h1>
         <p className="text-muted-foreground mt-1 text-sm max-w-2xl">
           Registro de comandos remotos enviados a contenedores reefer IFF (temperatura, defrost,

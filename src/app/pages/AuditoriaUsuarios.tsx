@@ -25,6 +25,7 @@ import {
 } from '../components/ui/table';
 import { Badge } from '../components/ui/badge';
 import { History, RefreshCw, ChevronDown, ChevronRight } from 'lucide-react';
+import { useT } from '../i18n';
 
 const ACTION_OPTIONS = [
   { value: 'all', label: 'Todas las acciones' },
@@ -49,6 +50,7 @@ function daysAgoYmd(n: number): string {
 }
 
 export default function AuditoriaUsuarios() {
+  const t = useT();
   const { user } = useAuth();
   const [rows, setRows] = useState<AuditLogEntry[]>([]);
   const [total, setTotal] = useState(0);
@@ -99,7 +101,7 @@ export default function AuditoriaUsuarios() {
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-2">
             <History className="h-8 w-8" />
-            Auditoría de usuarios
+            {t('auditoria.title')}
           </h1>
           <p className="text-muted-foreground mt-1">
             Trazabilidad de login, equipos vistos, descargas, altas de usuarios y

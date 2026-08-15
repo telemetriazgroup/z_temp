@@ -40,6 +40,7 @@ import {
   Loader2,
   Info,
 } from 'lucide-react';
+import { useT } from '../i18n';
 
 function telHref(phone: string): string {
   return `tel:${phone.replace(/[^\d+]/g, '')}`;
@@ -64,6 +65,7 @@ function openUrl(url: string) {
 }
 
 export default function AyudaSoporte() {
+  const t = useT();
   const { user } = useAuth();
   const canEdit = userIsSuperAdmin(user);
   const [content, setContent] = useState<AyudaSoporteContent>(defaultAyudaSoporteContent);
@@ -191,7 +193,7 @@ export default function AyudaSoporte() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold">Ayuda y Soporte</h1>
+          <h1 className="text-3xl font-bold">{t('ayuda.title')}</h1>
           <p className="text-muted-foreground mt-1">
             Centro de ayuda, contacto y recursos de la plataforma
           </p>

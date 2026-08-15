@@ -60,6 +60,7 @@ import {
   Link2,
   Save,
 } from 'lucide-react';
+import { useT } from '../i18n';
 
 const SIN_ASIGNAR = 'SIN ASIGNAR';
 
@@ -80,6 +81,7 @@ function statusBadge(estado: string | undefined) {
 }
 
 export default function Administracion() {
+  const t = useT();
   const { user: currentUser, refreshUser } = useAuth();
   const canManage = userCanManageUsers(currentUser);
   const isSuper = userIsSuperAdmin(currentUser);
@@ -289,7 +291,7 @@ export default function Administracion() {
     if (!selectedUser || !currentUser?.username) return;
     const cat = resolveUserCategory(selectedUser);
     if (cat === 'superadmin') {
-      setError('El superadmin ya tiene acceso a toda la flota.');
+      setError(t('administracion.superHasAll'));
       return;
     }
     setSaving(true);
@@ -408,21 +410,21 @@ export default function Administracion() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-bold">Administración</h1>
+          <h1 className="text-3xl font-bold">{t('administracion.title')}</h1>
           <p className="text-muted-foreground mt-1">
-            Grupos de equipos y asignación a cuentas
-            {isAdmin && !isSuper ? ' (solo usuarios que usted creó)' : ''}
+            {t('administracion.subtitle')}
+            {isAdmin && !isSuper ? t('administracion.subtitleAdminOnly') : ''}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" size="sm" onClick={() => void reload()} disabled={loading}>
             <RefreshCw className={cn('h-4 w-4 mr-2', loading && 'animate-spin')} />
-            Actualizar
+            {t('common.update')}
           </Button>
           <Button variant="outline" size="sm" asChild>
             <Link to="/usuarios">
               <Users className="h-4 w-4 mr-2" />
-              Usuarios
+              {t('administracion.users')}
             </Link>
           </Button>
         </div>
@@ -438,11 +440,11 @@ export default function Administracion() {
         <TabsList>
           <TabsTrigger value="asignaciones" className="gap-1.5">
             <Link2 className="h-3.5 w-3.5" />
-            Asignaciones
+            {t('administracion.tabAssignments')}
           </TabsTrigger>
           <TabsTrigger value="grupos" className="gap-1.5">
             <FolderTree className="h-3.5 w-3.5" />
-            Grupos
+            {t('administracion.tabGroups')}
           </TabsTrigger>
         </TabsList>
 
@@ -453,13 +455,13 @@ export default function Administracion() {
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm flex items-center gap-2">
                   <Users className="h-4 w-4" />
-                  Usuarios
+                  {t('administracion.users')}
                 </CardTitle>
                 <div className="relative pt-1">
                   <Search className="absolute left-2.5 top-3.5 h-3.5 w-3.5 text-muted-foreground" />
                   <Input
                     className="pl-8 h-8 text-sm"
-                    placeholder="Buscar usuario…"
+                    placeholder={t('administracion.searchUser')}
                     value={userSearch}
                     onChange={(e) => setUserSearch(e.target.value)}
                   />
@@ -467,10 +469,10 @@ export default function Administracion() {
               </CardHeader>
               <CardContent className="max-h-[60vh] overflow-y-auto p-2">
                 {loading ? (
-                  <p className="text-xs text-muted-foreground p-3 text-center">Cargando…</p>
+                  <p className="text-xs text-muted-foreground p-3 text-center">{t('common.loading')}</p>
                 ) : filteredUsers.length === 0 ? (
                   <p className="text-xs text-muted-foreground p-3 text-center">
-                    Sin usuarios
+                    {t('administracion.noUsers')}
                   </p>
                 ) : (
                   <ul className="space-y-0.5">
@@ -530,7 +532,7 @@ export default function Administracion() {
             {/* Asignaciones actuales */}
             <Card className="xl:col-span-4">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm">Asignaciones actuales</CardTitle>
+                <CardTitle className="text-sm">{t('administracion.currentAssignments')}</CardTitle>
                 <CardDescription className="text-xs">
                   {selectedUser
                     ? `${selectedUser.username} · ${categoryLabel(selectedUser)}`
@@ -544,7 +546,7 @@ export default function Administracion() {
                   </p>
                 ) : !canAssignToSelected ? (
                   <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 px-3 py-3">
-                    El superadmin ya tiene acceso a toda la flota.
+                    {t('administracion.superHasAll')}
                   </p>
                 ) : (
                   <>
@@ -557,7 +559,7 @@ export default function Administracion() {
                       )}
                     <div>
                       <p className="text-xs font-medium text-muted-foreground mb-2">
-                        Grupos asignados
+                        {t('administracion.assignedGroups')}
                       </p>
                       {assignedGrupos.length === 0 ? (
                         <p className="text-xs text-muted-foreground">Ninguno</p>
@@ -576,7 +578,7 @@ export default function Administracion() {
                     </div>
                     <div>
                       <p className="text-xs font-medium text-muted-foreground mb-2">
-                        Equipos directos
+                        {t('administracion.directDevices')}
                       </p>
                       {draftImeis.length === 0 ? (
                         <p className="text-xs text-muted-foreground">Ninguno</p>
@@ -606,7 +608,7 @@ export default function Administracion() {
                     </div>
                     <div>
                       <p className="text-xs font-medium text-muted-foreground mb-2">
-                        Equipos por grupo ({imeisViaGrupos.length})
+                        {t('administracion.devicesViaGroups')} ({imeisViaGrupos.length})
                       </p>
                       {assignedGrupos.length === 0 ? (
                         <p className="text-xs text-muted-foreground">—</p>
@@ -648,7 +650,7 @@ export default function Administracion() {
                         disabled={saving}
                       >
                         <Save className="h-4 w-4 mr-2" />
-                        {saving ? 'Guardando…' : 'Guardar asignación'}
+                        {saving ? t('common.saving') : t('administracion.saveAssignment')}
                       </Button>
                       {(draftGroupIds.length > 0 || draftImeis.length > 0) && (
                         <Button
@@ -662,12 +664,11 @@ export default function Administracion() {
                             setError(null);
                           }}
                         >
-                          Quitar todas las asignaciones
+                          {t('administracion.clearAll')}
                         </Button>
                       )}
                       <p className="text-[11px] text-muted-foreground text-center">
-                        Puede guardar sin grupos ni equipos; el usuario verá el aviso
-                        de flota vacía hasta que se le asigne algo.
+                        {t('administracion.clearHint')}
                       </p>
                     </div>
                   </>
@@ -678,15 +679,15 @@ export default function Administracion() {
             {/* Asignar */}
             <Card className="xl:col-span-5">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm">Asignar a seleccionados</CardTitle>
+                <CardTitle className="text-sm">{t('administracion.assignToSelected')}</CardTitle>
                 <CardDescription className="text-xs">
-                  Marque grupos y/o equipos individuales
+                  {t('administracion.markGroups')}
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4 max-h-[60vh] overflow-y-auto">
                 {!canAssignToSelected ? (
                   <p className="text-sm text-muted-foreground text-center py-8">
-                    Seleccione un usuario o admin para asignar equipos
+                    {t('administracion.selectUser')}
                     {!isSuper
                       ? ' (solo su flota autorizada)'
                       : ''}
@@ -701,12 +702,12 @@ export default function Administracion() {
                       </p>
                     )}
                     <div>
-                      <Label className="text-xs">Grupos de equipos</Label>
+                      <Label className="text-xs">{t('administracion.groupDevices')}</Label>
                       <div className="relative mt-1 mb-2">
                         <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
                         <Input
                           className="pl-8 h-8 text-sm"
-                          placeholder="Buscar grupo…"
+                          placeholder={t('administracion.searchGroup')}
                           value={groupSearch}
                           onChange={(e) => setGroupSearch(e.target.value)}
                         />
@@ -745,12 +746,12 @@ export default function Administracion() {
                     </div>
 
                     <div>
-                      <Label className="text-xs">Equipos (individual)</Label>
+                      <Label className="text-xs">{t('administracion.devicesIndividual')}</Label>
                       <div className="relative mt-1 mb-2">
                         <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
                         <Input
                           className="pl-8 h-8 text-sm"
-                          placeholder="Buscar IMEI o nombre…"
+                          placeholder={t('administracion.searchDevice')}
                           value={deviceSearch}
                           onChange={(e) => setDeviceSearch(e.target.value)}
                         />
@@ -758,11 +759,11 @@ export default function Administracion() {
                       <ul className="space-y-1 max-h-52 overflow-y-auto border rounded-md p-1.5">
                         {fleetLoading && dispositivos.length === 0 ? (
                           <li className="text-xs text-muted-foreground p-2 text-center">
-                            Cargando flota…
+                            {t('administracion.loadingFleet')}
                           </li>
                         ) : filteredDevicesAssign.length === 0 ? (
                           <li className="text-xs text-muted-foreground p-2 text-center">
-                            Sin equipos
+                            {t('administracion.noDevices')}
                           </li>
                         ) : (
                           filteredDevicesAssign.map((d) => (
@@ -800,7 +801,7 @@ export default function Administracion() {
             <CardHeader>
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <div>
-                  <CardTitle>Grupos de equipos</CardTitle>
+                  <CardTitle>{t('administracion.groupsTitle')}</CardTitle>
                   <CardDescription>
                     {isSuper
                       ? 'Cree grupos con o sin empresa de referencia y vincule reefers (IMEI). Luego asígnelos a cuentas en Asignaciones.'
@@ -810,7 +811,7 @@ export default function Administracion() {
                 {isSuper && (
                   <Button onClick={openCreateGrupo}>
                     <Plus className="h-4 w-4 mr-2" />
-                    Nuevo grupo
+                    {t('administracion.newGroup')}
                   </Button>
                 )}
               </div>
@@ -818,7 +819,7 @@ export default function Administracion() {
             <CardContent>
               {grupos.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-8">
-                  Aún no hay grupos
+                  {t('administracion.noGroups')}
                   {isSuper ? '. Cree el primero para organizar equipos.' : '.'}
                 </p>
               ) : (

@@ -41,11 +41,11 @@ export function deviceAccessList(user: User | null | undefined): string[] {
   return Array.isArray(user.deviceAccess) ? user.deviceAccess : [];
 }
 
-/** Menú restringido para rol Monitoreo (no superadmin/admin). */
+/** Menú restringido para usuarios operativos (no admin/superadmin). */
 export function userIsMonitoreoNavigation(user: User | null): boolean {
   if (user == null) return false;
   if (userCanManageUsers(user)) return false;
-  return user.role === 'Monitoreo';
+  return true;
 }
 
 /** Operativo restringido: cuentas semilla tipo IFF o correo `@iff.com` (no superusuario). */

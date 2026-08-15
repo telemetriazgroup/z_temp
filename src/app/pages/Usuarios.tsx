@@ -47,6 +47,7 @@ import {
   DialogTitle,
 } from '../components/ui/dialog';
 import { Plus, Pencil, Trash2, Shield, Thermometer } from 'lucide-react';
+import { useT } from '../i18n';
 
 const emptyForm = {
   username: '',
@@ -84,6 +85,7 @@ function personalPayload(form: typeof emptyForm) {
 }
 
 export default function Usuarios() {
+  const t = useT();
   const { user: currentUser, refreshUser } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
@@ -289,7 +291,7 @@ export default function Usuarios() {
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-2">
             <Shield className="h-8 w-8" />
-            Usuarios
+            {t('usuarios.title')}
           </h1>
           <p className="text-gray-500 mt-1">
             {isAdmin
@@ -299,7 +301,7 @@ export default function Usuarios() {
         </div>
         <Button onClick={openCreate} disabled={isAdmin && managedCount >= quotaMax}>
           <Plus className="h-4 w-4 mr-2" />
-          Nuevo usuario
+          {t('usuarios.newUser')}
         </Button>
       </div>
 
@@ -317,13 +319,13 @@ export default function Usuarios() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Usuario</TableHead>
-                  <TableHead>Nombre</TableHead>
-                  <TableHead>Cargo</TableHead>
-                  <TableHead>Empresa</TableHead>
-                  <TableHead>Rol</TableHead>
-                  <TableHead>Tipo</TableHead>
-                  <TableHead className="text-right">Acciones</TableHead>
+                  <TableHead>{t('usuarios.tableUser')}</TableHead>
+                  <TableHead>{t('usuarios.tableName')}</TableHead>
+                  <TableHead>{t('usuarios.tablePosition')}</TableHead>
+                  <TableHead>{t('usuarios.tableCompany')}</TableHead>
+                  <TableHead>{t('usuarios.tableRole')}</TableHead>
+                  <TableHead>{t('usuarios.tableType')}</TableHead>
+                  <TableHead className="text-right">{t('common.actions')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -406,7 +408,9 @@ export default function Usuarios() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{editingId ? 'Editar usuario' : 'Nuevo usuario'}</DialogTitle>
+            <DialogTitle>
+              {editingId ? t('usuarios.editUser') : t('usuarios.newUser')}
+            </DialogTitle>
             <DialogDescription>
               {editingId
                 ? 'Deje la contraseña vacía para no cambiarla. Campos personales son opcionales.'
@@ -639,10 +643,10 @@ export default function Usuarios() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>
-              Cancelar
+              {t('common.cancel')}
             </Button>
             <Button onClick={() => void submit()} disabled={saving}>
-              {saving ? 'Guardando…' : 'Guardar'}
+              {saving ? t('common.saving') : t('common.save')}
             </Button>
           </DialogFooter>
         </DialogContent>

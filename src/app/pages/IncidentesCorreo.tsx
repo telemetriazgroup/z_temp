@@ -52,6 +52,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '../components/ui/utils';
+import { useT } from '../i18n';
 
 function incidenteDiaKey(inc: CorreoIncidente): string {
   if (inc.diaCalendario) return inc.diaCalendario;
@@ -68,6 +69,7 @@ function incidenteTitulo(inc: CorreoIncidente): string {
 }
 
 export default function IncidentesCorreo() {
+  const t = useT();
   const { user } = useAuth();
   const esSuperUser = user?.superUser === true;
   const [grupos, setGrupos] = useState<GrupoCorreo[]>([]);
@@ -212,7 +214,7 @@ export default function IncidentesCorreo() {
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-2">
             <Mail className="h-8 w-8 text-blue-600" />
-            Incidentes de correo
+            {t('incidentes.title')}
           </h1>
           <p className="text-muted-foreground mt-1">
             {esSuperUser

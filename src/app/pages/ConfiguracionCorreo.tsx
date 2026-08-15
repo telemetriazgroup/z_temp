@@ -136,6 +136,7 @@ import {
   Target,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useT } from '../i18n';
 
 const SIN_ASIGNAR = 'SIN ASIGNAR';
 
@@ -194,6 +195,7 @@ function emptyGrupo(ownerUsername?: string): Omit<GrupoCorreo, 'createdAt' | 'up
 }
 
 export default function ConfiguracionCorreo() {
+  const t = useT();
   const { user } = useAuth();
   const isSuper = userIsSuperAdmin(user);
   const canSeeRemitente = userCanSeeCorreoRemitente(user);
@@ -817,7 +819,7 @@ export default function ConfiguracionCorreo() {
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-2">
             <Mail className="h-8 w-8 text-blue-600" />
-            Correo y alertas
+            {t('correo.title')}
           </h1>
           <p className="text-muted-foreground mt-1">
             {isSuper

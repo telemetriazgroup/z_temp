@@ -33,6 +33,9 @@ import {
   Thermometer,
 } from 'lucide-react';
 import { useAppTheme } from '../ThemeContext';
+import { useLocale } from '../i18n';
+import { LanguageSwitcher } from '../components/LanguageSwitcher';
+import { resolveUserCategory } from '../modules/usuario';
 
 function initialsOf(user: {
   displayName?: string;
@@ -53,15 +56,16 @@ function initialsOf(user: {
   return base.slice(0, 2).toUpperCase();
 }
 
-function roleLabel(user: { superUser?: boolean; category?: string; role?: string }): string {
-  if (user.superUser || user.category === 'superadmin') return 'Superadmin';
-  if (user.category === 'admin') return 'Admin';
-  return user.role ?? '—';
-}
-
 export default function Perfil() {
   const { user, applyUser } = useAuth();
   const { theme, setTheme, ready: themeReady } = useAppTheme();
+  const { t } = useLocale();
+  const roleLabel = (u: { superUser?: boolean; category?: string; role?: string }) => {
+    const c = resolveUserCategory(u as import('../types').User);
+    if (c === 'superadmin') return t('roles.superadmin');
+    if (c === 'admin') return t('roles.admin');
+    return u.role ?? '—';
+  };
   const [nombres, setNombres] = useState(user?.nombres ?? '');
   const [apellidos, setApellidos] = useState(user?.apellidos ?? '');
   const [cargo, setCargo] = useState(user?.cargo ?? '');
@@ -109,12 +113,12 @@ export default function Perfil() {
 
   const accessSummary = useMemo(() => {
     if (!user) return '—';
-    if (user.superUser || user.deviceAccess?.includes('all')) return 'Todos los equipos';
-    return `${user.deviceAccess?.length ?? 0} IMEI`;
-  }, [user]);
+    if (user.superUser || user.deviceAccess?.includes('all')) return t('perfil.allDevices');
+    return t('perfil.devicesCount', { count: user.deviceAccess?.length ?? 0 });
+  }, [user, t]);
 
   if (user == null) {
-    return <p className="text-sm text-muted-foreground">Sin sesión.</p>;
+    return <p className="text-sm text-muted-foreground">—</p>;
   }
 
   const onPickAvatar = async (file: File | null) => {
@@ -126,7 +130,7 @@ export default function Perfil() {
       setAvatarUrl(dataUrl);
       setAvatarDirty(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'No se pudo leer la imagen');
+      setError(e instanceof Error ? e.message : t('perfil.imageError'));
     } finally {
       setUploadingAvatar(false);
     }
@@ -141,11 +145,11 @@ export default function Perfil() {
     setError(null);
     setMessage(null);
     if (newPassword && newPassword !== confirmPassword) {
-      setError('La confirmación de contraseña no coincide');
+      setError(t('perfil.passwordMismatch'));
       return;
     }
     if (newPassword && !currentPassword) {
-      setError('Indique la contraseña actual para cambiarla');
+      setError(t('perfil.needCurrentPassword'));
       return;
     }
     setSaving(true);
@@ -174,11 +178,9 @@ export default function Perfil() {
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
-      setMessage(
-        newPassword ? 'Perfil y contraseña actualizados' : 'Perfil actualizado'
-      );
+      setMessage(t('perfil.updated'));
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'No se pudo guardar');
+      setError(e instanceof Error ? e.message : t('perfil.saveError'));
     } finally {
       setSaving(false);
     }
@@ -187,17 +189,14 @@ export default function Perfil() {
   return (
     <div className="max-w-2xl space-y-6">
       <div>
-        <h1 className="text-3xl font-bold">Mi perfil</h1>
-        <p className="text-muted-foreground mt-1">
-          Datos personales, empresa, zona horaria y contraseña.
-        </p>
+        <h1 className="text-3xl font-bold">{t('perfil.title')}</h1>
       </div>
 
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
             <UserCircle className="h-4 w-4" />
-            Cuenta
+            {t('perfil.account')}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -224,7 +223,7 @@ export default function Perfil() {
                   className="inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm cursor-pointer hover:bg-muted"
                 >
                   <Upload className="h-4 w-4" />
-                  {uploadingAvatar ? 'Procesando…' : 'Subir imagen'}
+                  {uploadingAvatar ? t('perfil.processing') : t('perfil.uploadImage')}
                 </Label>
                 <input
                   id="avatar-file"
@@ -248,35 +247,35 @@ export default function Perfil() {
                     disabled={saving}
                   >
                     <Trash2 className="h-4 w-4 mr-1" />
-                    Quitar
+                    {t('perfil.removeImage')}
                   </Button>
                 )}
               </div>
               <p className="text-[11px] text-muted-foreground">
-                JPG/PNG/WebP. Se redimensiona automáticamente. Guarde el perfil para aplicar.
+                {t('perfil.avatarHint')}
               </p>
             </div>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label>Nombres</Label>
+              <Label>{t('perfil.firstName')}</Label>
               <Input value={nombres} onChange={(e) => setNombres(e.target.value)} />
             </div>
             <div className="space-y-1.5">
-              <Label>Apellidos</Label>
+              <Label>{t('perfil.lastName')}</Label>
               <Input value={apellidos} onChange={(e) => setApellidos(e.target.value)} />
             </div>
             <div className="space-y-1.5">
-              <Label>Cargo</Label>
+              <Label>{t('perfil.position')}</Label>
               <Input value={cargo} onChange={(e) => setCargo(e.target.value)} />
             </div>
             <div className="space-y-1.5">
-              <Label>DNI</Label>
+              <Label>{t('perfil.dni')}</Label>
               <Input value={dni} onChange={(e) => setDni(e.target.value)} />
             </div>
             <div className="space-y-1.5">
-              <Label>Correo</Label>
+              <Label>{t('perfil.email')}</Label>
               <Input
                 type="email"
                 value={correo}
@@ -284,36 +283,36 @@ export default function Perfil() {
               />
             </div>
             <div className="space-y-1.5">
-              <Label>Teléfono</Label>
+              <Label>{t('perfil.phone')}</Label>
               <Input value={telefono} onChange={(e) => setTelefono(e.target.value)} />
             </div>
             <div className="space-y-1.5">
-              <Label>Sexo</Label>
+              <Label>{t('perfil.gender')}</Label>
               <Select
                 value={sexo || '__none__'}
                 onValueChange={(v) => setSexo(v === '__none__' ? '' : (v as UserSexo))}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Opcional" />
+                  <SelectValue placeholder={t('common.optional')} />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__none__">—</SelectItem>
-                  <SelectItem value="M">Masculino</SelectItem>
-                  <SelectItem value="F">Femenino</SelectItem>
-                  <SelectItem value="O">Otro</SelectItem>
+                  <SelectItem value="M">{t('perfil.genderMale')}</SelectItem>
+                  <SelectItem value="F">{t('perfil.genderFemale')}</SelectItem>
+                  <SelectItem value="O">{t('perfil.genderOther')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label>Usuario (login)</Label>
+              <Label>{t('perfil.username')}</Label>
               <Input value={user.username} disabled />
             </div>
             <div className="space-y-1.5">
-              <Label>Tipo</Label>
+              <Label>{t('perfil.type')}</Label>
               <Input value={roleLabel(user)} disabled />
             </div>
             <div className="space-y-1.5">
-              <Label>Acceso equipos</Label>
+              <Label>{t('perfil.deviceAccess')}</Label>
               <Input value={accessSummary} disabled />
             </div>
           </div>
@@ -324,7 +323,7 @@ export default function Perfil() {
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
             <Building2 className="h-4 w-4" />
-            Empresa
+            {t('perfil.company')}
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -340,15 +339,9 @@ export default function Perfil() {
               <p className="text-muted-foreground">
                 {[empresa.correo, empresa.telefono].filter(Boolean).join(' · ')}
               </p>
-              <Badge variant="secondary" className="mt-2">
-                Asignado por administración
-              </Badge>
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground">
-              No está asignado a ninguna empresa. Un administrador puede asignarlo en el módulo
-              Empresas.
-            </p>
+            <p className="text-sm text-muted-foreground">{t('perfil.noCompany')}</p>
           )}
         </CardContent>
       </Card>
@@ -357,15 +350,17 @@ export default function Perfil() {
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
             {theme === 'dark' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
-            Apariencia
+            {t('perfil.appearance')}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          <p className="text-sm text-muted-foreground">
-            Se guarda en este navegador (`ztrack_theme`) y se aplica en toda la plataforma.
-          </p>
+          <div className="space-y-2">
+            <Label>{t('common.language')}</Label>
+            <p className="text-sm text-muted-foreground">{t('perfil.languageHint')}</p>
+            <LanguageSwitcher />
+          </div>
           {themeReady && (
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2 pt-2">
               <Button
                 type="button"
                 variant={theme === 'light' ? 'default' : 'outline'}
@@ -373,7 +368,7 @@ export default function Perfil() {
                 onClick={() => setTheme('light')}
               >
                 <Sun className="h-4 w-4 mr-1.5" />
-                Modo claro
+                {t('layout.lightMode')}
               </Button>
               <Button
                 type="button"
@@ -382,7 +377,7 @@ export default function Perfil() {
                 onClick={() => setTheme('dark')}
               >
                 <Moon className="h-4 w-4 mr-1.5" />
-                Modo oscuro
+                {t('layout.darkMode')}
               </Button>
             </div>
           )}
@@ -393,7 +388,7 @@ export default function Perfil() {
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
             <Globe className="h-4 w-4" />
-            Configuración GMT
+            {t('perfil.timezone')}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -416,15 +411,11 @@ export default function Perfil() {
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
             <Thermometer className="h-4 w-4" />
-            Unidad de temperatura
+            {t('perfil.tempUnit')}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          <p className="text-sm text-muted-foreground">
-            Aplica a listados e historiales. Por defecto Celsius (°C).
-          </p>
           <div className="max-w-xs space-y-1.5">
-            <Label>Mostrar temperaturas en</Label>
             <Select
               value={temperaturaUnidad}
               onValueChange={(v) =>
@@ -435,8 +426,8 @@ export default function Perfil() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="C">Celsius (°C)</SelectItem>
-                <SelectItem value="F">Fahrenheit (°F)</SelectItem>
+                <SelectItem value="C">{t('perfil.celsius')}</SelectItem>
+                <SelectItem value="F">{t('perfil.fahrenheit')}</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -447,16 +438,16 @@ export default function Perfil() {
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
             <KeyRound className="h-4 w-4" />
-            Cambiar contraseña
+            {t('perfil.changePassword')}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            Deje vacío si no desea cambiarla.
+            {t('perfil.passwordHint')}
           </p>
           <div className="grid gap-3 max-w-md">
             <div className="space-y-1.5">
-              <Label htmlFor="currentPassword">Contraseña actual</Label>
+              <Label htmlFor="currentPassword">{t('perfil.currentPassword')}</Label>
               <Input
                 id="currentPassword"
                 type="password"
@@ -466,7 +457,7 @@ export default function Perfil() {
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="newPassword">Nueva contraseña</Label>
+              <Label htmlFor="newPassword">{t('perfil.newPassword')}</Label>
               <Input
                 id="newPassword"
                 type="password"
@@ -476,7 +467,7 @@ export default function Perfil() {
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="confirmPassword">Confirmar nueva</Label>
+              <Label htmlFor="confirmPassword">{t('perfil.confirmPassword')}</Label>
               <Input
                 id="confirmPassword"
                 type="password"
@@ -493,7 +484,7 @@ export default function Perfil() {
       {message && <p className="text-sm text-emerald-700">{message}</p>}
 
       <Button onClick={() => void saveProfile()} disabled={saving}>
-        {saving ? 'Guardando…' : 'Guardar cambios'}
+        {saving ? t('perfil.saving') : t('perfil.saveChanges')}
       </Button>
     </div>
   );

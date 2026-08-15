@@ -47,6 +47,7 @@ import {
   DialogTitle,
 } from '../components/ui/dialog';
 import { useAuth } from '../AuthContext';
+import { useT } from '../i18n';
 import {
   userMayAccessDispositivo,
   displayNameForDevice,
@@ -276,6 +277,7 @@ function DeviceInfoPopover({
 }: {
   device: Pick<ListDevice, 'codigo' | 'status' | 'containerId'>;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
 
   return (
@@ -314,20 +316,20 @@ function DeviceInfoPopover({
             >
               <div className="text-sm font-medium">Información del equipo</div>
               <div className="flex items-center justify-between gap-2">
-                <span className="text-xs text-muted-foreground">Status</span>
+                <span className="text-xs text-muted-foreground">{t('listado.status')}</span>
                 <Badge className={getStatusColor(device.status)}>
                   {device.status}
                 </Badge>
               </div>
               <div className="flex items-center justify-between gap-2">
-                <span className="text-xs text-muted-foreground">Código</span>
+                <span className="text-xs text-muted-foreground">{t('listado.code')}</span>
                 <Badge variant="outline" className="font-mono text-xs">
                   {device.codigo}
                 </Badge>
               </div>
               <div className="space-y-0.5">
                 <span className="text-xs text-muted-foreground">
-                  IMEI / Container ID
+                  {t('listado.imei')} / Container ID
                 </span>
                 <p className="font-mono text-sm break-all leading-snug">
                   {device.containerId || '—'}
@@ -362,6 +364,7 @@ function stampOfDevice(d: DispositivoUltimoEstado): string | null {
 }
 
 export default function Listado() {
+  const t = useT();
   const [searchParams, setSearchParams] = useSearchParams();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(() =>
@@ -694,7 +697,7 @@ export default function Listado() {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-4">
         <RefreshCw className="h-10 w-10 animate-spin text-gray-400" />
-        <p className="text-gray-500">Cargando listado de dispositivos...</p>
+        <p className="text-gray-500">{t('common.loading')}</p>
       </div>
     );
   }
@@ -718,7 +721,7 @@ export default function Listado() {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold">Listado de Dispositivos</h1>
+          <h1 className="text-3xl font-bold">{t('listado.title')}</h1>
           <p className="text-gray-500 mt-1">
             Gestión de equipos registrados
             {fetchedAt != null && (
@@ -744,7 +747,7 @@ export default function Listado() {
             <RefreshCw
               className={`h-4 w-4 mr-2 ${fleetLoading ? 'animate-spin' : ''}`}
             />
-            Actualizar
+            {t('common.update')}
           </Button>
           <div className="text-right">
             <div className="text-sm text-gray-500">Total de Dispositivos</div>
@@ -772,7 +775,7 @@ export default function Listado() {
         <div className="flex flex-col sm:flex-row gap-4 items-stretch sm:items-center flex-wrap">
           <Input
             type="text"
-            placeholder="Buscar por IMEI, nombre asignado..."
+            placeholder={t('listado.searchPlaceholder')}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="max-w-md"
@@ -891,7 +894,7 @@ export default function Listado() {
             <div className="mt-2 grid grid-cols-3 gap-2 text-center">
               <div className="rounded-md bg-muted/50 px-1.5 py-1.5">
                 <div className="text-[10px] text-muted-foreground uppercase tracking-wide">
-                  Set
+                  {t('listado.set')}
                 </div>
                 <div className="text-sm font-semibold tabular-nums text-black dark:text-foreground">
                   {formatTemp(device.setPoint, tempUnidad)}
@@ -899,7 +902,7 @@ export default function Listado() {
               </div>
               <div className="rounded-md bg-muted/50 px-1.5 py-1.5">
                 <div className="text-[10px] text-muted-foreground uppercase tracking-wide">
-                  Retorno
+                  {t('listado.returnTemp')}
                 </div>
                 <div className="flex justify-center text-sm font-medium tabular-nums">
                   <TempConTendenciaRango
@@ -910,7 +913,7 @@ export default function Listado() {
               </div>
               <div className="rounded-md bg-muted/50 px-1.5 py-1.5">
                 <div className="text-[10px] text-muted-foreground uppercase tracking-wide">
-                  Suministro
+                  {t('listado.supply')}
                 </div>
                 <div className="flex justify-center text-sm font-medium tabular-nums">
                   <TempConTendenciaRango
@@ -998,14 +1001,14 @@ export default function Listado() {
             <TableHeader>
               <TableRow>
                 <TableHead className="w-12 text-center">#</TableHead>
-                <TableHead className="w-[72px]">Power</TableHead>
-                <TableHead className="min-w-[420px] w-[42%]">Nombre</TableHead>
-                <TableHead>Set</TableHead>
-                <TableHead>Retorno</TableHead>
-                <TableHead>Suministro</TableHead>
+                <TableHead className="w-[72px]">{t('listado.power')}</TableHead>
+                <TableHead className="min-w-[420px] w-[42%]">{t('listado.name')}</TableHead>
+                <TableHead>{t('listado.set')}</TableHead>
+                <TableHead>{t('listado.returnTemp')}</TableHead>
+                <TableHead>{t('listado.supply')}</TableHead>
                 <TableHead>En rango</TableHead>
-                <TableHead>Última conexión</TableHead>
-                <TableHead>Alarmas</TableHead>
+                <TableHead>{t('listado.lastConnection')}</TableHead>
+                <TableHead>{t('listado.alarms')}</TableHead>
                 <TableHead className="w-[56px]" title="Últimas 3 h">
                   3h
                 </TableHead>
@@ -1158,7 +1161,7 @@ export default function Listado() {
 
       {filteredDevices.length === 0 && (
         <div className="text-center py-12 text-gray-500">
-          No se encontraron dispositivos que coincidan con la búsqueda
+          {t('listado.notFound')}
         </div>
       )}
 

@@ -9,8 +9,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog';
 import { Plus, Trash2, Eye } from 'lucide-react';
 import type { AlarmConfig } from '../types';
+import { useT } from '../i18n';
 
 export default function ConfiguracionAlarmas() {
+  const t = useT();
   const [configs, setConfigs] = useState<AlarmConfig[]>(mockAlarmConfigs);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingConfig, setEditingConfig] = useState<AlarmConfig | null>(null);
@@ -92,7 +94,7 @@ export default function ConfiguracionAlarmas() {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold">Configuración de Alarmas</h1>
+          <h1 className="text-3xl font-bold">{t('configAlarmas.title')}</h1>
           <p className="text-gray-500 mt-1">Gestión de reglas de alertas</p>
         </div>
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>

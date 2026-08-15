@@ -14,10 +14,12 @@ import { Power, Thermometer, TrendingDown, Snowflake, CalendarIcon, Download, Fi
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import type { DateRange } from 'react-day-picker';
+import { useT } from '../i18n';
 
 type FilterType = 'all' | 'off' | 'on' | 'fuera_rango' | 'defrost';
 
 export default function Monitoreo() {
+  const t = useT();
   const [searchTerm, setSearchTerm] = useState('');
   const [filter, setFilter] = useState<FilterType>('all');
   const [selectedDevice, setSelectedDevice] = useState<string | null>(null);
@@ -213,7 +215,7 @@ export default function Monitoreo() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold">Monitoreo de Equipos</h1>
+        <h1 className="text-3xl font-bold">{t('monitoreo.title')}</h1>
         <p className="text-gray-500 mt-1">Visualización en tiempo real</p>
       </div>
 

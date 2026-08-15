@@ -34,6 +34,7 @@ import {
 import { Badge } from '../components/ui/badge';
 import { Checkbox } from '../components/ui/checkbox';
 import { Building2, Plus, Pencil, Trash2, UserPlus } from 'lucide-react';
+import { useT } from '../i18n';
 
 const emptyForm = {
   nombre: '',
@@ -45,6 +46,7 @@ const emptyForm = {
 };
 
 export default function Empresas() {
+  const t = useT();
   const { user: currentUser } = useAuth();
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -177,7 +179,7 @@ export default function Empresas() {
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-2">
             <Building2 className="h-8 w-8" />
-            Empresas
+            {t('empresas.title')}
           </h1>
           <p className="text-gray-500 mt-1">
             Alta de empresas y asignación a usuarios.

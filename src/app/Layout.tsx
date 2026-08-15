@@ -2,7 +2,9 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Outlet, Link, useNavigate, useLocation } from 'react-router';
 import { useAuth } from './AuthContext';
 import { useAppTheme } from './ThemeContext';
-import { userIsMonitoreoNavigation, userCanManageUsers, userCanAccessAudit, categoryLabel, userHasNoFleetAccess } from './modules/usuario';
+import { userIsMonitoreoNavigation, userCanManageUsers, userCanAccessAudit, resolveUserCategory, userHasNoFleetAccess, userIsAdmin, userIsSuperAdmin } from './modules/usuario';
+import { useLocale } from './i18n';
+import { LanguageSwitcher } from './components/LanguageSwitcher';
 import {
   SinEquiposAsignados,
   pathRequiresFleet,
@@ -77,13 +79,19 @@ function userInitials(user: {
   return base.slice(0, 2).toUpperCase();
 }
 
-function userTypeLabel(user: {
-  superUser?: boolean;
-  category?: string;
-  role?: string;
-} | null): string {
+function userTypeLabel(
+  user: {
+    superUser?: boolean;
+    category?: string;
+    role?: string;
+  } | null,
+  t: (key: string) => string
+): string {
   if (!user) return '';
-  return categoryLabel(user as import('./types').User);
+  const c = resolveUserCategory(user as import('./types').User);
+  if (c === 'superadmin') return t('roles.superadmin');
+  if (c === 'admin') return t('roles.admin');
+  return t('roles.user');
 }
 
 export default function Layout() {
@@ -91,6 +99,7 @@ export default function Layout() {
   const [gruposCorreo, setGruposCorreo] = useState<GrupoCorreo[]>([]);
   const { logout, user } = useAuth();
   const { theme, toggleTheme, setTheme, ready: themeReady } = useAppTheme();
+  const { t, intlLocale, locale } = useLocale();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -136,7 +145,8 @@ export default function Layout() {
       location.pathname === '/' ||
       location.pathname === '/listado' ||
       location.pathname.startsWith('/listado/') ||
-      location.pathname === '/catalogo-alarmas' ||
+      location.pathname === '/alarmas' ||
+      location.pathname === '/incidentes-correo' ||
       location.pathname === '/ayuda' ||
       location.pathname === '/perfil';
     if (!permitido) {
@@ -163,61 +173,84 @@ export default function Layout() {
     }
   }, [user, location.pathname, navigate]);
 
+  /** Admin: sin Monitoreo, Config. alarmas ni Ubícanos (solo superadmin). */
+  useEffect(() => {
+    if (!user || !userIsAdmin(user) || userIsSuperAdmin(user)) return;
+    const blocked =
+      location.pathname === '/monitoreo' ||
+      location.pathname === '/configuracion-alarmas' ||
+      location.pathname === '/ubicanos';
+    if (blocked) {
+      navigate('/', { replace: true });
+    }
+  }, [user, location.pathname, navigate]);
+
   const menuItems = useMemo(() => {
     if (menuMonitoreo) {
       return [
-        { path: '/', label: 'Inicio', icon: Home },
-        { path: '/listado', label: 'Listado', icon: List },
-        { path: '/catalogo-alarmas', label: 'Catálogo Alarmas', icon: BookOpen },
-        { path: '/ayuda', label: 'Ayuda/Soporte', icon: HelpCircle },
+        { path: '/', label: t('nav.home'), icon: Home },
+        { path: '/listado', label: t('nav.listado'), icon: List },
+        { path: '/alarmas', label: t('nav.alarmas'), icon: Bell },
+        { path: '/incidentes-correo', label: t('nav.incidentesCorreo'), icon: Inbox },
+        { path: '/ayuda', label: t('nav.ayuda'), icon: HelpCircle },
       ];
     }
 
     const canManage = userCanManageUsers(user);
     const canAudit = userCanAccessAudit(user);
+    const isAdminOnly = userIsAdmin(user) && !userIsSuperAdmin(user);
     const incidentesItem = verIncidentesCorreo
-      ? [{ path: '/incidentes-correo' as const, label: 'Incidentes correo', icon: Inbox }]
+      ? [{ path: '/incidentes-correo' as const, label: t('nav.incidentesCorreo'), icon: Inbox }]
       : [];
+
     return [
-      { path: '/', label: 'Inicio', icon: Home },
-      { path: '/listado', label: 'Listado', icon: List },
+      { path: '/', label: t('nav.home'), icon: Home },
+      { path: '/listado', label: t('nav.listado'), icon: List },
       ...(canManage
-        ? [{ path: '/administracion' as const, label: 'Administración', icon: Settings }]
+        ? [{ path: '/administracion' as const, label: t('nav.administracion'), icon: Settings }]
         : []),
       ...(canManage
-        ? [{ path: '/usuarios' as const, label: 'Usuarios', icon: Shield }]
+        ? [{ path: '/usuarios' as const, label: t('nav.usuarios'), icon: Shield }]
         : []),
-      ...(user?.superUser === true || user?.category === 'superadmin'
-        ? [{ path: '/empresas' as const, label: 'Empresas', icon: Building2 }]
+      ...(userIsSuperAdmin(user)
+        ? [{ path: '/empresas' as const, label: t('nav.empresas'), icon: Building2 }]
         : []),
-      { path: '/monitoreo', label: 'Monitoreo', icon: Monitor },
+      ...(!isAdminOnly
+        ? [{ path: '/monitoreo' as const, label: t('nav.monitoreo'), icon: Monitor }]
+        : []),
       ...(canAudit
         ? [
-            { path: '/control-auditoria' as const, label: 'Control / Auditoría', icon: History },
-            { path: '/auditoria' as const, label: 'Auditoría usuarios', icon: History },
+            { path: '/control-auditoria' as const, label: t('nav.controlAuditoria'), icon: History },
+            { path: '/auditoria' as const, label: t('nav.auditoriaUsuarios'), icon: History },
           ]
         : []),
-      { path: '/alarmas', label: 'Alarmas', icon: Bell },
-      { path: '/catalogo-alarmas', label: 'Catálogo Alarmas', icon: BookOpen },
-      {
-        path: '/configuracion-alarmas',
-        label: 'Configuración Alarmas',
-        icon: BellPlus,
-      },
+      { path: '/alarmas', label: t('nav.alarmas'), icon: Bell },
+      { path: '/catalogo-alarmas', label: t('nav.catalogoAlarmas'), icon: BookOpen },
+      ...(!isAdminOnly
+        ? [
+            {
+              path: '/configuracion-alarmas' as const,
+              label: t('nav.configAlarmas'),
+              icon: BellPlus,
+            },
+          ]
+        : []),
       ...(canManage
         ? [
             {
               path: '/configuracion-correo' as const,
-              label: 'Correo',
+              label: t('nav.correo'),
               icon: Mail,
             },
           ]
         : []),
       ...incidentesItem,
-      { path: '/ubicanos', label: 'Ubícanos', icon: MapPin },
-      { path: '/ayuda', label: 'Ayuda/Soporte', icon: HelpCircle },
+      ...(!isAdminOnly
+        ? [{ path: '/ubicanos' as const, label: t('nav.ubicanos'), icon: MapPin }]
+        : []),
+      { path: '/ayuda', label: t('nav.ayuda'), icon: HelpCircle },
     ];
-  }, [menuMonitoreo, user, verIncidentesCorreo]);
+  }, [menuMonitoreo, user, verIncidentesCorreo, t, locale]);
 
   return (
     <div className="min-h-screen bg-background text-foreground flex">
@@ -253,8 +286,8 @@ export default function Layout() {
         <button
           type="button"
           onClick={toggleSidebar}
-          aria-label={sidebarExpanded ? 'Contraer menú' : 'Expandir menú'}
-          title={sidebarExpanded ? 'Contraer menú' : 'Expandir menú (ver nombres)'}
+          aria-label={sidebarExpanded ? t('layout.collapseMenu') : t('layout.expandMenu')}
+          title={sidebarExpanded ? t('layout.collapseMenu') : t('layout.expandMenuHint')}
           className={cn(
             'absolute top-20 z-20 flex h-7 w-7 items-center justify-center rounded-full',
             'border border-border bg-card text-foreground shadow-sm',
@@ -309,14 +342,14 @@ export default function Layout() {
           <button
             type="button"
             onClick={toggleSidebar}
-            title={sidebarExpanded ? 'Contraer menú' : 'Expandir menú'}
+            title={sidebarExpanded ? t('layout.collapseMenu') : t('layout.expandMenu')}
             className={cn(
               'w-full flex items-center rounded-md py-2.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors',
               sidebarExpanded ? 'justify-between px-3 gap-2' : 'justify-center'
             )}
           >
             {sidebarExpanded && (
-              <span className="text-xs font-medium">Contraer</span>
+              <span className="text-xs font-medium">{t('layout.collapse')}</span>
             )}
             {sidebarExpanded ? (
               <ChevronLeft className="h-5 w-5 shrink-0" />
@@ -334,17 +367,17 @@ export default function Layout() {
               type="button"
               className="p-2 rounded-md hover:bg-muted shrink-0"
               onClick={toggleSidebar}
-              title={sidebarExpanded ? 'Contraer menú' : 'Expandir menú'}
+              title={sidebarExpanded ? t('layout.collapseMenu') : t('layout.expandMenu')}
             >
               {sidebarExpanded ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
             </button>
             <h2 className="text-lg font-semibold truncate">
-              Plataforma de Monitoreo de Temperaturas
+              {t('layout.platformTitle')}
             </h2>
           </div>
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             <div className="text-sm text-muted-foreground hidden lg:block capitalize">
-              {new Date().toLocaleDateString('es-ES', {
+              {new Date().toLocaleDateString(intlLocale, {
                 weekday: 'long',
                 year: 'numeric',
                 month: 'long',
@@ -352,13 +385,15 @@ export default function Layout() {
               })}
             </div>
 
+            <LanguageSwitcher compact className="hidden sm:flex" />
+
             {themeReady && (
               <Button
                 type="button"
                 variant="outline"
                 size="icon"
                 className="shrink-0"
-                title={theme === 'dark' ? 'Modo claro' : 'Modo oscuro'}
+                title={theme === 'dark' ? t('layout.lightMode') : t('layout.darkMode')}
                 onClick={toggleTheme}
               >
                 {theme === 'dark' ? (
@@ -387,7 +422,7 @@ export default function Layout() {
                     <div className="hidden sm:block leading-tight min-w-0 max-w-[140px]">
                       <div className="text-sm font-medium truncate">{displayName}</div>
                       <div className="text-[11px] text-muted-foreground truncate">
-                        {userTypeLabel(user)}
+                        {userTypeLabel(user, t)}
                       </div>
                     </div>
                     <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
@@ -398,14 +433,14 @@ export default function Layout() {
                     <div className="flex flex-col gap-0.5">
                       <span className="font-medium">{displayName}</span>
                       <span className="text-xs text-muted-foreground">
-                        @{user.username} · {userTypeLabel(user)}
+                        @{user.username} · {userTypeLabel(user, t)}
                       </span>
                     </div>
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => navigate('/perfil')}>
                     <UserCircle className="h-4 w-4" />
-                    Ver perfil
+                    {t('layout.viewProfile')}
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
@@ -415,9 +450,13 @@ export default function Layout() {
                     ) : (
                       <Moon className="h-4 w-4" />
                     )}
-                    {theme === 'dark' ? 'Modo claro' : 'Modo oscuro'}
+                    {theme === 'dark' ? t('layout.lightMode') : t('layout.darkMode')}
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
+                  <div className="px-2 py-1.5 sm:hidden">
+                    <LanguageSwitcher />
+                  </div>
+                  <DropdownMenuSeparator className="sm:hidden" />
                   <DropdownMenuItem
                     variant="destructive"
                     onSelect={(e) => {
@@ -426,7 +465,7 @@ export default function Layout() {
                     }}
                   >
                     <LogOut className="h-4 w-4" />
-                    Cerrar sesión
+                    {t('layout.logout')}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -445,15 +484,31 @@ export default function Layout() {
             <div className="space-y-4">
               <SinEquiposAsignados />
               <p className="text-center text-sm text-muted-foreground">
-                Como administrador puede ir a{' '}
-                <Link to="/administracion" className="underline font-medium">
-                  Administración
-                </Link>{' '}
-                cuando el superadmin le asigne flota, o gestionar usuarios desde{' '}
-                <Link to="/usuarios" className="underline font-medium">
-                  Usuarios
-                </Link>
-                .
+                {locale === 'en' ? (
+                  <>
+                    As an administrator you can go to{' '}
+                    <Link to="/administracion" className="underline font-medium">
+                      {t('nav.administracion')}
+                    </Link>{' '}
+                    once the superadmin assigns your fleet, or manage users from{' '}
+                    <Link to="/usuarios" className="underline font-medium">
+                      {t('nav.usuarios')}
+                    </Link>
+                    .
+                  </>
+                ) : (
+                  <>
+                    Como administrador puede ir a{' '}
+                    <Link to="/administracion" className="underline font-medium">
+                      {t('nav.administracion')}
+                    </Link>{' '}
+                    cuando el superadmin le asigne flota, o gestionar usuarios desde{' '}
+                    <Link to="/usuarios" className="underline font-medium">
+                      {t('nav.usuarios')}
+                    </Link>
+                    .
+                  </>
+                )}
               </p>
             </div>
           ) : (

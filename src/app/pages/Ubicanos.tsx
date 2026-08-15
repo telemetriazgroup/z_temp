@@ -3,8 +3,10 @@ import { useSearchParams } from 'react-router';
 import { mockDevices } from '../mockData';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { MapPin } from 'lucide-react';
+import { useT } from '../i18n';
 
 export default function Ubicanos() {
+  const t = useT();
   const [searchParams] = useSearchParams();
   const [selectedDevice, setSelectedDevice] = useState<string | null>(null);
   
@@ -24,7 +26,7 @@ export default function Ubicanos() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold">Ubicación de Dispositivos</h1>
+        <h1 className="text-3xl font-bold">{t('ubicanos.title')}</h1>
         <p className="text-gray-500 mt-1">Mapa de localización de contenedores</p>
       </div>
 
