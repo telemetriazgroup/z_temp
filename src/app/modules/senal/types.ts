@@ -51,6 +51,10 @@ export type SenalBehaviorReport = {
   timezone: string;
   sampleCount: number;
   deviceCount: number;
+  source?: string;
+  ensureStatus?: string;
+  finalized?: boolean;
+  processedOnce?: boolean;
   summary: {
     devicesWithWait: number;
     devicesWithOffline: number;

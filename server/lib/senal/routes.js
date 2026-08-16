@@ -1,7 +1,10 @@
 import { Router } from 'express';
 import { ensureSenalSchema, ensureDashboardSchema } from '../db.js';
 import { getUserByUsername, isSuperAdminUser } from '../usersRepository.js';
-import { analyzeSenalBehavior } from './behavior.js';
+import {
+  getPersistedMonthReport,
+  processSenalIncrementalSafe,
+} from './engine.js';
 import {
   listSenalUbicaciones,
   getSenalUbicacion,
@@ -29,6 +32,7 @@ function requireSuper(req, res) {
 export function createSenalRouter() {
   const router = Router();
 
+  /** Reporte mensual desde datos persistidos (incremental). */
   router.get('/behavior', async (req, res) => {
     try {
       if (!requireSuper(req, res)) return;
@@ -38,7 +42,20 @@ export function createSenalRouter() {
       const anio = Number(req.query.anio ?? now.getFullYear());
       const mes = Number(req.query.mes ?? now.getMonth() + 1);
       const imei = req.query.imei ? String(req.query.imei).trim() : null;
-      const data = await analyzeSenalBehavior({ anio, mes, imei });
+      const data = await getPersistedMonthReport(anio, mes, imei);
+      res.json({ ok: true, data });
+    } catch (e) {
+      res.status(400).json({ ok: false, error: e.message });
+    }
+  });
+
+  /** Forzar drenado del cursor (útil tras despliegue). */
+  router.post('/process', async (req, res) => {
+    try {
+      if (!requireSuper(req, res)) return;
+      await ensureDashboardSchema();
+      await ensureSenalSchema();
+      const data = await processSenalIncrementalSafe();
       res.json({ ok: true, data });
     } catch (e) {
       res.status(400).json({ ok: false, error: e.message });

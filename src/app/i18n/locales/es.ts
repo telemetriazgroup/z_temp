@@ -436,7 +436,10 @@ export const esMessages: MessageTree = {
   senal: {
     title: 'Análisis de señal',
     subtitle:
-      'Comportamiento wait/offline → online por mes (snapshots de flota). Solo superadmin. Identifica horarios y zonas con pérdida de señal.',
+      'Comportamiento wait/offline → online por mes. Se calcula una vez, se guarda y se actualiza solo con muestras nuevas (sin reconsultar toda la flota). Solo superadmin.',
+    persistedBadge: 'Datos guardados',
+    finalizedBadge: 'Mes cerrado',
+    incrementalBadge: 'Actualización incremental',
     loadError: 'No se pudo cargar el análisis de señal',
     saveError: 'No se pudo guardar la ubicación',
     export: 'Exportar reporte',

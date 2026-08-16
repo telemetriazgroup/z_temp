@@ -252,6 +252,27 @@ export default function AnalisisSenal() {
           <p className="text-muted-foreground mt-1 max-w-2xl text-sm">
             {t('senal.subtitle')}
           </p>
+          {report && (
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              <Badge variant="secondary" className="text-[10px]">
+                {t('senal.persistedBadge')}
+              </Badge>
+              {report.finalized ? (
+                <Badge className="bg-emerald-700 text-[10px]">
+                  {t('senal.finalizedBadge')}
+                </Badge>
+              ) : (
+                <Badge className="bg-sky-700 text-[10px]">
+                  {t('senal.incrementalBadge')}
+                </Badge>
+              )}
+              {report.ensureStatus && (
+                <Badge variant="outline" className="text-[10px] font-mono">
+                  {report.ensureStatus}
+                </Badge>
+              )}
+            </div>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           <Select value={String(mes)} onValueChange={(v) => setMes(Number(v))}>

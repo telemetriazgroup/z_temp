@@ -436,7 +436,10 @@ export const enMessages: MessageTree = {
   senal: {
     title: 'Signal analysis',
     subtitle:
-      'Wait/offline → online behavior by month (fleet snapshots). Superadmin only. Find recurring outage hours and zones.',
+      'Wait/offline → online behavior by month. Computed once, stored, and updated only with new samples (no full fleet re-query). Superadmin only.',
+    persistedBadge: 'Stored data',
+    finalizedBadge: 'Month closed',
+    incrementalBadge: 'Incremental update',
     loadError: 'Could not load signal analysis',
     saveError: 'Could not save location',
     export: 'Export report',

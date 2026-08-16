@@ -83,6 +83,7 @@ import { createDashboardRouter } from './lib/dashboard/routes.js';
 import { createSenalRouter } from './lib/senal/routes.js';
 import { ensureAnalisisSchema } from './lib/db.js';
 import { captureDashboardSnapshotSafe } from './lib/dashboard/snapshot.js';
+import { processSenalIncrementalSafe } from './lib/senal/engine.js';
 import { buildExternalAlertMonitor } from './lib/externalAlertMonitor.js';
 
 const PORT = Number(process.env.CORREO_PORT ?? 3003);
@@ -1269,16 +1270,21 @@ app.listen(PORT, '0.0.0.0', () => {
       );
       setTimeout(() => {
         captureDashboardSnapshotSafe()
-          .then((r) => console.log('[dashboard] snapshot inicial', r?.id ?? r?.skipped ?? 'ok'))
+          .then(async (r) => {
+            console.log('[dashboard] snapshot inicial', r?.id ?? r?.skipped ?? 'ok');
+            const senal = await processSenalIncrementalSafe();
+            if (senal?.processed)
+              console.log('[senal] incremental inicial', senal.processed);
+          })
           .catch((e) => console.warn('[dashboard] snapshot inicial:', e.message));
       }, 8000);
       setInterval(() => {
-        captureDashboardSnapshotSafe().catch((e) =>
-          console.warn('[dashboard] snapshot:', e.message)
-        );
+        captureDashboardSnapshotSafe()
+          .then(() => processSenalIncrementalSafe())
+          .catch((e) => console.warn('[dashboard] snapshot:', e.message));
       }, DASHBOARD_SNAPSHOT_MS);
       console.log(
-        `[dashboard] snapshots cada ${DASHBOARD_SNAPSHOT_MS / 1000}s`
+        `[dashboard] snapshots cada ${DASHBOARD_SNAPSHOT_MS / 1000}s (+señal incremental)`
       );
     })
     .catch((e) => console.warn('[analisis/dashboard] esquema diferido:', e.message));
