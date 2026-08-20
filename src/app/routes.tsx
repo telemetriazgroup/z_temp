@@ -20,6 +20,10 @@ import Perfil from "./pages/Perfil";
 import Empresas from "./pages/Empresas";
 import AuditoriaUsuarios from "./pages/AuditoriaUsuarios";
 import AnalisisSenal from "./pages/AnalisisSenal";
+import {
+  appBasenameNoSlash,
+  ensureBasenameTrailingSlash,
+} from "./lib/basenameUrl";
 
 /** Protege rutas: al cerrar sesión (user=null) redirige a /login. */
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -129,10 +133,18 @@ const routeTree = [
   },
 ];
 
-const appBasename = import.meta.env.BASE_URL.replace(/\/$/, '');
+// Corregir `/reefer` → `/reefer/` antes de montar el router (F5 / enlace sin slash).
+ensureBasenameTrailingSlash();
+
+const appBasename = appBasenameNoSlash();
 const routerOptions =
   appBasename !== '' && appBasename !== '/'
     ? { basename: appBasename }
     : {};
 
 export const router = createBrowserRouter(routeTree, routerOptions);
+
+// Tras cada navegación, RR puede dejar `/reefer` sin slash en la home.
+router.subscribe(() => {
+  ensureBasenameTrailingSlash();
+});

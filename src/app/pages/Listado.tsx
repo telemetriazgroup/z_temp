@@ -54,6 +54,7 @@ import {
   postAuditEvent,
 } from '../modules/usuario';
 import { AUDIT_ACTIONS } from '../modules/usuario/auditActions';
+import { InicioDataSplash } from '../components/InicioDataSplash';
 import {
   ensureAlarmCatalog,
   resolveAlarmDisplayLabel,
@@ -693,15 +694,6 @@ export default function Listado() {
     });
   };
 
-  if (loading && !data) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 gap-4">
-        <RefreshCw className="h-10 w-10 animate-spin text-gray-400" />
-        <p className="text-gray-500">{t('common.loading')}</p>
-      </div>
-    );
-  }
-
   if (error && !data) {
     return (
       <div className="space-y-6">
@@ -719,6 +711,14 @@ export default function Listado() {
 
   return (
     <div className="space-y-6">
+      <InicioDataSplash waitingForData={loading && !data} />
+      {loading && !data ? (
+        <div className="flex flex-col items-center justify-center py-20 gap-3 text-muted-foreground text-sm">
+          Preparando listado…
+        </div>
+      ) : null}
+      {data != null && (
+      <>
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold">{t('listado.title')}</h1>
@@ -1241,6 +1241,8 @@ export default function Listado() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </>
+      )}
     </div>
   );
 }

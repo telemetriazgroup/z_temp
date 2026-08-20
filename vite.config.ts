@@ -1,7 +1,36 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import path from 'path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
+
+/** /reefer → /reefer/ para que F5 y assets no fallen con base '/reefer/'. */
+function reeferTrailingSlashRedirect(): Plugin {
+  const redirect = (
+    req: { url?: string },
+    res: { statusCode: number; setHeader: (k: string, v: string) => void; end: () => void },
+    next: () => void
+  ) => {
+    const raw = req.url ?? ''
+    const pathOnly = raw.split('?')[0] ?? ''
+    if (pathOnly === '/reefer') {
+      const qs = raw.includes('?') ? raw.slice(raw.indexOf('?')) : ''
+      res.statusCode = 301
+      res.setHeader('Location', `/reefer/${qs}`)
+      res.end()
+      return
+    }
+    next()
+  }
+  return {
+    name: 'reefer-trailing-slash-redirect',
+    configureServer(server) {
+      server.middlewares.use(redirect)
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(redirect)
+    },
+  }
+}
 
 /** Mismo prefijo que en nginx: `/reefer/telemetria/...` → backends HTTP. */
 const telemetriaProxy = {
@@ -43,6 +72,7 @@ export default defineConfig({
     proxy: telemetriaProxy,
   },
   plugins: [
+    reeferTrailingSlashRedirect(),
     react(),
     tailwindcss(),
   ],

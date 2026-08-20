@@ -259,7 +259,7 @@ export default function Layout() {
     <div className="min-h-screen bg-background text-foreground flex">
       <aside
         className={cn(
-          'relative bg-card border-r border-border transition-[width] duration-300 ease-in-out flex flex-col shrink-0',
+          'relative z-50 bg-card border-r border-border transition-[width] duration-300 ease-in-out flex flex-col shrink-0',
           sidebarExpanded ? 'w-64' : 'w-16'
         )}
       >

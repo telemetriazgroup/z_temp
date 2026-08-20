@@ -2,18 +2,20 @@ import React, { useEffect, useState } from 'react';
 import zBear from '../../assets/z-transparent.webp';
 import { cn } from './ui/utils';
 
-const PHASE1_MS = 2000;
+/** Tiempo entre mensaje 1 y mensaje 2. */
+const PHASE1_MS = 1500;
+/** Mínimo que permanece el segundo mensaje (si los datos ya llegaron). */
 const PHASE2_MIN_MS = 1500;
 
 type Props = {
-  /** true mientras aún se espera el overview (o se fuerza splash). */
+  /** true mientras aún se espera la carga de datos. */
   waitingForData: boolean;
   className?: string;
 };
 
 /**
- * Overlay al cargar Inicio: logo del oso + mensajes secuenciales.
- * 1) «Vinculando nuevos datos…» (2 s)
+ * Overlay de carga: logo del oso + mensajes secuenciales.
+ * 1) «Vinculando nuevos datos…» (1.5 s)
  * 2) «Integrando datos y analizando…» (mín. 1.5 s y hasta que waitingForData sea false)
  */
 export function InicioDataSplash({ waitingForData, className }: Props) {
@@ -55,7 +57,7 @@ export function InicioDataSplash({ waitingForData, className }: Props) {
   return (
     <div
       className={cn(
-        'fixed inset-0 z-40 flex flex-col items-center justify-center',
+        'fixed inset-0 z-30 flex flex-col items-center justify-center',
         className
       )}
       role="status"
