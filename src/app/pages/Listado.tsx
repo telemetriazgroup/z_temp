@@ -54,7 +54,6 @@ import {
   postAuditEvent,
 } from '../modules/usuario';
 import { AUDIT_ACTIONS } from '../modules/usuario/auditActions';
-import { InicioDataSplash } from '../components/InicioDataSplash';
 import {
   ensureAlarmCatalog,
   resolveAlarmDisplayLabel,
@@ -388,7 +387,6 @@ export default function Listado() {
   } | null>(null);
   const [historial3h, setHistorial3h] = useState<Historial3hTarget | null>(null);
   const [alertConfigMap, setAlertConfigMap] = useState<Record<string, DeviceAlertConfig>>({});
-  const [alertLoading, setAlertLoading] = useState(true);
   const navigate = useNavigate();
   const { user } = useAuth();
   const tempUnidad = normalizeTemperaturaUnidad(user?.temperaturaUnidad);
@@ -399,7 +397,6 @@ export default function Listado() {
     error: fleetError,
     fetchedAt,
     ensureFleet,
-    refreshFleet,
     isStale,
   } = useDispositivosFleet();
 
@@ -511,8 +508,9 @@ export default function Listado() {
 
   const load = useCallback(
     async (force = false) => {
-      setAlertLoading(true);
       try {
+        // Solo pide telemetría si no hay caché fresca (o force=Actualizar).
+        // La config de alertas se carga en segundo plano y no bloquea la UI.
         const [, alertCfg] = await Promise.all([
           ensureFleet({ force }),
           fetchDeviceAlertConfigMap().catch(
@@ -521,8 +519,8 @@ export default function Listado() {
         ]);
         ensureAlarmCatalog();
         setAlertConfigMap(alertCfg);
-      } finally {
-        setAlertLoading(false);
+      } catch {
+        /* ensureFleet ya deja error en el contexto */
       }
     },
     [ensureFleet]
@@ -541,7 +539,8 @@ export default function Listado() {
   }, []);
 
   const dispositivos = data?.data?.dispositivos ?? [];
-  const loading = (fleetLoading && !data) || alertLoading;
+  // No bloquear si ya hay flota (Inicio / KPI → Listado reutiliza caché).
+  const loading = fleetLoading && !data;
   const error = fleetError;
 
   const visibleDispositivos = useMemo(
@@ -711,10 +710,10 @@ export default function Listado() {
 
   return (
     <div className="space-y-6">
-      <InicioDataSplash waitingForData={loading && !data} />
-      {loading && !data ? (
-        <div className="flex flex-col items-center justify-center py-20 gap-3 text-muted-foreground text-sm">
-          Preparando listado…
+      {loading ? (
+        <div className="flex flex-col items-center justify-center py-20 gap-4">
+          <RefreshCw className="h-10 w-10 animate-spin text-gray-400" />
+          <p className="text-gray-500">{t('common.loading')}</p>
         </div>
       ) : null}
       {data != null && (
