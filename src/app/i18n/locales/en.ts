@@ -260,6 +260,9 @@ export const enMessages: MessageTree = {
     saved: 'Help content updated',
     loadError: 'Failed to load help',
     saveError: 'Failed to save',
+    manualTitle: 'Manual by user type',
+    manualSubtitle:
+      'Didactic guide for each module and the List → telemetry flow.',
   },
   administracion: {
     title: 'Administration',

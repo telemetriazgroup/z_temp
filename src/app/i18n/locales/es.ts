@@ -260,6 +260,9 @@ export const esMessages: MessageTree = {
     saved: 'Ayuda actualizada',
     loadError: 'Error al cargar ayuda',
     saveError: 'Error al guardar',
+    manualTitle: 'Manual por tipo de usuario',
+    manualSubtitle:
+      'Guía didáctica de cada módulo y la dinámica Listado → telemetría.',
   },
   administracion: {
     title: 'Administración',

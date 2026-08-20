@@ -95,9 +95,9 @@ export function defaultAyudaSoporteContent(): AyudaSoporteContent {
     faqs: [
       {
         id: 'faq-1',
-        pregunta: '¿Cómo agrego un nuevo dispositivo al sistema?',
+        pregunta: '¿Cómo veo la telemetría de un contenedor?',
         respuesta:
-          'Vaya a Listado para ver los equipos conectados. Los dispositivos aparecen automáticamente al transmitir telemetría. Asigne nombres desde el listado o el perfil de usuario.',
+          'Abra Listado, localice el equipo y haga clic en la fila. En el detalle verá temperaturas en vivo, historial oficial, alarmas y (si tiene permiso) control o análisis. En Ayuda/Soporte revise el Manual por tipo de usuario.',
       },
       {
         id: 'faq-2',
@@ -109,10 +109,16 @@ export function defaultAyudaSoporteContent(): AyudaSoporteContent {
         id: 'faq-3',
         pregunta: '¿Cómo configuro alertas por email?',
         respuesta:
-          'En Correo (admin/superadmin) cree grupos con destinatarios y equipos. El servidor envía alertas automáticamente según umbrales.',
+          'En Correo (admin/superadmin) cree grupos con destinatarios y equipos. El servidor envía alertas automáticamente según umbrales. Un admin tiene hasta 2 grupos y 3 correos por grupo.',
       },
       {
         id: 'faq-4',
+        pregunta: '¿Por qué no veo datos de hace semanas?',
+        respuesta:
+          'Cada equipo tiene una fecha «Acceso desde» definida al asignarlo. Solo puede consultar telemetría, alarmas e incidentes desde esa fecha. Si el equipo ya estaba con el cliente, el admin puede retroceder esa fecha en Administración.',
+      },
+      {
+        id: 'faq-5',
         pregunta: '¿Cómo descargo el historial de temperatura?',
         respuesta:
           'Abra el detalle del equipo y use las opciones CSV, Excel o PDF del historial oficial.',

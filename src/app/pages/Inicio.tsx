@@ -67,6 +67,7 @@ import {
   History,
   LogIn,
 } from 'lucide-react';
+import { InicioDataSplash } from '../components/InicioDataSplash';
 import { Historial3hModal, type Historial3hTarget } from '../components/Historial3hModal';
 import { dispositivoTieneHistorialOficial } from '../api/datosOficiales';
 import type { DispositivoOrigenCodigo } from '../types';
@@ -310,6 +311,7 @@ export default function Inicio() {
 
   return (
     <div className="space-y-6">
+      <InicioDataSplash waitingForData={loading && data == null} />
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold">{t('inicio.title')}</h1>
@@ -350,9 +352,8 @@ export default function Inicio() {
       </div>
 
       {loading && data == null && (
-        <div className="flex flex-col items-center justify-center py-16 gap-3 text-muted-foreground">
-          <RefreshCw className="h-8 w-8 animate-spin" />
-          Cargando dashboard…
+        <div className="flex flex-col items-center justify-center py-16 gap-3 text-muted-foreground text-sm">
+          Preparando el tablero…
         </div>
       )}
 

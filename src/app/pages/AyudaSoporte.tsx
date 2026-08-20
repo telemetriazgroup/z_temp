@@ -1,16 +1,18 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../AuthContext';
-import { userIsSuperAdmin } from '../modules/usuario';
+import { userIsSuperAdmin, resolveUserCategory } from '../modules/usuario';
 import {
   fetchAyudaSoporte,
   saveAyudaSoporte,
   defaultAyudaSoporteContent,
   newAyudaId,
   LUPAMAPE_LINKEDIN,
+  resolveManualRole,
   type AyudaSoporteContent,
   type AyudaLinkItem,
   type AyudaFaqItem,
 } from '../modules/ayuda';
+import { ManualUsuarioPanel } from '../components/ManualUsuarioPanel';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import {
   Accordion,
@@ -68,6 +70,14 @@ export default function AyudaSoporte() {
   const t = useT();
   const { user } = useAuth();
   const canEdit = userIsSuperAdmin(user);
+  const manualRole = useMemo(
+    () =>
+      resolveManualRole({
+        superUser: user?.superUser,
+        category: resolveUserCategory(user),
+      }),
+    [user]
+  );
   const [content, setContent] = useState<AyudaSoporteContent>(defaultAyudaSoporteContent);
   const [draft, setDraft] = useState<AyudaSoporteContent | null>(null);
   const [loading, setLoading] = useState(true);
@@ -195,7 +205,7 @@ export default function AyudaSoporte() {
         <div>
           <h1 className="text-3xl font-bold">{t('ayuda.title')}</h1>
           <p className="text-muted-foreground mt-1">
-            Centro de ayuda, contacto y recursos de la plataforma
+            Centro de ayuda, manual por tipo de usuario, contacto y recursos
           </p>
           {content.updatedAt && (
             <p className="text-xs text-muted-foreground mt-1">
@@ -237,6 +247,11 @@ export default function AyudaSoporte() {
           Modo edición (solo superadmin)
         </Badge>
       )}
+
+      <ManualUsuarioPanel
+        userRole={manualRole}
+        canBrowseAllRoles={canEdit}
+      />
 
       {/* Contacto */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
