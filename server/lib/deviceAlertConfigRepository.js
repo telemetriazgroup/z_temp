@@ -26,21 +26,38 @@ export function getDeviceAlertConfigMap() {
   return readAll();
 }
 
-export function getDeviceAlertConfig(rowKey) {
-  return readAll()[rowKey] ?? null;
+export function getDeviceAlertConfig(rowKey, ownerUsername = null) {
+  const cfg = readAll()[rowKey] ?? null;
+  if (!cfg) return null;
+  if (!ownerUsername) return cfg;
+  const owner = cfg.ownerUsername?.toString().trim().toLowerCase();
+  const want = String(ownerUsername).trim().toLowerCase();
+  // Sin titular o titular distinto: no heredar config de un cliente anterior (mismo IMEI).
+  if (!owner || owner !== want) return null;
+  return cfg;
 }
 
 export function saveDeviceAlertConfig(rowKey, patch) {
   const all = readAll();
   const prev = all[rowKey] ?? {};
+  const prevOwner = prev.ownerUsername?.toString().trim().toLowerCase() || '';
+  const nextOwner =
+    patch.ownerUsername != null
+      ? String(patch.ownerUsername).trim().toLowerCase()
+      : prevOwner;
+  const inherit = Boolean(nextOwner) && prevOwner === nextOwner;
   const entry = {
     rowKey,
     updatedAt: new Date().toISOString(),
-    ...prev,
+    ...(inherit ? prev : {}),
     ...patch,
   };
 
   entry.mode = entry.mode === 'custom' ? 'custom' : 'standard';
+
+  if (patch.ownerUsername != null) {
+    entry.ownerUsername = String(patch.ownerUsername).trim() || undefined;
+  }
 
   if (entry.mode !== 'custom') {
     delete entry.umbralesHoras;
@@ -65,12 +82,21 @@ export function saveDeviceAlertConfig(rowKey, patch) {
   if (!hasPersistedOverrides(entry)) {
     delete all[rowKey];
     writeAll(all);
-    return null;
+    return { rowKey, mode: 'standard', cleared: true };
   }
 
   all[rowKey] = entry;
   writeAll(all);
   return entry;
+}
+
+/**
+ * Config visible para un actor: si hay owner distinto o sin owner, se ignora
+ * (evita config pegada de un cliente anterior con el mismo IMEI).
+ */
+export function getDeviceAlertConfigForActor(rowKey, actorUsername) {
+  if (!actorUsername) return getDeviceAlertConfig(rowKey);
+  return getDeviceAlertConfig(rowKey, actorUsername);
 }
 
 export function deleteDeviceAlertConfig(rowKey) {
@@ -82,8 +108,8 @@ export function deleteDeviceAlertConfig(rowKey) {
 }
 
 /** Opciones de rango para evaluación en_rango efectivo. */
-export function resolveRangoOptsForDevice(rowKey) {
-  const cfg = getDeviceAlertConfig(rowKey);
+export function resolveRangoOptsForDevice(rowKey, ownerUsername = null) {
+  const cfg = getDeviceAlertConfig(rowKey, ownerUsername);
   if (!cfg?.useRangoPersonalizado) return null;
   return {
     useRangoPersonalizado: true,
@@ -93,8 +119,8 @@ export function resolveRangoOptsForDevice(rowKey) {
 }
 
 /** Umbrales efectivos: custom del dispositivo o los del grupo; opcional alerta 1 h. */
-export function resolveUmbralesForDevice(rowKey, grupoUmbrales) {
-  const cfg = getDeviceAlertConfig(rowKey);
+export function resolveUmbralesForDevice(rowKey, grupoUmbrales, ownerUsername = null) {
+  const cfg = getDeviceAlertConfig(rowKey, ownerUsername);
   let base;
   if (cfg?.mode === 'custom' && cfg.umbralesHoras?.length) {
     base = normalizeUmbrales(cfg.umbralesHoras);

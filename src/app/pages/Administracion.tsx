@@ -103,6 +103,10 @@ export default function Administracion() {
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [draftGroupIds, setDraftGroupIds] = useState<string[]>([]);
   const [draftImeis, setDraftImeis] = useState<string[]>([]);
+  const [accessFromDefault, setAccessFromDefault] = useState(
+    () => new Date().toISOString().slice(0, 10)
+  );
+  const [draftAccessFrom, setDraftAccessFrom] = useState<Record<string, string>>({});
   const [groupSearch, setGroupSearch] = useState('');
   const [deviceSearch, setDeviceSearch] = useState('');
 
@@ -200,12 +204,14 @@ export default function Administracion() {
     if (!selectedUser) {
       setDraftGroupIds([]);
       setDraftImeis([]);
+      setDraftAccessFrom({});
       return;
     }
     const cat = resolveUserCategory(selectedUser);
     if (cat === 'superadmin') {
       setDraftGroupIds([]);
       setDraftImeis([]);
+      setDraftAccessFrom({});
       return;
     }
     setDraftGroupIds([...(selectedUser.groupIds ?? [])]);
@@ -213,6 +219,8 @@ export default function Administracion() {
     setDraftImeis(
       access.includes('all') ? [] : access.filter((x) => x && x !== 'all')
     );
+    setDraftAccessFrom({ ...(selectedUser.deviceAccessFrom ?? {}) });
+    setAccessFromDefault(new Date().toISOString().slice(0, 10));
   }, [selectedUser]);
 
   const empresaNombre = useCallback(
@@ -302,6 +310,8 @@ export default function Administracion() {
         {
           groupIds: draftGroupIds,
           deviceAccess: draftImeis,
+          deviceAccessFrom: draftAccessFrom,
+          accessFromDefault,
         },
         currentUser.username
       );
@@ -642,6 +652,67 @@ export default function Administracion() {
                           ))}
                         </ul>
                       )}
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground mb-2">
+                        Acceso a datos desde
+                      </p>
+                      <div className="space-y-2 rounded-md border p-2">
+                        <div className="grid gap-1.5">
+                          <Label htmlFor="access-from-default" className="text-[11px]">
+                            Fecha por defecto (nuevos equipos)
+                          </Label>
+                          <Input
+                            id="access-from-default"
+                            type="date"
+                            value={accessFromDefault}
+                            onChange={(e) => setAccessFromDefault(e.target.value)}
+                            className="h-8 text-xs"
+                          />
+                          <p className="text-[10px] text-muted-foreground">
+                            Si no se indica por equipo, el acceso empieza en esta
+                            fecha (o hoy al asignar). Determina resúmenes, historial,
+                            alarmas e incidentes.
+                          </p>
+                        </div>
+                        {(draftImeis.length > 0 || imeisViaGrupos.length > 0) && (
+                          <ul className="max-h-40 overflow-y-auto space-y-1.5 border-t pt-2">
+                            {[
+                              ...new Set([...draftImeis, ...imeisViaGrupos]),
+                            ].map((imei) => {
+                              const d = deviceByImei.get(imei);
+                              const name = d
+                                ? deviceLabel(d, localNames, currentUser)
+                                : imei;
+                              return (
+                                <li
+                                  key={imei}
+                                  className="flex items-center justify-between gap-2 text-[11px]"
+                                >
+                                  <span className="truncate font-mono min-w-0" title={imei}>
+                                    {name !== SIN_ASIGNAR && name !== imei
+                                      ? name
+                                      : imei}
+                                  </span>
+                                  <Input
+                                    type="date"
+                                    className="h-7 w-[138px] text-[11px] shrink-0"
+                                    value={
+                                      draftAccessFrom[imei] || accessFromDefault
+                                    }
+                                    onChange={(e) =>
+                                      setDraftAccessFrom((prev) => ({
+                                        ...prev,
+                                        [imei]: e.target.value,
+                                      }))
+                                    }
+                                  />
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        )}
+                      </div>
                     </div>
                     <div className="flex flex-col gap-2">
                       <Button

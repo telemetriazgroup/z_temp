@@ -7,6 +7,7 @@ import {
   userMayAccessDispositivo,
   displayNameForDevice,
   userIsSuperAdmin,
+  userMayAccessDataAt,
 } from '../modules/usuario';
 import { readDeviceLocalNames } from '../lib/deviceLocalNames';
 import {
@@ -303,7 +304,7 @@ export default function ConfiguracionCorreo() {
         setCiclos([]);
       }
       setServerStatus(await fetchCorreoStatus());
-      const st = await fetchDeviceAlertState();
+      const st = await fetchDeviceAlertState(actingUser);
       setAlertState(st.entries);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Error al cargar config del servidor');
@@ -346,7 +347,7 @@ export default function ConfiguracionCorreo() {
       setCiclos(await fetchServerCiclos(40, actingUser));
     }
     setServerStatus(await fetchCorreoStatus());
-    const st = await fetchDeviceAlertState();
+    const st = await fetchDeviceAlertState(actingUser);
     setAlertState(st.entries);
   };
   const refreshGrupos = async () =>
@@ -359,6 +360,25 @@ export default function ConfiguracionCorreo() {
     );
     return alertState.filter((e) => allowedKeys.has(e.rowKey));
   }, [alertState, grupos, isSuper]);
+
+  const envioLogsVisible = useMemo(() => {
+    if (isSuper) return envioLogs;
+    const allowedImeis = new Set(
+      grupos.flatMap((g) => (g.devices ?? []).map((d) => d.imei))
+    );
+    const myEmails = new Set(
+      grupos.flatMap((g) => (g.emails ?? []).map((e) => e.trim().toLowerCase()))
+    );
+    return envioLogs.filter((log) => {
+      if (!allowedImeis.has(log.imei)) return false;
+      if (!userMayAccessDataAt(user, log.imei, log.sentAt)) return false;
+      const dest = (log.destinatarios ?? []).map((e) => e.trim().toLowerCase());
+      if (dest.length && myEmails.size) {
+        return dest.some((e) => myEmails.has(e));
+      }
+      return true;
+    });
+  }, [envioLogs, grupos, isSuper, user]);
 
   const liveDeviceForRowKey = useCallback(
     (rowKey: string) => dispositivos.find((d) => deviceRowKey(d) === rowKey) ?? null,
@@ -458,7 +478,7 @@ export default function ConfiguracionCorreo() {
         });
       }
 
-      const st = await fetchDeviceAlertState();
+      const st = await fetchDeviceAlertState(actingUser);
       setAlertState(st.entries);
       toast.success('Configuración de alerta guardada');
       closeAlertEdit();
@@ -473,7 +493,7 @@ export default function ConfiguracionCorreo() {
     setAlertSaving(true);
     try {
       const result = await updateDeviceReferencia(alertEdit.rowKey, { action: 'historial' });
-      const st = await fetchDeviceAlertState();
+      const st = await fetchDeviceAlertState(actingUser);
       setAlertState(st.entries);
       const updated = st.entries.find((e) => e.rowKey === alertEdit.rowKey);
       if (updated) openAlertEdit(updated);
@@ -1119,7 +1139,7 @@ export default function ConfiguracionCorreo() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {envioLogs.map((log) => (
+                  {envioLogsVisible.map((log) => (
                     <TableRow key={log.id}>
                       <TableCell className="text-xs whitespace-nowrap">
                         {new Date(log.sentAt).toLocaleString('es-PE', { timeZone: 'America/Lima' })}
@@ -1145,7 +1165,7 @@ export default function ConfiguracionCorreo() {
                       </TableCell>
                     </TableRow>
                   ))}
-                  {envioLogs.length === 0 && (
+                  {envioLogsVisible.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={6} className="text-center text-muted-foreground">
                         Sin envíos registrados

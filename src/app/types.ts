@@ -90,10 +90,31 @@ export interface User {
   groupIds?: string[];
   /**
    * Permite ver y usar el panel de control de temperaturas (setpoint, defrost, stop).
-   * Desactivado por defecto para usuarios/admin; el superadmin siempre lo tiene.
-   * Solo admin/superadmin puede habilitarlo a otros usuarios.
+   * Desactivado por defecto; el superadmin siempre lo tiene.
+   * Un admin solo puede otorgarlo si el superadmin se lo habilitó a él.
    */
   puedeControlTemperatura?: boolean;
+  /**
+   * Permite usar Análisis de telemetría en el detalle del equipo.
+   * Misma regla de transferencia que control de temperatura.
+   */
+  puedeAnalisisTelemetria?: boolean;
+  /**
+   * Fecha de inicio de acceso a datos por IMEI (YYYY-MM-DD o ISO).
+   * Si falta, se asume la fecha de asignación. Superadmin sin restricción.
+   */
+  deviceAccessFrom?: Record<string, string>;
+  /**
+   * Historial de ventanas de acceso (reasignaciones).
+   * `to` null = vigente.
+   */
+  deviceAccessHistory?: Array<{
+    imei: string;
+    from: string;
+    to?: string | null;
+    assignedAt: string;
+    assignedBy?: string;
+  }>;
   /** Nombre visible en navbar / perfil (derivable de nombres+apellidos). */
   displayName?: string;
   /** Preferencia de zona para visualización (GMT-4 / GMT-5). */

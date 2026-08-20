@@ -22,6 +22,7 @@ import {
 import { listRecentLogins, getUserConnectionDetail } from './userActivity.js';
 import { appendAuditEvent } from '../auditLogRepository.js';
 import { resolveUserEffectiveImeis } from '../gruposEquiposRepository.js';
+import { eventAtOnOrAfterAccess } from '../deviceAccessPeriod.js';
 
 function resolveAccessUser(req) {
   const username = String(req.headers['x-ztrack-user'] ?? '').trim();
@@ -98,14 +99,18 @@ function weekStatusFromSeries(series, averages) {
   };
 }
 
-function buildUrgent(dispositivosVisibles, imeisFilter, limit = 5) {
+function buildUrgent(dispositivosVisibles, imeisFilter, limit = 5, accessUser = null) {
   const allowed =
     Array.isArray(imeisFilter) && imeisFilter.length > 0
       ? new Set(imeisFilter)
       : null;
 
+  const withinAccess = (imei, atIso) =>
+    !accessUser || eventAtOnOrAfterAccess(accessUser, imei, atIso);
+
   const envios = getEnvios()
     .filter((e) => !allowed || allowed.has(e.imei))
+    .filter((e) => withinAccess(e.imei, e.sentAt))
     .slice(0, limit)
     .map((e) => ({
       id: e.id,
@@ -121,6 +126,7 @@ function buildUrgent(dispositivosVisibles, imeisFilter, limit = 5) {
   const alarmas = getIncidentes()
     .filter((i) => i.archivado !== true && i.estado === 'pendiente')
     .filter((i) => !allowed || allowed.has(i.imei))
+    .filter((i) => withinAccess(i.imei, i.enviadoAt || i.createdAt || i.diaCalendario))
     .slice(0, limit)
     .map((i) => ({
       id: i.id,
@@ -137,6 +143,7 @@ function buildUrgent(dispositivosVisibles, imeisFilter, limit = 5) {
 
   const conectados = dispositivosVisibles
     .filter((d) => String(d.estado_conexion).toLowerCase() === 'online')
+    .filter((d) => withinAccess(d.imei, d.ultima_actualizacion))
     .slice(0, limit)
     .map((d) => {
       const nombre =
@@ -161,6 +168,7 @@ function buildUrgent(dispositivosVisibles, imeisFilter, limit = 5) {
         String(d.estado_conexion).toLowerCase() === 'online' &&
         d.en_rango === false
     )
+    .filter((d) => withinAccess(d.imei, d.ultima_actualizacion))
     .slice(0, limit)
     .map((d) => ({
       imei: d.imei,
@@ -338,7 +346,7 @@ export function createDashboardRouter() {
       ]);
 
       const weekStatus = weekStatusFromSeries(prevWeekSeries, averages);
-      const urgent = buildUrgent(visibles, imeis, 5);
+      const urgent = buildUrgent(visibles, imeis, 5, superUser ? null : user);
       const longestOffline = buildLongestOffline(visibles, 5);
 
       const linksDown = linkStatuses.filter((l) => !l.ok);

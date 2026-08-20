@@ -129,3 +129,23 @@ export function userMayControlTemperatura(user: User | null | undefined): boolea
   if (userIsSuperAdmin(user)) return true;
   return user.puedeControlTemperatura === true;
 }
+
+/**
+ * Análisis de telemetría en detalle de equipo.
+ * Superadmin siempre; resto solo con flag explícito.
+ */
+export function userMayAnalisisTelemetria(user: User | null | undefined): boolean {
+  if (user == null) return false;
+  if (userIsSuperAdmin(user)) return true;
+  return user.puedeAnalisisTelemetria === true;
+}
+
+/** Admin solo puede otorgar un permiso si él mismo lo tiene (o es superadmin). */
+export function actorMayGrantPermission(
+  actor: User | null | undefined,
+  permission: 'puedeControlTemperatura' | 'puedeAnalisisTelemetria'
+): boolean {
+  if (actor == null) return false;
+  if (userIsSuperAdmin(actor)) return true;
+  return actor[permission] === true;
+}

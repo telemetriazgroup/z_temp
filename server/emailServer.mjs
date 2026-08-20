@@ -1053,8 +1053,12 @@ app.get('/reefer/api/correo/alert-config', (_req, res) => {
   res.json({ ok: true, data: getDeviceAlertConfigMap() });
 });
 
-app.get('/reefer/api/correo/alert-config/state', (_req, res) => {
-  res.json({ ok: true, data: getAlertStateView() });
+app.get('/reefer/api/correo/alert-config/state', (req, res) => {
+  const actor = resolveActor(req);
+  res.json({
+    ok: true,
+    data: getAlertStateView(actor?.username ?? null),
+  });
 });
 
 app.get('/reefer/api/correo/alert-config/:rowKey/eventos', async (req, res) => {
@@ -1109,6 +1113,7 @@ app.put('/reefer/api/correo/alert-config/:rowKey', (req, res) => {
       useRangoPersonalizado: Boolean(useRangoPersonalizado),
       margenInferior: margenInferior != null ? Number(margenInferior) : undefined,
       margenSuperior: margenSuperior != null ? Number(margenSuperior) : undefined,
+      ownerUsername: actor.username,
     });
     auditActorEvent(req, {
       action: 'alarma.config_update',
@@ -1116,9 +1121,10 @@ app.put('/reefer/api/correo/alert-config/:rowKey', (req, res) => {
       summary: `Actualizó alarmas de ${rowKey}`,
       targetId: rowKey,
       detail: {
-        mode: entry.mode,
-        alerta1Hora: entry.alerta1Hora,
-        alerta30Minutos: entry.alerta30Minutos,
+        mode: entry?.mode ?? 'standard',
+        alerta1Hora: entry?.alerta1Hora ?? false,
+        alerta30Minutos: entry?.alerta30Minutos ?? false,
+        cleared: entry?.cleared === true,
       },
     });
     res.json({ ok: true, data: entry });

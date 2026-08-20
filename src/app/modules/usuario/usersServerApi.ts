@@ -72,7 +72,7 @@ export async function createUserOnServer(
 
 export async function updateUserOnServer(
   id: string,
-  patch: Partial<User>,
+  patch: Partial<User> & { accessFromDefault?: string },
   actingUser: string
 ): Promise<User> {
   const res = await fetch(`${BASE}/users/${encodeURIComponent(id)}`, {

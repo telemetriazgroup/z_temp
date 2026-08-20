@@ -283,8 +283,12 @@ export async function fetchDeviceAlertConfigMap(): Promise<Record<string, Device
   return body.data ?? {};
 }
 
-export async function fetchDeviceAlertState(): Promise<DeviceAlertStateView> {
-  const res = await fetch(`${BASE}/alert-config/state`);
+export async function fetchDeviceAlertState(
+  actingUser?: string | null
+): Promise<DeviceAlertStateView> {
+  const res = await fetch(`${BASE}/alert-config/state`, {
+    headers: headers(actingUser),
+  });
   const body = await parseRes<{ data: DeviceAlertStateView }>(res);
   return body.data;
 }

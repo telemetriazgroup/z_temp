@@ -15,6 +15,7 @@ import {
   resolveUserCategory,
   adminMaxManagedUsers,
   categoryLabel,
+  actorMayGrantPermission,
 } from '../modules/usuario';
 import { fetchEmpresas } from '../modules/empresa';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
@@ -46,7 +47,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../components/ui/dialog';
-import { Plus, Pencil, Trash2, Shield, Thermometer } from 'lucide-react';
+import { Plus, Pencil, Trash2, Shield, Thermometer, LineChart } from 'lucide-react';
 import { useT } from '../i18n';
 
 const emptyForm = {
@@ -66,6 +67,7 @@ const emptyForm = {
   empresaId: '' as string,
   zonaHoraria: 'GMT-5',
   puedeControlTemperatura: false,
+  puedeAnalisisTelemetria: false,
 };
 
 function personalPayload(form: typeof emptyForm) {
@@ -163,6 +165,7 @@ export default function Usuarios() {
       empresaId: u.empresaId ?? '',
       zonaHoraria: u.zonaHoraria ?? 'GMT-5',
       puedeControlTemperatura: u.puedeControlTemperatura === true,
+      puedeAnalisisTelemetria: u.puedeAnalisisTelemetria === true,
     });
     setError(null);
     setDialogOpen(true);
@@ -194,6 +197,7 @@ export default function Usuarios() {
         category,
         superUser: category === 'superadmin',
         puedeControlTemperatura: form.puedeControlTemperatura === true,
+        puedeAnalisisTelemetria: form.puedeAnalisisTelemetria === true,
         ...personal,
       };
 
@@ -363,6 +367,16 @@ export default function Usuarios() {
                           >
                             <Thermometer className="h-3 w-3" />
                             Control
+                          </Badge>
+                        )}
+                        {u.puedeAnalisisTelemetria === true && (
+                          <Badge
+                            variant="outline"
+                            className="gap-1 text-[10px]"
+                            title="Análisis de telemetría"
+                          >
+                            <LineChart className="h-3 w-3" />
+                            Análisis
                           </Badge>
                         )}
                       </div>
@@ -610,11 +624,14 @@ export default function Usuarios() {
               </p>
             )}
 
-            <div className="rounded-md border p-3 space-y-2">
+            <div className="rounded-md border p-3 space-y-3">
               <div className="flex items-start gap-3">
                 <Checkbox
                   id="puede-control-temp"
                   checked={form.puedeControlTemperatura}
+                  disabled={
+                    !actorMayGrantPermission(currentUser, 'puedeControlTemperatura')
+                  }
                   onCheckedChange={(v) =>
                     setForm((f) => ({
                       ...f,
@@ -632,8 +649,38 @@ export default function Usuarios() {
                   </Label>
                   <p className="text-[11px] text-muted-foreground">
                     Permite ver y usar el panel de control remoto (setpoint, defrost,
-                    stop) en equipos reefer TUNEL. Desactivado por defecto. El
-                    superadmin siempre tiene este acceso.
+                    stop) en equipos reefer TUNEL. Desactivado por defecto. Solo el
+                    superadmin (o un admin al que él se lo haya habilitado) puede
+                    otorgarlo.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-start gap-3">
+                <Checkbox
+                  id="puede-analisis-telemetria"
+                  checked={form.puedeAnalisisTelemetria}
+                  disabled={
+                    !actorMayGrantPermission(currentUser, 'puedeAnalisisTelemetria')
+                  }
+                  onCheckedChange={(v) =>
+                    setForm((f) => ({
+                      ...f,
+                      puedeAnalisisTelemetria: v === true,
+                    }))
+                  }
+                />
+                <div className="grid gap-1 leading-none">
+                  <Label
+                    htmlFor="puede-analisis-telemetria"
+                    className="flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <LineChart className="h-3.5 w-3.5" />
+                    Análisis de telemetría
+                  </Label>
+                  <p className="text-[11px] text-muted-foreground">
+                    Activa el panel de análisis en el detalle del equipo (Listado).
+                    Misma regla: el admin no puede transferirlo si el superadmin no
+                    se lo otorgó.
                   </p>
                 </div>
               </div>

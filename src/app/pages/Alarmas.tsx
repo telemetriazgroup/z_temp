@@ -6,6 +6,7 @@ import { useAuth } from '../AuthContext';
 import {
   userMayAccessDispositivo,
   userMayAccessImei,
+  userMayAccessDataAt,
   displayNameForDevice,
   userCanManageUsers,
 } from '../modules/usuario';
@@ -78,7 +79,13 @@ export default function Alarmas() {
       setLiveDevices(visible);
       const synced = syncDeviceAlarmsFromTelemetry(visible);
       const visibleImeis = new Set(visible.map((d) => d.imei));
-      setEvents(synced.filter((e) => visibleImeis.has(e.imei)));
+      setEvents(
+        synced.filter(
+          (e) =>
+            visibleImeis.has(e.imei) &&
+            userMayAccessDataAt(user, e.imei, e.detectedAt)
+        )
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error al cargar alarmas');
       setEvents(getDeviceAlarmEvents());
@@ -110,7 +117,13 @@ export default function Alarmas() {
     const target = events.find((e) => e.id === alarmId);
     if (!target) return;
     updateDeviceAlarmEvent(alarmId, { atendida: !target.atendida });
-    setEvents(getDeviceAlarmEvents().filter((e) => userMayAccessImei(user, e.imei)));
+    setEvents(
+      getDeviceAlarmEvents().filter(
+        (e) =>
+          userMayAccessImei(user, e.imei) &&
+          userMayAccessDataAt(user, e.imei, e.detectedAt)
+      )
+    );
   };
 
   const deviceName = (imei: string, codigo: DispositivoUltimoEstado['codigo']) => {

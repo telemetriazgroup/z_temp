@@ -55,7 +55,7 @@ import {
 import { normalizeTemperaturaUnidad } from '../lib/temperatureUnit';
 import { TempConTendencia } from './TempConTendencia';
 import { useAuth } from '../AuthContext';
-import { postAuditEvent } from '../modules/usuario';
+import { postAuditEvent, clampRangeToAccess, userAccessFromForImei } from '../modules/usuario';
 import { AUDIT_ACTIONS } from '../modules/usuario/auditActions';
 import { HistorialReeferChart } from './HistorialReeferChart';
 import {
@@ -105,6 +105,8 @@ export function HistorialOficialDetalle({
   const { user } = useAuth();
   const esSuperUser = user?.superUser === true;
   const tempUnidad = normalizeTemperaturaUnidad(user?.temperaturaUnidad);
+  const accessFrom = userAccessFromForImei(user, imei);
+  const [accessNotice, setAccessNotice] = useState<string | null>(null);
   const displayTz = useMemo(
     () => resolveDisplayTimeZone(zonaHoraria),
     [zonaHoraria]
@@ -135,8 +137,27 @@ export function HistorialOficialDetalle({
 
   const cargarRango = useCallback(
     async (fi: Date, ff: Date, opts?: { usarCacheSiCubre?: boolean }) => {
-      const desdeMs = fi.getTime();
-      const hastaMs = ff.getTime();
+      const clamped = clampRangeToAccess(
+        user,
+        imei,
+        fi.toISOString(),
+        ff.toISOString()
+      );
+      if (!clamped.ok) {
+        setError(clamped.message ?? 'Sin acceso a ese periodo');
+        setAccessNotice(clamped.message ?? null);
+        setRespuesta(null);
+        setFiltroVistaMs(null);
+        setCargando(false);
+        return false;
+      }
+      if (clamped.message) setAccessNotice(clamped.message);
+      else setAccessNotice(null);
+
+      const fiClamped = new Date(clamped.from);
+      const ffClamped = new Date(clamped.to);
+      const desdeMs = fiClamped.getTime();
+      const hastaMs = ffClamped.getTime();
       const cache = respuestaRef.current?.data?.datos ?? [];
 
       if (
@@ -144,8 +165,8 @@ export function HistorialOficialDetalle({
         datosCubrenRangoMs(cache, desdeMs, hastaMs)
       ) {
         setFiltroVistaMs({ desde: desdeMs, hasta: hastaMs });
-        setDesdeStr(dateToDatetimeLocalInTz(fi, displayTz.iana));
-        setHastaStr(dateToDatetimeLocalInTz(ff, displayTz.iana));
+        setDesdeStr(dateToDatetimeLocalInTz(fiClamped, displayTz.iana));
+        setHastaStr(dateToDatetimeLocalInTz(ffClamped, displayTz.iana));
         setError(null);
         setPage(1);
         return true;
@@ -155,13 +176,13 @@ export function HistorialOficialDetalle({
       setCargando(true);
       try {
         const r = await fetchBuscarDatosOficiales(codigo, imei, {
-          fechaInicial: fi,
-          fechaFinal: ff,
+          fechaInicial: fiClamped,
+          fechaFinal: ffClamped,
         });
         setRespuesta(r);
         setFiltroVistaMs(null);
-        setDesdeStr(dateToDatetimeLocalInTz(fi, displayTz.iana));
-        setHastaStr(dateToDatetimeLocalInTz(ff, displayTz.iana));
+        setDesdeStr(dateToDatetimeLocalInTz(fiClamped, displayTz.iana));
+        setHastaStr(dateToDatetimeLocalInTz(ffClamped, displayTz.iana));
         setPage(1);
         return true;
       } catch (e) {
@@ -173,7 +194,7 @@ export function HistorialOficialDetalle({
         setCargando(false);
       }
     },
-    [codigo, imei, displayTz.iana]
+    [codigo, imei, displayTz.iana, user]
   );
 
   const ejecutarBusqueda = useCallback(async () => {
@@ -510,6 +531,14 @@ export function HistorialOficialDetalle({
               Horas de pared en {displayTz.label}. La consulta a la API usa GMT-5
               (fuente de telemetría).
             </p>
+            {accessFrom && (
+              <p className="text-xs text-amber-700 dark:text-amber-400">
+                Acceso a datos de este equipo desde {accessFrom}.
+              </p>
+            )}
+            {accessNotice && (
+              <p className="text-xs text-amber-700 dark:text-amber-400">{accessNotice}</p>
+            )}
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <div className="space-y-2">
                 <Label htmlFor="hist-desde">Fecha inicial</Label>

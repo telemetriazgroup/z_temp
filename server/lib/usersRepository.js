@@ -4,11 +4,20 @@ import {
   resolveUserEffectiveImeis,
   getGrupoEquipoById,
 } from './gruposEquiposRepository.js';
+import {
+  normalizeDeviceAccessFrom,
+  mergeDeviceAccessFromOnAssign,
+  todayAccessDate,
+} from './deviceAccessPeriod.js';
 
 const USERS_FILE = 'users.json';
 const VALID_ROLES = new Set(['Administrador', 'Monitoreo', 'Solo Vista']);
 const VALID_CATEGORIES = new Set(['superadmin', 'admin', 'user']);
 export const DEFAULT_ADMIN_MAX_USERS = 3;
+
+function normalizeDeviceAccessFromField(raw) {
+  return normalizeDeviceAccessFrom(raw);
+}
 
 function readUsersRaw() {
   const raw = readJson(USERS_FILE, null);
@@ -219,6 +228,11 @@ function validateUserShape(user, { requirePassword = false } = {}) {
       : undefined,
     /** Desactivado por defecto; solo true si se asigna explícitamente. */
     puedeControlTemperatura: user.puedeControlTemperatura === true,
+    puedeAnalisisTelemetria: user.puedeAnalisisTelemetria === true,
+    deviceAccessFrom: normalizeDeviceAccessFromField(user.deviceAccessFrom),
+    deviceAccessHistory: Array.isArray(user.deviceAccessHistory)
+      ? user.deviceAccessHistory.slice(-200)
+      : undefined,
     displayName: buildDisplayName({ ...user, nombres, apellidos }),
     zonaHoraria: normalizeZonaHoraria(user.zonaHoraria ?? 'GMT-5'),
     temperaturaUnidad: normalizeTemperaturaUnidad(user.temperaturaUnidad),
@@ -371,6 +385,17 @@ export function addUser(input, opts = {}) {
     // Flota solo vía Administración (update), no al crear con IMEI libres.
     nextInput.deviceAccess = [];
     nextInput.groupIds = [];
+    // No puede transferir permisos que el superadmin no le dio.
+    if (nextInput.puedeControlTemperatura === true && actor.puedeControlTemperatura !== true) {
+      throw new Error(
+        'No puede habilitar control de temperatura: el superadmin no le otorgó ese permiso.'
+      );
+    }
+    if (nextInput.puedeAnalisisTelemetria === true && actor.puedeAnalisisTelemetria !== true) {
+      throw new Error(
+        'No puede habilitar análisis de telemetría: el superadmin no le otorgó ese permiso.'
+      );
+    }
   } else if (isSuperAdminUser(actor)) {
     if (nextInput.createdBy == null) {
       nextInput.createdBy = actor.username;
@@ -418,6 +443,16 @@ export function updateUser(id, patch, opts = {}) {
     if (Array.isArray(patch.deviceAccess) && patch.deviceAccess.includes('all')) {
       throw new Error('Un admin no puede asignar acceso a todos los dispositivos');
     }
+    if (patch.puedeControlTemperatura === true && actor.puedeControlTemperatura !== true) {
+      throw new Error(
+        'No puede habilitar control de temperatura: el superadmin no le otorgó ese permiso.'
+      );
+    }
+    if (patch.puedeAnalisisTelemetria === true && actor.puedeAnalisisTelemetria !== true) {
+      throw new Error(
+        'No puede habilitar análisis de telemetría: el superadmin no le otorgó ese permiso.'
+      );
+    }
     assertActorMayAssignFleet(
       actor,
       patch.deviceAccess !== undefined ? patch.deviceAccess : prev.deviceAccess,
@@ -429,6 +464,48 @@ export function updateUser(id, patch, opts = {}) {
       superUser: false,
       createdBy: prev.createdBy ?? actor.username,
     };
+  }
+
+  // Sincronizar deviceAccessFrom / history al cambiar flota (directa o por grupos).
+  if (
+    patch.deviceAccess !== undefined ||
+    patch.groupIds !== undefined ||
+    patch.deviceAccessFrom !== undefined ||
+    patch.accessFromDefault !== undefined
+  ) {
+    const nextDeviceAccess =
+      patch.deviceAccess !== undefined ? patch.deviceAccess : prev.deviceAccess;
+    const nextGroupIds =
+      patch.groupIds !== undefined ? patch.groupIds : prev.groupIds;
+    const prevEffective =
+      resolveUserEffectiveImeis(prev) ??
+      (Array.isArray(prev.deviceAccess)
+        ? prev.deviceAccess.filter((x) => x && x !== 'all')
+        : []);
+    const nextEffective =
+      resolveUserEffectiveImeis({
+        ...prev,
+        deviceAccess: nextDeviceAccess,
+        groupIds: nextGroupIds,
+      }) ??
+      (Array.isArray(nextDeviceAccess)
+        ? nextDeviceAccess.filter((x) => x && x !== 'all')
+        : []);
+    const mergedFrom = mergeDeviceAccessFromOnAssign({
+      prevAccess: Array.isArray(prevEffective) ? prevEffective : [],
+      nextAccess: Array.isArray(nextEffective) ? nextEffective : [],
+      prevFrom: prev.deviceAccessFrom,
+      patchFrom: patch.deviceAccessFrom,
+      defaultFrom: patch.accessFromDefault || todayAccessDate(),
+      history: prev.deviceAccessHistory,
+      assignedBy: actor?.username ?? null,
+    });
+    patch = {
+      ...patch,
+      deviceAccessFrom: mergedFrom.deviceAccessFrom,
+      deviceAccessHistory: mergedFrom.deviceAccessHistory,
+    };
+    delete patch.accessFromDefault;
   }
 
   const merged = { ...prev, ...patch, id: prev.id };

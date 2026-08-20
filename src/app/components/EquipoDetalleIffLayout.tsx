@@ -30,6 +30,8 @@ interface Props {
   onVerEventoEnGrafica?: (rango: { since: string; until: string }) => void;
   /** Mostrar panel de control (permiso de usuario). Default false. */
   mostrarControl?: boolean;
+  /** Mostrar análisis de telemetría. Default false. */
+  mostrarAnalisis?: boolean;
 }
 
 export function EquipoDetalleIffLayout({
@@ -42,6 +44,7 @@ export function EquipoDetalleIffLayout({
   historialFocus = null,
   onVerEventoEnGrafica,
   mostrarControl = false,
+  mostrarAnalisis = false,
 }: Props) {
   const ud = dispositivo.ultimo_dato;
   const powerOn = dispositivo.power_state_texto === 'on';
@@ -162,7 +165,7 @@ export function EquipoDetalleIffLayout({
                 focusRango={historialFocus}
                 zonaHoraria={dispositivo.zona_horaria}
               />
-              {dispositivo.codigo != null && (
+              {dispositivo.codigo != null && mostrarAnalisis && (
                 <AnalisisTelemetriaPanel
                   imei={dispositivo.imei}
                   codigo={dispositivo.codigo}
@@ -186,7 +189,7 @@ export function EquipoDetalleIffLayout({
             focusRango={historialFocus}
             zonaHoraria={dispositivo.zona_horaria}
           />
-          {dispositivo.codigo != null && (
+          {dispositivo.codigo != null && mostrarAnalisis && (
             <AnalisisTelemetriaPanel
               imei={dispositivo.imei}
               codigo={dispositivo.codigo}

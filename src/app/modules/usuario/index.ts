@@ -27,8 +27,17 @@ export {
   adminMaxManagedUsers,
   categoryLabel,
   userMayControlTemperatura,
+  userMayAnalisisTelemetria,
+  actorMayGrantPermission,
   userHasNoFleetAccess,
 } from './userPermissions';
+export {
+  userAccessFromForImei,
+  userMayAccessDataAt,
+  clampRangeToAccess,
+  normalizeAccessDate,
+  todayAccessDate,
+} from './deviceAccessPeriod';
 export { resumenFromDispositivos } from './listResumen';
 export {
   BOOTSTRAP_USERS,

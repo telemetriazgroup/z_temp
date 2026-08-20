@@ -100,7 +100,7 @@ export async function addUser(user: User, actingUser: string): Promise<User> {
 
 export async function updateUser(
   id: string,
-  patch: Partial<User>,
+  patch: Partial<User> & { accessFromDefault?: string },
   actingUser: string
 ): Promise<User> {
   return updateUserOnServer(id, patch, actingUser);

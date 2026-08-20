@@ -15,6 +15,7 @@ import {
   displayNameForDevice,
   postAuditEvent,
   userMayControlTemperatura,
+  userMayAnalisisTelemetria,
 } from '../modules/usuario';
 import { AUDIT_ACTIONS } from '../modules/usuario/auditActions';
 import {
@@ -455,6 +456,7 @@ export default function EquipoDetalle() {
     dispositivo != null &&
     esEquipoConControlTemperatura(dispositivo.imei, dispositivo.codigo);
   const puedeMostrarControl = userMayControlTemperatura(user);
+  const puedeMostrarAnalisis = userMayAnalisisTelemetria(user);
 
   if (!imei) {
     return (
@@ -631,6 +633,7 @@ export default function EquipoDetalle() {
           historialFocus={historialFocus}
           onVerEventoEnGrafica={verEventoEnGraficaPrincipal}
           mostrarControl={puedeMostrarControl}
+          mostrarAnalisis={puedeMostrarAnalisis}
         />
       ) : (
         <>
@@ -732,13 +735,15 @@ export default function EquipoDetalle() {
             focusRango={historialFocus}
             zonaHoraria={dispositivo.zona_horaria}
           />
-          <AnalisisTelemetriaPanel
-            imei={dispositivo.imei}
-            codigo={dispositivo.codigo}
-            nombreContenedor={tituloPrincipal}
-            setPointInicial={dispositivo.ultimo_dato?.set_point ?? null}
-            onVerEnGraficaPrincipal={verEventoEnGraficaPrincipal}
-          />
+          {puedeMostrarAnalisis && (
+            <AnalisisTelemetriaPanel
+              imei={dispositivo.imei}
+              codigo={dispositivo.codigo}
+              nombreContenedor={tituloPrincipal}
+              setPointInicial={dispositivo.ultimo_dato?.set_point ?? null}
+              onVerEnGraficaPrincipal={verEventoEnGraficaPrincipal}
+            />
+          )}
         </>
       )}
         </>

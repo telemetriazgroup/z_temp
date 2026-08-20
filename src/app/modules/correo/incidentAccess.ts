@@ -1,6 +1,6 @@
 import type { User } from '../../types';
 import type { CorreoIncidente, GrupoCorreo, GrupoCorreoDevice } from './types';
-import { userHasFullDeviceAccess, userMayAccessImei } from '../usuario';
+import { userHasFullDeviceAccess, userMayAccessImei, userMayAccessDataAt } from '../usuario';
 
 /** Equipo del grupo visible para el usuario (IMEI en su cuenta + origen permitido). */
 export function userMayAccessCorreoDevice(
@@ -68,7 +68,10 @@ export function incidenteVisibleParaUser(
   if (user == null) return false;
   if (user.superUser === true) return true;
   const rowKeys = new Set(rowKeysCorreoActivosForUser(user, grupos));
-  return rowKeys.has(inc.rowKey);
+  if (!rowKeys.has(inc.rowKey)) return false;
+  // Solo desde la fecha de acceso del IMEI
+  const at = inc.enviadoAt || inc.createdAt || inc.diaCalendario;
+  return userMayAccessDataAt(user, inc.imei, at);
 }
 
 export function diaRelativoLabel(diaCalendario: string, hoy: string, ayer: string): string {

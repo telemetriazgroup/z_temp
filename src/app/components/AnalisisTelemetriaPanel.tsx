@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { DispositivoOrigenCodigo } from '../types';
 import { useAuth } from '../AuthContext';
-import { postAuditEvent, userIsMonitoreoNavigation } from '../modules/usuario';
+import { postAuditEvent, userIsMonitoreoNavigation, userAccessFromForImei } from '../modules/usuario';
 import { AUDIT_ACTIONS } from '../modules/usuario/auditActions';
 import {
   fetchAnalisisMensual,
@@ -233,6 +233,18 @@ export function AnalisisTelemetriaPanel({
     setLoading(true);
     setError(null);
     try {
+      const accessFrom = userAccessFromForImei(user, imei);
+      if (accessFrom) {
+        const monthKey = `${anio}-${String(mes).padStart(2, '0')}`;
+        const accessMonth = accessFrom.slice(0, 7);
+        if (monthKey < accessMonth) {
+          setError(
+            `No tiene acceso a datos anteriores al ${accessFrom}. El dispositivo está habilitado para su cuenta desde esa fecha.`
+          );
+          setData(null);
+          return;
+        }
+      }
       const result = await fetchAnalisisMensual({
         imei,
         codigo,
@@ -260,7 +272,7 @@ export function AnalisisTelemetriaPanel({
     } finally {
       setLoading(false);
     }
-  }, [imei, codigo, anio, mes, user?.username, isAdmin, setPointInicial, syncRangoFromSnapshot]);
+  }, [imei, codigo, anio, mes, user, isAdmin, setPointInicial, syncRangoFromSnapshot]);
 
   useEffect(() => {
     void load();

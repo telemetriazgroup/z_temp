@@ -357,9 +357,9 @@ function proximoUmbralPendiente(umbrales, horasTranscurridas, sentUmbrales) {
   return umbrales.find((u) => horasTranscurridas < u && !sentUmbrales.includes(u)) ?? null;
 }
 
-async function ensureOutOfRangeReference(state, assignment, dispositivo, now) {
-  const cfg = getDeviceAlertConfig(assignment.rowKey);
-  const rangoOpts = resolveRangoOptsForDevice(assignment.rowKey);
+async function ensureOutOfRangeReference(state, assignment, dispositivo, now, ownerUsername = null) {
+  const cfg = getDeviceAlertConfig(assignment.rowKey, ownerUsername);
+  const rangoOpts = resolveRangoOptsForDevice(assignment.rowKey, ownerUsername);
   let episode = getEpisode(state, assignment.rowKey);
   episode = episode && episodeKind(episode) === 'fuera_rango' ? episode : null;
 
@@ -478,7 +478,7 @@ function baseEval(grupo, assignment, dispositivo) {
     grupoNombre: grupo.nombre,
     descripcionEquipo: dispositivoReeferId,
     assignmentEnabled: assignment.enabled,
-    configAlerta: alertConfigLabel(assignment.rowKey),
+    configAlerta: alertConfigLabel(assignment.rowKey, grupo.ownerUsername ?? null),
   };
 }
 
@@ -686,6 +686,7 @@ export async function runAlertCycle(options = {}) {
   const hoy = todayKey(now);
 
   for (const grupo of allGrupos) {
+    const grupoOwner = grupo.ownerUsername ?? null;
     for (const assignment of grupo.devices ?? []) {
       const dispositivo = deviceMap.get(assignment.rowKey) ?? null;
       const base = baseEval(grupo, assignment, dispositivo);
@@ -736,10 +737,14 @@ export async function runAlertCycle(options = {}) {
         continue;
       }
 
-      const rangoOpts = resolveRangoOptsForDevice(assignment.rowKey);
+      const rangoOpts = resolveRangoOptsForDevice(assignment.rowKey, grupoOwner);
       const enRangoRaw = dispositivo.en_rango;
       const enRangoEfectivo = effectiveEnRangoAlertaFromDispositivo(dispositivo, rangoOpts);
-      const umbrales = resolveUmbralesForDevice(assignment.rowKey, assignment.umbralesHoras);
+      const umbrales = resolveUmbralesForDevice(
+        assignment.rowKey,
+        assignment.umbralesHoras,
+        grupoOwner
+      );
       const telem = {
         setPoint: dispositivo.ultimo_dato?.set_point ?? null,
         tempSupply: dispositivo.ultimo_dato?.temp_supply_1 ?? null,
@@ -1193,7 +1198,13 @@ export async function runAlertCycle(options = {}) {
       let consultaHistorial = false;
       let criterioRef;
       try {
-        const ref = await ensureOutOfRangeReference(state, assignment, dispositivo, now);
+        const ref = await ensureOutOfRangeReference(
+          state,
+          assignment,
+          dispositivo,
+          now,
+          grupoOwner
+        );
         consultaHistorial = ref.consultaHistorial;
         criterioRef = ref.criterioRef;
 
@@ -1496,8 +1507,8 @@ function findAssignmentByRowKey(rowKey) {
   return null;
 }
 
-function alertConfigLabel(rowKey) {
-  const cfg = getDeviceAlertConfig(rowKey);
+function alertConfigLabel(rowKey, ownerUsername = null) {
+  const cfg = getDeviceAlertConfig(rowKey, ownerUsername);
   return cfg?.mode === 'custom' ? 'personalizada' : 'estándar';
 }
 
@@ -1518,7 +1529,7 @@ export async function refreshDeviceReferenceFromHistorial(rowKey) {
   if (!dispositivo) throw new Error('Equipo sin telemetría actual');
 
   const now = new Date();
-  const rangoOpts = resolveRangoOptsForDevice(rowKey);
+  const rangoOpts = resolveRangoOptsForDevice(rowKey, found.grupo.ownerUsername ?? null);
   const codigo = dispositivo.codigo ?? found.assignment.codigo;
   const hist = await fetchHistorialUltimasHoras(
     codigo,
@@ -1675,7 +1686,7 @@ export async function getDeviceEventosView(rowKey) {
   if (!dispositivo) throw new Error('Equipo sin telemetría actual');
 
   const now = new Date();
-  const rangoOpts = resolveRangoOptsForDevice(rowKey);
+  const rangoOpts = resolveRangoOptsForDevice(rowKey, found.grupo.ownerUsername ?? null);
   const codigo = dispositivo.codigo ?? found.assignment.codigo;
   const hist = await fetchHistorialUltimasHoras(
     codigo,
@@ -1702,7 +1713,7 @@ export async function getDeviceEventosView(rowKey) {
   };
 }
 
-export function getAlertStateView() {
+export function getAlertStateView(actorUsername = null) {
   const state = getState();
   const configs = getDeviceAlertConfigMap();
   const seen = new Set();
@@ -1713,6 +1724,17 @@ export function getAlertStateView() {
       if (seen.has(assignment.rowKey)) continue;
       seen.add(assignment.rowKey);
       const episode = state.episodes?.[assignment.rowKey] ?? null;
+      const raw = configs[assignment.rowKey] ?? null;
+      let config = raw;
+      if (actorUsername) {
+        const owner = raw?.ownerUsername?.toString().trim().toLowerCase();
+        const want = String(actorUsername).trim().toLowerCase();
+        if (!owner || owner !== want) config = null;
+      } else if (grupo.ownerUsername && raw?.ownerUsername) {
+        const owner = String(raw.ownerUsername).trim().toLowerCase();
+        const want = String(grupo.ownerUsername).trim().toLowerCase();
+        if (owner !== want) config = null;
+      }
       entries.push({
         rowKey: assignment.rowKey,
         imei: assignment.imei,
@@ -1720,7 +1742,7 @@ export function getAlertStateView() {
         descripcionEquipo: assignment.descripcionEquipo,
         nombrePlataforma: assignment.nombrePlataforma,
         grupoNombre: grupo.nombre,
-        config: configs[assignment.rowKey] ?? null,
+        config,
         episode,
         lastRecovered: state.lastRecovered?.[assignment.rowKey] ?? null,
       });
