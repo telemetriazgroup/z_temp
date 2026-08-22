@@ -112,6 +112,10 @@ async function runDashboardMigration() {
   const sqlPath = path.join(__dirname, '../sql/002_dashboard.sql');
   const sql = fs.readFileSync(sqlPath, 'utf8');
   await query(sql);
+  await query(
+    `ALTER TABLE dashboard_device_sample
+       ADD COLUMN IF NOT EXISTS telemetry JSONB`
+  );
   dashboardMigrated = true;
   console.log('[dashboard] esquema PostgreSQL listo');
   return true;

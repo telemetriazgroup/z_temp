@@ -230,7 +230,7 @@ export const MANUAL_POR_ROL: Record<ManualRole, ManualRoleGuide> = {
         steps: [
           'Control / Auditoría: comandos remotos (setpoint, defrost, stop).',
           'Auditoría usuarios: logins, vistas de detalle, descargas, CRUD.',
-          'Análisis de señal: reportes mensuales por equipo y ubicaciones.',
+          'Análisis de señal: equipos por desconexión reciente, historial de rangos, telemetría y eventos.',
         ],
       },
       {

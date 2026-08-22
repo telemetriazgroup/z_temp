@@ -129,6 +129,10 @@ const routeTree = [
         path: "analisis-senal",
         element: <AnalisisSenal />,
       },
+      {
+        path: "analisis-senal/:imei",
+        element: <AnalisisSenal />,
+      },
     ],
   },
 ];

@@ -161,7 +161,8 @@ export default function Layout() {
     if (
       location.pathname === '/auditoria' ||
       location.pathname === '/control-auditoria' ||
-      location.pathname === '/analisis-senal'
+      location.pathname === '/analisis-senal' ||
+      location.pathname.startsWith('/analisis-senal/')
     ) {
       navigate('/', { replace: true });
     }

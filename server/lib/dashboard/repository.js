@@ -42,7 +42,7 @@ export async function insertDeviceSamples(client, snapshotId, samples) {
     let p = 1;
     for (const s of chunk) {
       values.push(
-        `($${p++},$${p++},$${p++},$${p++},$${p++},$${p++},$${p++},$${p++},$${p++})`
+        `($${p++},$${p++},$${p++},$${p++},$${p++},$${p++},$${p++},$${p++},$${p++},$${p++}::jsonb)`
       );
       params.push(
         snapshotId,
@@ -53,13 +53,14 @@ export async function insertDeviceSamples(client, snapshotId, samples) {
         s.estado_conexion,
         s.power_state,
         s.rango_estado,
-        s.en_defrost ?? null
+        s.en_defrost ?? null,
+        JSON.stringify(s.telemetry ?? null)
       );
     }
     await client.query(
       `INSERT INTO dashboard_device_sample (
         snapshot_id, captured_at, imei, codigo, row_key,
-        estado_conexion, power_state, rango_estado, en_defrost
+        estado_conexion, power_state, rango_estado, en_defrost, telemetry
       ) VALUES ${values.join(',')}`,
       params
     );

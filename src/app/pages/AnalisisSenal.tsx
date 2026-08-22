@@ -1,19 +1,21 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Navigate } from 'react-router';
+import { Navigate, useNavigate, useParams } from 'react-router';
 import { useAuth } from '../AuthContext';
 import { userIsSuperAdmin } from '../modules/usuario';
 import {
   fetchSenalBehavior,
-  saveSenalUbicacion,
+  fetchSenalJob,
+  startSenalJob,
+  pauseSenalJob,
+  resumeSenalJob,
   type SenalBehaviorReport,
-  type SenalDeviceBehavior,
+  type SenalJob,
 } from '../modules/senal';
+import { AnalisisSenalDetalle } from './AnalisisSenalDetalle';
 import { useLocale } from '../i18n';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
-import { Label } from '../components/ui/label';
-import { Textarea } from '../components/ui/textarea';
 import { Badge } from '../components/ui/badge';
 import {
   Select,
@@ -31,13 +33,16 @@ import {
   TableRow,
 } from '../components/ui/table';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '../components/ui/dialog';
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '../components/ui/alert-dialog';
 import {
   RadioTower,
   RefreshCw,
@@ -46,6 +51,8 @@ import {
   Clock,
   WifiOff,
   Activity,
+  Pause,
+  Play,
 } from 'lucide-react';
 import { cn } from '../components/ui/utils';
 
@@ -54,6 +61,19 @@ function fmtMin(min: number): string {
   const h = Math.floor(min / 60);
   const m = min % 60;
   return m ? `${h}h ${m}m` : `${h}h`;
+}
+
+function fmtLima(iso: string | null | undefined, locale: string): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString(locale === 'en' ? 'en-US' : 'es-PE', {
+    timeZone: 'America/Lima',
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 function statusBadge(estado: string) {
@@ -120,6 +140,8 @@ function HourBars({
 export default function AnalisisSenal() {
   const { user } = useAuth();
   const { t, locale } = useLocale();
+  const navigate = useNavigate();
+  const { imei } = useParams<{ imei?: string }>();
   const isSuper = userIsSuperAdmin(user);
 
   const now = new Date();
@@ -129,41 +151,82 @@ export default function AnalisisSenal() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
-  const [selected, setSelected] = useState<SenalDeviceBehavior | null>(null);
-  const [savingUbi, setSavingUbi] = useState(false);
+  const [job, setJob] = useState<SenalJob | null>(null);
 
-  const [ubiForm, setUbiForm] = useState({
-    pais: '',
-    departamento: '',
-    provincia: '',
-    distrito: '',
-    zona: '',
-    observaciones: '',
-  });
-
-  const load = useCallback(async () => {
-    if (!user?.username || !isSuper) return;
-    setLoading(true);
+  const loadCache = useCallback(async (silent = false) => {
+    if (!user?.username || !isSuper || imei) return;
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const data = await fetchSenalBehavior({
         anio,
         mes,
+        mode: 'cache',
         username: user.username,
         superUser: true,
       });
       setReport(data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('senal.loadError'));
-      setReport(null);
+      if (!silent) {
+        setError(e instanceof Error ? e.message : t('senal.loadError'));
+        setReport(null);
+      }
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
-  }, [user?.username, isSuper, anio, mes, t]);
+  }, [user?.username, isSuper, anio, mes, t, imei]);
+
+  const refreshJob = useCallback(async () => {
+    if (!user?.username || !isSuper) return;
+    try {
+      setJob(await fetchSenalJob(user.username, true));
+    } catch {
+      /* ignore */
+    }
+  }, [user?.username, isSuper]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void loadCache(false);
+    void refreshJob();
+  }, [loadCache, refreshJob]);
+
+  useEffect(() => {
+    if (job?.status !== 'running') return;
+    const id = window.setInterval(() => {
+      void refreshJob();
+      void loadCache(true);
+    }, 2500);
+    return () => window.clearInterval(id);
+  }, [job?.status, refreshJob, loadCache]);
+
+  const runJob = async (fromScratch = false) => {
+    if (!user?.username) return;
+    try {
+      const next = await startSenalJob(user.username, true, fromScratch);
+      setJob(next);
+      if (fromScratch) void loadCache(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('senal.loadError'));
+    }
+  };
+
+  const pauseJob = async () => {
+    if (!user?.username) return;
+    try {
+      setJob(await pauseSenalJob(user.username, true));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('senal.loadError'));
+    }
+  };
+
+  const resumeJob = async () => {
+    if (!user?.username) return;
+    try {
+      setJob(await resumeSenalJob(user.username, true));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('senal.loadError'));
+    }
+  };
 
   const filteredDevices = useMemo(() => {
     if (!report) return [];
@@ -173,6 +236,7 @@ export default function AnalisisSenal() {
       const ubi = d.ubicacion;
       return (
         d.imei.toLowerCase().includes(q) ||
+        (d.nombre ?? '').toLowerCase().includes(q) ||
         (d.codigo ?? '').toLowerCase().includes(q) ||
         (ubi?.pais ?? '').toLowerCase().includes(q) ||
         (ubi?.departamento ?? '').toLowerCase().includes(q) ||
@@ -181,46 +245,6 @@ export default function AnalisisSenal() {
       );
     });
   }, [report, filter]);
-
-  const openDetail = (d: SenalDeviceBehavior) => {
-    setSelected(d);
-    setUbiForm({
-      pais: d.ubicacion?.pais ?? '',
-      departamento: d.ubicacion?.departamento ?? '',
-      provincia: d.ubicacion?.provincia ?? '',
-      distrito: d.ubicacion?.distrito ?? '',
-      zona: d.ubicacion?.zona ?? '',
-      observaciones: d.ubicacion?.observaciones ?? '',
-    });
-  };
-
-  const saveUbi = async () => {
-    if (!selected || !user?.username) return;
-    setSavingUbi(true);
-    setError(null);
-    try {
-      const saved = await saveSenalUbicacion(
-        selected.imei,
-        { ...ubiForm, codigo: selected.codigo ?? undefined },
-        user.username,
-        true
-      );
-      setReport((prev) => {
-        if (!prev) return prev;
-        return {
-          ...prev,
-          devices: prev.devices.map((d) =>
-            d.imei === selected.imei ? { ...d, ubicacion: saved } : d
-          ),
-        };
-      });
-      setSelected((prev) => (prev ? { ...prev, ubicacion: saved } : prev));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : t('senal.saveError'));
-    } finally {
-      setSavingUbi(false);
-    }
-  };
 
   const downloadReport = () => {
     if (!report) return;
@@ -237,6 +261,10 @@ export default function AnalisisSenal() {
 
   if (!isSuper) {
     return <Navigate to="/" replace />;
+  }
+
+  if (imei && user?.username) {
+    return <AnalisisSenalDetalle imei={imei} username={user.username} />;
   }
 
   const years = Array.from({ length: 4 }, (_, i) => now.getFullYear() - i);
@@ -269,6 +297,15 @@ export default function AnalisisSenal() {
               {report.ensureStatus && (
                 <Badge variant="outline" className="text-[10px] font-mono">
                   {report.ensureStatus}
+                  {report.processedNew
+                    ? ` +${report.processedNew}`
+                    : ''}
+                </Badge>
+              )}
+              {report.lastProcessedAt && (
+                <Badge variant="outline" className="text-[10px]">
+                  {t('senal.updatedUntil')}{' '}
+                  {fmtLima(report.lastProcessedAt, locale)}
                 </Badge>
               )}
             </div>
@@ -301,10 +338,49 @@ export default function AnalisisSenal() {
               ))}
             </SelectContent>
           </Select>
-          <Button variant="outline" onClick={() => void load()} disabled={loading}>
+          <Button
+            variant="outline"
+            onClick={() => void loadCache(false)}
+            disabled={loading}
+          >
             <RefreshCw className={cn('h-4 w-4 mr-2', loading && 'animate-spin')} />
             {t('common.update')}
           </Button>
+          {job?.status === 'running' ? (
+            <Button variant="outline" onClick={() => void pauseJob()}>
+              <Pause className="h-4 w-4 mr-2" />
+              {t('senal.pause')}
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              onClick={() => void (job?.status === 'paused' ? resumeJob() : runJob(false))}
+            >
+              <Play className="h-4 w-4 mr-2" />
+              {job?.status === 'paused' ? t('senal.resume') : t('senal.startJob')}
+            </Button>
+          )}
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="outline">
+                {t('senal.fromScratch')}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>{t('senal.fromScratchTitle')}</AlertDialogTitle>
+                <AlertDialogDescription>
+                  {t('senal.fromScratchHint')}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+                <AlertDialogAction onClick={() => void runJob(true)}>
+                  {t('senal.fromScratchConfirm')}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
           <Button
             variant="outline"
             onClick={downloadReport}
@@ -319,6 +395,40 @@ export default function AnalisisSenal() {
       {error && (
         <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
           {error}
+        </div>
+      )}
+
+      {job && (
+        <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm flex flex-wrap items-center gap-x-4 gap-y-1">
+          <Badge
+            className={cn(
+              'text-[10px]',
+              job.status === 'running' && 'bg-sky-700',
+              job.status === 'paused' && 'bg-amber-700',
+              job.status === 'done' && 'bg-emerald-700'
+            )}
+          >
+            {t(`senal.jobStatus.${job.status}`) || job.status}
+          </Badge>
+          <span>
+            {t('senal.jobDevices')}: {job.devicesSeen}
+          </span>
+          <span className="text-muted-foreground">
+            {t('senal.jobSamples')}: {job.processed}
+          </span>
+          {(job.lastNombre || job.lastImei) && (
+            <span className="text-muted-foreground truncate max-w-[280px]">
+              {t('senal.jobLastDevice')}: {job.lastNombre || job.lastImei}
+            </span>
+          )}
+          {job.status === 'running' && (
+            <span className="text-muted-foreground w-full sm:w-auto">
+              {t('senal.jobLiveHint')}
+            </span>
+          )}
+          {job.error && (
+            <span className="text-destructive w-full sm:w-auto">{job.error}</span>
+          )}
         </div>
       )}
 
@@ -442,24 +552,38 @@ export default function AnalisisSenal() {
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead>{t('senal.deviceName')}</TableHead>
                       <TableHead>IMEI</TableHead>
+                      <TableHead>{t('senal.lastDisconnect')}</TableHead>
                       <TableHead>{t('senal.location')}</TableHead>
                       <TableHead>{t('common.status')}</TableHead>
                       <TableHead className="text-right">{t('senal.waitEps')}</TableHead>
-                      <TableHead className="text-right">{t('senal.waitAvg')}</TableHead>
                       <TableHead className="text-right">{t('senal.offlineEps')}</TableHead>
-                      <TableHead className="text-right">{t('senal.offlineAvg')}</TableHead>
                       <TableHead />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {filteredDevices.map((d) => (
-                      <TableRow key={d.imei}>
+                      <TableRow
+                        key={d.imei}
+                        className="cursor-pointer"
+                        onClick={() => navigate(`/analisis-senal/${d.imei}`)}
+                      >
+                        <TableCell className="text-sm font-medium">
+                          {d.nombre || (
+                            <span className="text-muted-foreground font-normal">
+                              {t('senal.unnamed')}
+                            </span>
+                          )}
+                        </TableCell>
                         <TableCell className="font-mono text-xs">
                           <div>{d.imei}</div>
                           {d.codigo && (
                             <div className="text-muted-foreground">{d.codigo}</div>
                           )}
+                        </TableCell>
+                        <TableCell className="text-xs tabular-nums whitespace-nowrap">
+                          {fmtLima(d.lastDisconnectAt, locale)}
                         </TableCell>
                         <TableCell className="text-xs max-w-[160px]">
                           {[
@@ -473,24 +597,38 @@ export default function AnalisisSenal() {
                             <span className="text-muted-foreground">—</span>
                           )}
                         </TableCell>
-                        <TableCell>{statusBadge(d.lastEstado)}</TableCell>
+                        <TableCell>
+                          {statusBadge(d.lastEstado)}
+                          {d.neverDisconnected && (
+                            <div className="text-[10px] text-muted-foreground mt-0.5">
+                              {t('senal.neverDisconnected')}
+                            </div>
+                          )}
+                        </TableCell>
                         <TableCell className="text-right tabular-nums">
                           {d.waitEpisodes}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums text-xs">
-                          {d.waitAvgMin ? fmtMin(d.waitAvgMin) : '—'}
+                          {d.waitAvgMin ? (
+                            <div className="text-[10px] text-muted-foreground">
+                              {fmtMin(d.waitAvgMin)}
+                            </div>
+                          ) : null}
                         </TableCell>
                         <TableCell className="text-right tabular-nums">
                           {d.offlineEpisodes}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums text-xs">
-                          {d.offlineAvgMin ? fmtMin(d.offlineAvgMin) : '—'}
+                          {d.offlineAvgMin ? (
+                            <div className="text-[10px] text-muted-foreground">
+                              {fmtMin(d.offlineAvgMin)}
+                            </div>
+                          ) : null}
                         </TableCell>
                         <TableCell>
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => openDetail(d)}
+                            onClick={(ev) => {
+                              ev.stopPropagation();
+                              navigate(`/analisis-senal/${d.imei}`);
+                            }}
                           >
                             {t('senal.detail')}
                           </Button>
@@ -510,148 +648,6 @@ export default function AnalisisSenal() {
           {t('common.loading')}
         </p>
       )}
-
-      <Dialog open={selected != null} onOpenChange={(o) => !o && setSelected(null)}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{t('senal.detailTitle')}</DialogTitle>
-            <DialogDescription className="font-mono text-xs">
-              {selected?.imei}
-              {selected?.codigo ? ` · ${selected.codigo}` : ''}
-            </DialogDescription>
-          </DialogHeader>
-          {selected && (
-            <div className="space-y-4 py-1">
-              <div className="grid grid-cols-2 gap-2 text-sm">
-                <div className="rounded-md border p-2">
-                  <div className="text-xs text-muted-foreground">{t('senal.wait')}</div>
-                  <div className="font-medium">
-                    {selected.waitEpisodes} · avg {fmtMin(selected.waitAvgMin)}
-                  </div>
-                </div>
-                <div className="rounded-md border p-2">
-                  <div className="text-xs text-muted-foreground">{t('senal.offline')}</div>
-                  <div className="font-medium">
-                    {selected.offlineEpisodes} · avg{' '}
-                    {fmtMin(selected.offlineAvgMin)}
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <Label className="text-xs">{t('senal.episodes')}</Label>
-                <ul className="mt-1 max-h-36 overflow-y-auto border rounded-md divide-y text-xs">
-                  {selected.episodes.length === 0 ? (
-                    <li className="p-2 text-muted-foreground">{t('senal.noEpisodes')}</li>
-                  ) : (
-                    selected.episodes.slice(0, 40).map((e, i) => (
-                      <li key={`${e.startedAt}-${i}`} className="px-2 py-1.5 flex justify-between gap-2">
-                        <span>
-                          <Badge
-                            variant="secondary"
-                            className={cn(
-                              'text-[10px] mr-1',
-                              e.tipo === 'wait' ? 'bg-amber-100' : 'bg-red-100'
-                            )}
-                          >
-                            {e.tipo}
-                          </Badge>
-                          {String(e.startHour).padStart(2, '0')}:00 →{' '}
-                          {String(e.endHour).padStart(2, '0')}:00
-                          {e.recovered ? '' : e.open ? ' (open)' : ''}
-                        </span>
-                        <span className="tabular-nums text-muted-foreground">
-                          {fmtMin(e.durationMin)}
-                        </span>
-                      </li>
-                    ))
-                  )}
-                </ul>
-              </div>
-
-              <div className="space-y-2 border-t pt-3">
-                <p className="text-sm font-medium flex items-center gap-1.5">
-                  <MapPin className="h-3.5 w-3.5" />
-                  {t('senal.geoTitle')}
-                </p>
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="space-y-1">
-                    <Label className="text-xs">{t('senal.country')}</Label>
-                    <Input
-                      value={ubiForm.pais}
-                      onChange={(e) =>
-                        setUbiForm((f) => ({ ...f, pais: e.target.value }))
-                      }
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">{t('senal.department')}</Label>
-                    <Input
-                      value={ubiForm.departamento}
-                      onChange={(e) =>
-                        setUbiForm((f) => ({
-                          ...f,
-                          departamento: e.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">{t('senal.province')}</Label>
-                    <Input
-                      value={ubiForm.provincia}
-                      onChange={(e) =>
-                        setUbiForm((f) => ({ ...f, provincia: e.target.value }))
-                      }
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">{t('senal.district')}</Label>
-                    <Input
-                      value={ubiForm.distrito}
-                      onChange={(e) =>
-                        setUbiForm((f) => ({ ...f, distrito: e.target.value }))
-                      }
-                    />
-                  </div>
-                  <div className="space-y-1 col-span-2">
-                    <Label className="text-xs">{t('senal.zone')}</Label>
-                    <Input
-                      value={ubiForm.zona}
-                      onChange={(e) =>
-                        setUbiForm((f) => ({ ...f, zona: e.target.value }))
-                      }
-                      placeholder={t('senal.zonePlaceholder')}
-                    />
-                  </div>
-                  <div className="space-y-1 col-span-2">
-                    <Label className="text-xs">{t('senal.observations')}</Label>
-                    <Textarea
-                      rows={3}
-                      value={ubiForm.observaciones}
-                      onChange={(e) =>
-                        setUbiForm((f) => ({
-                          ...f,
-                          observaciones: e.target.value,
-                        }))
-                      }
-                      placeholder={t('senal.observationsPlaceholder')}
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setSelected(null)}>
-              {t('common.cancel')}
-            </Button>
-            <Button onClick={() => void saveUbi()} disabled={savingUbi}>
-              {savingUbi ? t('common.saving') : t('common.save')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

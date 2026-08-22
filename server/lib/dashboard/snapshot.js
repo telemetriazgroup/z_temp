@@ -9,6 +9,7 @@ import {
   pruneDashboardHistory,
 } from './repository.js';
 import { resolveUserEffectiveImeis } from '../gruposEquiposRepository.js';
+import { pickTelemetryFromDispositivo } from '../senal/telemetry.js';
 
 function conexionOf(d) {
   const s = String(d.estado_conexion ?? '').toLowerCase();
@@ -111,6 +112,7 @@ export function computeFleetCounts(dispositivos, configMap = null) {
       power_state: power,
       rango_estado: rango,
       en_defrost: defrost,
+      telemetry: pickTelemetryFromDispositivo(d, captured_at),
     });
   }
 

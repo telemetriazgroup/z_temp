@@ -1307,6 +1307,8 @@ app.listen(PORT, '0.0.0.0', () => {
       await ensureSenalSchema().catch((e) =>
         console.warn('[senal] esquema diferido:', e.message)
       );
+      const { startSenalJobRunner } = await import('./lib/senal/jobRunner.js');
+      startSenalJobRunner();
       setTimeout(() => {
         captureDashboardSnapshotSafe()
           .then(async (r) => {

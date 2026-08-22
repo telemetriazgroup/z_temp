@@ -1,5 +1,6 @@
 import { query } from '../db.js';
 import { listSenalUbicaciones } from './ubicacionRepository.js';
+import { classifySenalTipo, mergeAndClassifyLazos, countLazosByTipo } from './classify.js';
 
 const TZ = 'America/Lima';
 
@@ -93,17 +94,20 @@ export function buildEpisodesFromSamples(samples) {
       const startMs = open.startedAt.getTime();
       const endMs = endAt.getTime();
       const durationMin = Math.max(0, Math.round((endMs - startMs) / 60_000));
-      episodes.push({
-        tipo: open.tipo,
-        startedAt: open.startedAt.toISOString(),
-        endedAt: endAt.toISOString(),
-        durationMin,
-        recovered,
-        startHour: hourInTz(open.startedAt),
-        endHour: hourInTz(endAt),
-      });
-      const buckets = open.tipo === 'wait' ? hourlyWait : hourlyOffline;
-      addIntervalToHourBuckets(open.startedAt, endAt, buckets);
+      const tipo = classifySenalTipo(durationMin);
+      if (tipo) {
+        episodes.push({
+          tipo,
+          startedAt: open.startedAt.toISOString(),
+          endedAt: endAt.toISOString(),
+          durationMin,
+          recovered,
+          startHour: hourInTz(open.startedAt),
+          endHour: hourInTz(endAt),
+        });
+        const buckets = tipo === 'wait' ? hourlyWait : hourlyOffline;
+        addIntervalToHourBuckets(open.startedAt, endAt, buckets);
+      }
       open = null;
     };
 
@@ -115,11 +119,7 @@ export function buildEpisodesFromSamples(samples) {
 
       if (bad) {
         if (!open) {
-          open = { tipo: estado, startedAt: at };
-        } else if (open.tipo !== estado) {
-          // wait→offline or offline→wait: close previous as non-recovered transition
-          closeOpen(at, false);
-          open = { tipo: estado, startedAt: at };
+          open = { tipo: 'wait', startedAt: at };
         }
         // attribute gap to next sample for open streak later
       } else if (estado === 'online') {
@@ -145,30 +145,26 @@ export function buildEpisodesFromSamples(samples) {
         0,
         Math.round((endAt.getTime() - startMs) / 60_000)
       );
-      episodes.push({
-        tipo: open.tipo,
-        startedAt: open.startedAt.toISOString(),
-        endedAt: endAt.toISOString(),
-        durationMin,
-        recovered: false,
-        open: true,
-        startHour: hourInTz(open.startedAt),
-        endHour: hourInTz(endAt),
-      });
-      const buckets = open.tipo === 'wait' ? hourlyWait : hourlyOffline;
-      addIntervalToHourBuckets(open.startedAt, endAt, buckets);
+      const tipo = classifySenalTipo(durationMin);
+      if (tipo) {
+        episodes.push({
+          tipo,
+          startedAt: open.startedAt.toISOString(),
+          endedAt: endAt.toISOString(),
+          durationMin,
+          recovered: false,
+          open: true,
+          startHour: hourInTz(open.startedAt),
+          endHour: hourInTz(endAt),
+        });
+        const buckets = tipo === 'wait' ? hourlyWait : hourlyOffline;
+        addIntervalToHourBuckets(open.startedAt, endAt, buckets);
+      }
       open = null;
     }
 
-    const waitEps = episodes.filter((e) => e.tipo === 'wait');
-    const offlineEps = episodes.filter((e) => e.tipo === 'offline');
-    const waitRecovered = waitEps.filter((e) => e.recovered);
-    const offlineRecovered = offlineEps.filter((e) => e.recovered);
-
-    const avg = (arr) =>
-      arr.length
-        ? Math.round(arr.reduce((s, e) => s + e.durationMin, 0) / arr.length)
-        : 0;
+    const lazos = mergeAndClassifyLazos(episodes);
+    const counts = countLazosByTipo(lazos);
 
     const last = list[list.length - 1];
     devices.push({
@@ -178,17 +174,15 @@ export function buildEpisodesFromSamples(samples) {
       samples: list.length,
       lastEstado: String(last?.estado_conexion ?? '').toLowerCase(),
       lastCapturedAt: last ? new Date(last.captured_at).toISOString() : null,
-      waitEpisodes: waitEps.length,
-      waitRecovered: waitRecovered.length,
-      waitAvgMin: avg(waitRecovered.length ? waitRecovered : waitEps),
-      waitTotalMin: waitEps.reduce((s, e) => s + e.durationMin, 0),
-      offlineEpisodes: offlineEps.length,
-      offlineRecovered: offlineRecovered.length,
-      offlineAvgMin: avg(
-        offlineRecovered.length ? offlineRecovered : offlineEps
-      ),
-      offlineTotalMin: offlineEps.reduce((s, e) => s + e.durationMin, 0),
-      episodes,
+      waitEpisodes: counts.waitEpisodes,
+      waitRecovered: counts.waitRecovered,
+      waitAvgMin: counts.waitAvgMin,
+      waitTotalMin: counts.waitTotalMin,
+      offlineEpisodes: counts.offlineEpisodes,
+      offlineRecovered: counts.offlineRecovered,
+      offlineAvgMin: counts.offlineAvgMin,
+      offlineTotalMin: counts.offlineTotalMin,
+      episodes: lazos,
     });
   }
 

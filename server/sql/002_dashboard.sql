@@ -47,6 +47,10 @@ CREATE INDEX IF NOT EXISTS idx_dashboard_device_imei_time
 CREATE INDEX IF NOT EXISTS idx_dashboard_device_snapshot
   ON dashboard_device_sample (snapshot_id);
 
+-- Última lectura operativa (set, suministro, retorno, USDA, power) por muestra.
+ALTER TABLE dashboard_device_sample
+  ADD COLUMN IF NOT EXISTS telemetry JSONB;
+
 -- Equipos conocidos: primera aparición + cola de revisión rápida.
 CREATE TABLE IF NOT EXISTS dashboard_known_device (
   row_key TEXT PRIMARY KEY,
