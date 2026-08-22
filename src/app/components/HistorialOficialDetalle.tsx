@@ -28,12 +28,9 @@ import { cn } from './ui/utils';
 import { ReporteInternoModal } from './ReporteInternoModal';
 import { ReporteCaModal } from './ReporteCaModal';
 import {
-  datosAGrafica,
   ordenarTablaDesc,
   filtrarDatosPorRangoMs,
   datosCubrenRangoMs,
-  TABLA_HISTORIAL_COLUMNAS,
-  celdaHistorial,
   claveFilaHistorial,
   tendenciaEnTablaDesc,
 } from '../lib/historialOficial';
@@ -52,12 +49,30 @@ import {
   rangoUltimasHorasInTz,
   resolveDisplayTimeZone,
 } from '../lib/telemetryTimezone';
-import { normalizeTemperaturaUnidad } from '../lib/temperatureUnit';
+import {
+  normalizeTemperaturaUnidad,
+  unidadSimbolo,
+} from '../lib/temperatureUnit';
 import { TempConTendencia } from './TempConTendencia';
 import { useAuth } from '../AuthContext';
 import { postAuditEvent, clampRangeToAccess, userAccessFromForImei } from '../modules/usuario';
 import { AUDIT_ACTIONS } from '../modules/usuario/auditActions';
+import {
+  celdaVistaHistorial,
+  datosAGraficaDinamica,
+  defaultHistorialVistaPrefs,
+  fetchHistorialVistaPrefs,
+  fieldDefForTableKey,
+  HISTORIAL_PRESETS,
+  readVistaPrefsLocal,
+  resolveTableColumnKeys,
+  saveHistorialVistaPrefs,
+  seriesFromChartKeys,
+  tableColumnHeader,
+  type HistorialVistaPrefs,
+} from '../modules/historialVista';
 import { HistorialReeferChart } from './HistorialReeferChart';
+import { HistorialVistaConfigDialog } from './HistorialVistaConfigDialog';
 import {
   RefreshCw,
   FileSpreadsheet,
@@ -69,6 +84,7 @@ import {
   FileBarChart2,
   Braces,
   FlaskConical,
+  Settings2,
 } from 'lucide-react';
 
 const HORAS_DEFECTO = 12;
@@ -132,8 +148,34 @@ export function HistorialOficialDetalle({
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(25);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [vistaPrefs, setVistaPrefs] = useState<HistorialVistaPrefs>(() => {
+    const u = user?.username;
+    if (u) {
+      return readVistaPrefsLocal(u, imei) ?? defaultHistorialVistaPrefs();
+    }
+    return defaultHistorialVistaPrefs();
+  });
+  const [configOpen, setConfigOpen] = useState(false);
+  const [configSaving, setConfigSaving] = useState(false);
   const respuestaRef = useRef(respuesta);
   respuestaRef.current = respuesta;
+
+  useEffect(() => {
+    let cancelled = false;
+    const username = user?.username;
+    if (!username) {
+      setVistaPrefs(defaultHistorialVistaPrefs());
+      return;
+    }
+    const local = readVistaPrefsLocal(username, imei);
+    if (local) setVistaPrefs(local);
+    void fetchHistorialVistaPrefs({ username, imei, codigo }).then((prefs) => {
+      if (!cancelled) setVistaPrefs(prefs);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.username, imei, codigo]);
 
   const cargarRango = useCallback(
     async (fi: Date, ff: Date, opts?: { usarCacheSiCubre?: boolean }) => {
@@ -299,9 +341,70 @@ export function HistorialOficialDetalle({
     setPage(1);
   }, [datosCompletos.length, pageSize]);
 
+  const tableKeysResolved = useMemo(
+    () => resolveTableColumnKeys(vistaPrefs.tableKeys),
+    [vistaPrefs.tableKeys]
+  );
+
+  const chartSeries = useMemo(() => {
+    const sym = unidadSimbolo(tempUnidad);
+    return seriesFromChartKeys(vistaPrefs.chartKeys, {
+      colorOverrides: vistaPrefs.chartColors,
+      labelKeys: vistaPrefs.labelKeys,
+    }).map((s) => (s.axis === 'temp' ? { ...s, unit: sym } : s));
+  }, [
+    vistaPrefs.chartKeys,
+    vistaPrefs.chartColors,
+    vistaPrefs.labelKeys,
+    tempUnidad,
+  ]);
+
   const chartData = useMemo(
-    () => datosAGrafica(datosCompletos, zonaHoraria),
-    [datosCompletos, zonaHoraria]
+    () =>
+      datosAGraficaDinamica(
+        datosCompletos,
+        vistaPrefs.chartKeys,
+        zonaHoraria,
+        tempUnidad
+      ),
+    [datosCompletos, vistaPrefs.chartKeys, zonaHoraria, tempUnidad]
+  );
+
+  const presetLabel =
+    vistaPrefs.preset === 'CUSTOM'
+      ? 'Personalizado'
+      : HISTORIAL_PRESETS[vistaPrefs.preset]?.label ?? vistaPrefs.preset;
+
+  const guardarVistaPrefs = useCallback(
+    async (prefs: HistorialVistaPrefs) => {
+      const username = user?.username;
+      if (!username) return;
+      setConfigSaving(true);
+      try {
+        const saved = await saveHistorialVistaPrefs({
+          username,
+          imei,
+          codigo,
+          prefs,
+        });
+        setVistaPrefs(saved);
+        setConfigOpen(false);
+      } catch (e) {
+        setExportError(
+          e instanceof Error
+            ? e.message
+            : 'No se pudo guardar la configuración de vista.'
+        );
+      } finally {
+        setConfigSaving(false);
+      }
+    },
+    [user?.username, imei, codigo]
+  );
+
+  const exportOpts = useMemo(
+    () => ({ tableKeys: vistaPrefs.tableKeys, unidad: tempUnidad }),
+    [vistaPrefs.tableKeys, tempUnidad]
   );
 
   const sinRegistrosApi =
@@ -379,6 +482,16 @@ export function HistorialOficialDetalle({
               type="button"
               size="sm"
               variant="outline"
+              onClick={() => setConfigOpen(true)}
+              title={`Vista: ${presetLabel}`}
+            >
+              <Settings2 className="h-4 w-4 mr-1" />
+              Configurar vista
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
               disabled={cargando}
               onClick={() => void cargarUltimasHoras()}
               title={`Recargar últimas ${HORAS_DEFECTO} h`}
@@ -420,7 +533,8 @@ export function HistorialOficialDetalle({
                       imei,
                       codigo,
                       rangoExport,
-                      zonaHoraria
+                      zonaHoraria,
+                      exportOpts
                     ),
                   {
                     action: AUDIT_ACTIONS.DOWNLOAD_HISTORIAL_CSV,
@@ -446,7 +560,8 @@ export function HistorialOficialDetalle({
                       imei,
                       codigo,
                       rangoExport,
-                      zonaHoraria
+                      zonaHoraria,
+                      exportOpts
                     ),
                   {
                     action: AUDIT_ACTIONS.DOWNLOAD_HISTORIAL_XLSX,
@@ -473,7 +588,8 @@ export function HistorialOficialDetalle({
                       codigo,
                       nombreContenedor,
                       rangoExport,
-                      zonaHoraria
+                      zonaHoraria,
+                      exportOpts
                     ),
                   {
                     action: AUDIT_ACTIONS.DOWNLOAD_HISTORIAL_PDF,
@@ -634,13 +750,20 @@ export function HistorialOficialDetalle({
               ) : (
                 <div className="space-y-8">
                   <section className="space-y-2">
-                    <h3 className="text-sm font-medium">Gráfica histórica</h3>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h3 className="text-sm font-medium">Gráfica histórica</h3>
+                      <p className="text-xs text-muted-foreground">
+                        Perfil: {presetLabel}
+                      </p>
+                    </div>
                     <HistorialReeferChart
                       data={chartData}
+                      series={chartSeries}
                       imei={imei}
                       nombreContenedor={nombreContenedor}
                       rangoLabel={rangoGraficaLabel}
                       zonaHoraria={zonaHoraria}
+                      tempUnidad={tempUnidad}
                     />
                   </section>
 
@@ -709,14 +832,15 @@ export function HistorialOficialDetalle({
                       <Table>
                         <TableHeader>
                           <TableRow>
-                            {TABLA_HISTORIAL_COLUMNAS.map((c) => (
+                            <TableHead className="whitespace-nowrap text-xs sticky left-0 bg-card z-10">
+                              Fecha
+                            </TableHead>
+                            {tableKeysResolved.map((key) => (
                               <TableHead
-                                key={c.key}
+                                key={key}
                                 className="whitespace-nowrap text-xs"
                               >
-                                {c.esTemperatura
-                                  ? `${c.header} (${tempUnidad === 'F' ? '°F' : '°C'})`
-                                  : c.header}
+                                {tableColumnHeader(key, tempUnidad)}
                               </TableHead>
                             ))}
                           </TableRow>
@@ -728,26 +852,35 @@ export function HistorialOficialDetalle({
                             <TableRow
                               key={claveFilaHistorial(row, idxGlobal)}
                             >
-                              {TABLA_HISTORIAL_COLUMNAS.map((c) => {
-                                const texto = celdaHistorial(
+                              <TableCell className="text-xs tabular-nums whitespace-nowrap sticky left-0 bg-card z-10">
+                                {celdaVistaHistorial(
                                   row,
-                                  c.key,
+                                  'fecha_registro',
                                   zonaHoraria,
-                                  { unidad: tempUnidad }
+                                  tempUnidad
+                                )}
+                              </TableCell>
+                              {tableKeysResolved.map((key) => {
+                                const texto = celdaVistaHistorial(
+                                  row,
+                                  key,
+                                  zonaHoraria,
+                                  tempUnidad
                                 );
+                                const def = fieldDefForTableKey(key);
                                 const tendencia =
-                                  c.conTendencia &&
-                                  (c.key === 'return_air' ||
-                                    c.key === 'temp_supply_1')
+                                  def?.conTendencia &&
+                                  (key === 'return_air' ||
+                                    key === 'temp_supply_1')
                                     ? tendenciaEnTablaDesc(
                                         filasTabla,
                                         idxGlobal,
-                                        c.key
+                                        key
                                       )
                                     : undefined;
                                 return (
                               <TableCell
-                                key={c.key}
+                                key={key}
                                 className="text-xs tabular-nums"
                               >
                                 {tendencia ? (
@@ -774,6 +907,13 @@ export function HistorialOficialDetalle({
           )}
         </CardContent>
       </Card>
+      <HistorialVistaConfigDialog
+        open={configOpen}
+        onOpenChange={setConfigOpen}
+        initial={vistaPrefs}
+        saving={configSaving}
+        onSave={guardarVistaPrefs}
+      />
       <ReporteInternoModal
         open={reporteInternoOpen}
         onOpenChange={setReporteInternoOpen}

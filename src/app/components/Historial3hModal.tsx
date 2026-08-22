@@ -22,20 +22,32 @@ import {
 } from './ui/table';
 import { HistorialReeferChart } from './HistorialReeferChart';
 import {
-  celdaHistorial,
   claveFilaHistorial,
-  datosAGrafica,
   filtrarDatosUltimasHoras,
   muestrearHistorialCada30Min,
-  TABLA_HISTORIAL_COLUMNAS,
   tendenciaEnTablaDesc,
 } from '../lib/historialOficial';
 import { resolveDisplayTimeZone } from '../lib/telemetryTimezone';
-import { normalizeTemperaturaUnidad } from '../lib/temperatureUnit';
+import {
+  normalizeTemperaturaUnidad,
+  unidadSimbolo,
+} from '../lib/temperatureUnit';
 import { TempConTendencia } from './TempConTendencia';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 import { useAuth } from '../AuthContext';
 import { postAuditEvent } from '../modules/usuario';
+import {
+  celdaVistaHistorial,
+  datosAGraficaDinamica,
+  defaultHistorialVistaPrefs,
+  fetchHistorialVistaPrefs,
+  fieldDefForTableKey,
+  readVistaPrefsLocal,
+  resolveTableColumnKeys,
+  seriesFromChartKeys,
+  tableColumnHeader,
+  type HistorialVistaPrefs,
+} from '../modules/historialVista';
 
 const VENTANA_HORAS = 3;
 
@@ -59,6 +71,9 @@ export function Historial3hModal({ open, onOpenChange, target }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [datos, setDatos] = useState<DatoOficialHistorial[]>([]);
   const [cargadoAt, setCargadoAt] = useState<Date | null>(null);
+  const [vistaPrefs, setVistaPrefs] = useState<HistorialVistaPrefs>(
+    defaultHistorialVistaPrefs()
+  );
 
   const codigoOk =
     target != null &&
@@ -68,6 +83,26 @@ export function Historial3hModal({ open, onOpenChange, target }: Props) {
     () => resolveDisplayTimeZone(target?.zonaHoraria),
     [target?.zonaHoraria]
   );
+
+  useEffect(() => {
+    if (!open || target == null || !user?.username) {
+      setVistaPrefs(defaultHistorialVistaPrefs());
+      return;
+    }
+    let cancelled = false;
+    const local = readVistaPrefsLocal(user.username, target.imei);
+    if (local) setVistaPrefs(local);
+    void fetchHistorialVistaPrefs({
+      username: user.username,
+      imei: target.imei,
+      codigo: String(target.codigo),
+    }).then((prefs) => {
+      if (!cancelled) setVistaPrefs(prefs);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, target?.imei, target?.codigo, user?.username]);
 
   const load = useCallback(async () => {
     if (
@@ -123,9 +158,33 @@ export function Historial3hModal({ open, onOpenChange, target }: Props) {
     void load();
   }, [open, target?.imei, target?.codigo, load]);
 
+  const tableKeysResolved = useMemo(
+    () => resolveTableColumnKeys(vistaPrefs.tableKeys),
+    [vistaPrefs.tableKeys]
+  );
+
+  const chartSeries = useMemo(() => {
+    const sym = unidadSimbolo(tempUnidad);
+    return seriesFromChartKeys(vistaPrefs.chartKeys, {
+      colorOverrides: vistaPrefs.chartColors,
+      labelKeys: vistaPrefs.labelKeys,
+    }).map((s) => (s.axis === 'temp' ? { ...s, unit: sym } : s));
+  }, [
+    vistaPrefs.chartKeys,
+    vistaPrefs.chartColors,
+    vistaPrefs.labelKeys,
+    tempUnidad,
+  ]);
+
   const chartData = useMemo(
-    () => datosAGrafica(datos, target?.zonaHoraria),
-    [datos, target?.zonaHoraria]
+    () =>
+      datosAGraficaDinamica(
+        datos,
+        vistaPrefs.chartKeys,
+        target?.zonaHoraria,
+        tempUnidad
+      ),
+    [datos, vistaPrefs.chartKeys, target?.zonaHoraria, tempUnidad]
   );
 
   const tabla = useMemo(
@@ -208,10 +267,12 @@ export function Historial3hModal({ open, onOpenChange, target }: Props) {
                 <HistorialReeferChart
                   compact
                   data={chartData}
+                  series={chartSeries}
                   imei={target?.imei ?? ''}
                   nombreContenedor={tituloNombre}
                   rangoLabel={`Últimas ${VENTANA_HORAS} h`}
                   zonaHoraria={target?.zonaHoraria}
+                  tempUnidad={tempUnidad}
                 />
               </section>
 
@@ -225,14 +286,15 @@ export function Historial3hModal({ open, onOpenChange, target }: Props) {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        {TABLA_HISTORIAL_COLUMNAS.map((col) => (
+                        <TableHead className="whitespace-nowrap text-xs sticky top-0 left-0 bg-card z-10">
+                          Fecha
+                        </TableHead>
+                        {tableKeysResolved.map((key) => (
                           <TableHead
-                            key={col.key}
+                            key={key}
                             className="whitespace-nowrap text-xs sticky top-0 bg-card"
                           >
-                            {col.esTemperatura
-                              ? `${col.header} (${tempUnidad === 'F' ? '°F' : '°C'})`
-                              : col.header}
+                            {tableColumnHeader(key, tempUnidad)}
                           </TableHead>
                         ))}
                       </TableRow>
@@ -240,22 +302,30 @@ export function Historial3hModal({ open, onOpenChange, target }: Props) {
                     <TableBody>
                       {tabla.map((row, i) => (
                         <TableRow key={claveFilaHistorial(row, i)}>
-                          {TABLA_HISTORIAL_COLUMNAS.map((col) => {
-                            const texto = celdaHistorial(
+                          <TableCell className="text-xs tabular-nums whitespace-nowrap sticky left-0 bg-card">
+                            {celdaVistaHistorial(
                               row,
-                              col.key,
+                              'fecha_registro',
                               target?.zonaHoraria,
-                              { unidad: tempUnidad }
+                              tempUnidad
+                            )}
+                          </TableCell>
+                          {tableKeysResolved.map((key) => {
+                            const texto = celdaVistaHistorial(
+                              row,
+                              key,
+                              target?.zonaHoraria,
+                              tempUnidad
                             );
+                            const def = fieldDefForTableKey(key);
                             const tendencia =
-                              col.conTendencia &&
-                              (col.key === 'return_air' ||
-                                col.key === 'temp_supply_1')
-                                ? tendenciaEnTablaDesc(tabla, i, col.key)
+                              def?.conTendencia &&
+                              (key === 'return_air' || key === 'temp_supply_1')
+                                ? tendenciaEnTablaDesc(tabla, i, key)
                                 : undefined;
                             return (
                             <TableCell
-                              key={col.key}
+                              key={key}
                               className="text-xs tabular-nums whitespace-nowrap"
                             >
                               {tendencia ? (

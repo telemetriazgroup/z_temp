@@ -31,6 +31,10 @@ import {
 } from './lib/correoPermissions.js';
 import { mergeDeviceNames, getDeviceNameByImei, getDeviceNamesView, setDeviceName, getDeviceNameHistory } from './lib/deviceNamesRepository.js';
 import {
+  getHistorialVistaPrefs,
+  saveHistorialVistaPrefs,
+} from './lib/historialVistaPrefsRepository.js';
+import {
   getDeviceAlertConfigMap,
   saveDeviceAlertConfig,
 } from './lib/deviceAlertConfigRepository.js';
@@ -820,6 +824,35 @@ app.get('/reefer/api/correo/device-names/history', (req, res) => {
   }
   const limit = Math.min(Number(req.query.limit) || 20, 100);
   res.json({ ok: true, data: getDeviceNameHistory(rowKey, limit) });
+});
+
+/** Preferencias de gráfica/tabla historial por usuario × IMEI. */
+app.get('/reefer/api/correo/historial-vista', (req, res) => {
+  const actor = resolveActor(req);
+  const username = actor?.username || getUser(req);
+  if (!username || username === 'sistema') {
+    return res.status(401).json({ ok: false, error: 'Usuario requerido' });
+  }
+  const imei = req.query.imei?.toString().trim();
+  if (!imei) {
+    return res.status(400).json({ ok: false, error: 'imei es obligatorio' });
+  }
+  const data = getHistorialVistaPrefs(username, imei);
+  res.json({ ok: true, data });
+});
+
+app.put('/reefer/api/correo/historial-vista', (req, res) => {
+  const actor = resolveActor(req);
+  const username = actor?.username || getUser(req);
+  if (!username || username === 'sistema') {
+    return res.status(401).json({ ok: false, error: 'Usuario requerido' });
+  }
+  try {
+    const saved = saveHistorialVistaPrefs(username, req.body ?? {});
+    res.json({ ok: true, data: saved });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
 });
 
 app.post('/reefer/api/correo/device-names', (req, res) => {

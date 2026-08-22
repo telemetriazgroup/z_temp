@@ -270,30 +270,59 @@ export interface DatoOficialHistorial {
   id?: number;
   set_point?: number | null;
   temp_supply_1?: number | null;
+  temp_supply_2?: number | null;
   return_air?: number | null;
   evaporation_coil?: number | null;
+  condensation_coil?: number | null;
+  compress_coil_1?: number | null;
+  compress_coil_2?: number | null;
   ambient_air?: number | null;
   cargo_1_temp?: number | null;
   cargo_2_temp?: number | null;
   cargo_3_temp?: number | null;
   cargo_4_temp?: number | null;
   relative_humidity?: number | null;
+  avl?: number | null;
   line_voltage?: number | null;
   line_frequency?: number | null;
   consumption_ph_1?: number | null;
   consumption_ph_2?: number | null;
   consumption_ph_3?: number | null;
-  /** Gases CA / madurador (si vienen en historial oficial). */
   o2_reading?: number | null;
   co2_reading?: number | null;
   set_point_o2?: number | null;
   set_point_co2?: number | null;
+  evaporator_speed?: number | null;
+  condenser_speed?: number | null;
+  battery_voltage?: number | null;
+  power_kwh?: number | null;
+  supply_air_temp?: number | null;
+  return_air_temp?: number | null;
+  dl_battery_temp?: number | null;
+  power_consumption?: number | null;
+  power_consumption_avg?: number | null;
+  alarm_present?: number | null;
+  capacity_load?: number | null;
+  power_state?: number | null;
+  controlling_mode?: number | null;
+  humidity_control?: number | null;
+  humidity_set_point?: number | null;
+  fresh_air_ex_mode?: number | null;
+  defrost_term_temp?: number | null;
+  defrost_interval?: number | null;
+  sp_ethyleno?: number | null;
+  inyeccion_hora?: number | null;
+  ethylene?: number | null;
+  numero_alarma?: number | null;
+  alarma_01?: number | null;
+  alarma_02?: number | null;
   /** Fecha de registro (preferida si existe). */
   created_at?: string | null;
   /** Alternativa cuando la API no envía `created_at`. */
   fecha?: string | null;
   /** Indicador en_rango si la API lo incluye en historial. */
   en_rango?: boolean | null;
+  [key: string]: unknown;
 }
 
 export interface BuscarDatosOficialesResponse {

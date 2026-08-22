@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import type { HistorialChartRowDyn, HistorialChartSerieDyn } from '../modules/historialVista';
+import { seriesConDatosDyn } from '../modules/historialVista';
 import {
   Brush,
   CartesianGrid,
@@ -10,35 +12,47 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import type { HistorialChartRow } from '../lib/historialOficial';
-import {
-  HISTORIAL_CHART_SERIES,
-  serieVisiblePorDefecto,
-  seriesConDatos,
-  valorSerieFormateado,
-  type HistorialChartSerie,
-} from '../lib/historialChartConfig';
 import {
   formatDateTimeInTz,
   resolveDisplayTimeZone,
 } from '../lib/telemetryTimezone';
+import type { TemperaturaUnidad } from '../lib/temperatureUnit';
+import { unidadSimbolo } from '../lib/temperatureUnit';
 import { Button } from './ui/button';
+import { Checkbox } from './ui/checkbox';
 import { cn } from './ui/utils';
 import { ZoomOut } from 'lucide-react';
 
 interface Props {
-  data: HistorialChartRow[];
+  data: HistorialChartRowDyn[];
+  series: HistorialChartSerieDyn[];
   imei: string;
   nombreContenedor: string;
   rangoLabel?: string | null;
-  /** zona_horaria del listado (GMT-4 / GMT-5). */
   zonaHoraria?: string | null;
-  /** Altura reducida para modales / paneles estrechos. */
   compact?: boolean;
+  /** Unidad de display para eje Y1 (ya convertida en data si F). */
+  tempUnidad?: TemperaturaUnidad;
 }
 
 function formatFechaTooltip(ts: number, iana: string): string {
   return formatDateTimeInTz(new Date(ts), iana);
+}
+
+function valorSerieFormateado(value: unknown, unit: string): string {
+  if (value == null || (typeof value === 'number' && Number.isNaN(value))) return '—';
+  const n = Number(value);
+  if (Number.isNaN(n)) return '—';
+  if (unit === '°C' || unit === '°F') return n.toFixed(1);
+  if (unit === '%' || unit === 'A' || unit === 'V') return n.toFixed(1);
+  return n.toFixed(unit === 'ppm' ? 0 : 1);
+}
+
+function labelText(value: number, unit: string): string {
+  const n = valorSerieFormateado(value, unit);
+  if (unit === '°C' || unit === '°F') return `${n} ${unit}`;
+  if (!unit) return n;
+  return `${n} ${unit}`;
 }
 
 function ReeferTooltip({
@@ -51,13 +65,11 @@ function ReeferTooltip({
   active?: boolean;
   payload?: Array<{ dataKey?: string; value?: number | null; color?: string }>;
   label?: number;
-  series: HistorialChartSerie[];
+  series: HistorialChartSerieDyn[];
   iana: string;
 }) {
   if (!active || payload == null || label == null) return null;
-
   const byKey = new Map(payload.map((p) => [String(p.dataKey), p]));
-
   return (
     <div className="rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-xs text-white shadow-xl min-w-[180px]">
       <div className="font-semibold mb-2 border-b border-neutral-700 pb-1">
@@ -76,7 +88,7 @@ function ReeferTooltip({
               <span className="flex-1">{s.label}</span>
               <span className="font-mono tabular-nums">
                 {valorSerieFormateado(item.value, s.unit)}
-                {s.unit === '°C' ? '' : ` ${s.unit}`}
+                {s.unit === '°C' || s.unit === '°F' ? '' : ` ${s.unit}`}
               </span>
             </div>
           );
@@ -88,14 +100,17 @@ function ReeferTooltip({
 
 type BrushRange = { startIndex: number; endIndex: number };
 
-function SparseTempLabel({
+/** Etiquetas espaciadas: ~6–8 en el zoom visible, nunca todas las muestras. */
+function SparseValueLabel({
   x,
   y,
   value,
   index,
   brush,
   color,
-  offsetY = -8,
+  unit,
+  offsetY = -12,
+  maxLabels = 7,
 }: {
   x?: number;
   y?: number;
@@ -103,19 +118,23 @@ function SparseTempLabel({
   index?: number;
   brush: BrushRange;
   color: string;
+  unit: string;
   offsetY?: number;
+  maxLabels?: number;
 }) {
   if (x == null || y == null || index == null) return null;
   if (value == null || Number.isNaN(value)) return null;
   if (index < brush.startIndex || index > brush.endIndex) return null;
 
   const visibleCount = brush.endIndex - brush.startIndex + 1;
-  if (visibleCount > 60) return null;
-
-  const step = Math.max(1, Math.ceil(visibleCount / 10));
+  const target = Math.min(maxLabels, Math.max(3, Math.ceil(visibleCount / 12)));
+  const step = Math.max(1, Math.ceil(visibleCount / target));
   const rel = index - brush.startIndex;
   const isEdge = index === brush.startIndex || index === brush.endIndex;
-  if (!isEdge && rel % step !== 0) return null;
+  const isStep = rel % step === 0;
+  if (!isEdge && !isStep) return null;
+  // Evitar etiqueta pegada al borde si el step cae cerca del final
+  if (!isEdge && rel + step > visibleCount - 1 && rel !== 0) return null;
 
   return (
     <text
@@ -125,30 +144,83 @@ function SparseTempLabel({
       fontSize={10}
       fontWeight={600}
       textAnchor="middle"
-      className="pointer-events-none select-none"
+      className="pointer-events-none"
+      stroke="#fff"
+      strokeWidth={3}
+      paintOrder="stroke"
     >
-      {Number(value).toFixed(1)}
+      {labelText(Number(value), unit)}
     </text>
   );
 }
 
+function yAxisIdOf(axis: HistorialChartSerieDyn['axis']): string {
+  if (axis === 'pct') return 'pct';
+  if (axis === 'high') return 'high';
+  return 'temp';
+}
+
+function labelOffsetForRank(rank: number): number {
+  // Alterna arriba/abajo y separa verticalmente series con etiquetas.
+  const base = rank % 2 === 0 ? -14 : 18;
+  const extra = Math.floor(rank / 2) * 14;
+  return rank % 2 === 0 ? base - extra : base + extra;
+}
+
 export function HistorialReeferChart({
   data,
+  series,
   imei,
   nombreContenedor,
   rangoLabel,
   zonaHoraria,
   compact = false,
+  tempUnidad = 'C',
 }: Props) {
   const displayIana = resolveDisplayTimeZone(zonaHoraria).iana;
-  const disponibles = useMemo(() => seriesConDatos(data), [data]);
-  const tienePct = disponibles.some((s) => s.axis === 'pct');
-
-  const [visible, setVisible] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(
-      HISTORIAL_CHART_SERIES.map((s) => [s.key, serieVisiblePorDefecto(s)])
-    )
+  const disponibles = useMemo(
+    () => seriesConDatosDyn(data, series),
+    [data, series]
   );
+
+  const [enabled, setEnabled] = useState<Record<string, boolean>>({});
+  const [labelsOn, setLabelsOn] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    setEnabled((prev) => {
+      const next: Record<string, boolean> = {};
+      for (const s of series) {
+        next[s.key] = prev[s.key] ?? s.defaultVisible !== false;
+      }
+      return next;
+    });
+    setLabelsOn(() => {
+      const next: Record<string, boolean> = {};
+      for (const s of series) {
+        next[s.key] = s.showValueLabels === true;
+      }
+      return next;
+    });
+  }, [series]);
+
+  const activas = useMemo(
+    () => disponibles.filter((s) => enabled[s.key] !== false),
+    [disponibles, enabled]
+  );
+
+  const labeledActivas = useMemo(
+    () => activas.filter((s) => labelsOn[s.key] === true),
+    [activas, labelsOn]
+  );
+
+  const labelRank = useMemo(() => {
+    const m = new Map<string, number>();
+    labeledActivas.forEach((s, i) => m.set(s.key, i));
+    return m;
+  }, [labeledActivas]);
+
+  const tienePct = activas.some((s) => s.axis === 'pct');
+  const tieneHigh = activas.some((s) => s.axis === 'high');
 
   const [brush, setBrush] = useState<BrushRange>({
     startIndex: 0,
@@ -157,95 +229,73 @@ export function HistorialReeferChart({
 
   useEffect(() => {
     setBrush({ startIndex: 0, endIndex: Math.max(0, data.length - 1) });
-  }, [data]);
+  }, [data.length, imei]);
 
-  const activas = useMemo(
-    () => disponibles.filter((s) => visible[s.key] !== false),
-    [disponibles, visible]
-  );
-
-  const zoomActivo =
-    brush.startIndex > 0 || brush.endIndex < Math.max(0, data.length - 1);
-
-  const rangoMs = useMemo(() => {
-    if (data.length < 2) return 0;
-    const from = data[brush.startIndex]?.ts ?? data[0].ts;
-    const to = data[brush.endIndex]?.ts ?? data[data.length - 1].ts;
-    return Math.max(0, to - from);
-  }, [data, brush]);
+  const onBrushChange = useCallback((range: unknown) => {
+    const r = range as { startIndex?: number; endIndex?: number } | null;
+    if (r?.startIndex == null || r?.endIndex == null) return;
+    setBrush({ startIndex: r.startIndex, endIndex: r.endIndex });
+  }, []);
 
   const tickFormateador = useCallback(
-    (ts: number) => {
-      if (rangoMs > 48 * 3600000) {
-        return formatDateTimeInTz(new Date(ts), displayIana, {
-          second: undefined,
-          year: '2-digit',
-        });
-      }
-      return formatDateTimeInTz(new Date(ts), displayIana, {
-        second: undefined,
-        year: undefined,
-      });
-    },
-    [rangoMs, displayIana]
+    (ts: number) => formatDateTimeInTz(new Date(ts), displayIana, {
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    }),
+    [displayIana]
   );
 
-  const toggleSerie = (key: string) => {
-    setVisible((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
-
-  const resetZoom = () => {
-    setBrush({ startIndex: 0, endIndex: Math.max(0, data.length - 1) });
-  };
-
-  const onBrushChange = (range: { startIndex?: number; endIndex?: number } | null) => {
-    if (range?.startIndex == null || range?.endIndex == null) return;
-    setBrush({ startIndex: range.startIndex, endIndex: range.endIndex });
-  };
+  const tempLabel = `Temperature (${unidadSimbolo(tempUnidad)})`;
+  const chartH = compact ? 280 : 420;
+  const maxLabels = compact ? 5 : 7;
 
   if (data.length === 0) {
     return (
       <p className="text-sm text-muted-foreground py-8 text-center">
-        No hay puntos para graficar en el rango seleccionado.
+        Sin puntos para graficar en el rango.
       </p>
     );
   }
 
   return (
-    <div className={cn('space-y-3', compact && 'space-y-2')}>
-      <div className="text-center space-y-1">
-        <h3 className={cn('font-semibold leading-snug', compact ? 'text-xs' : 'text-sm')}>
-          Reefer Monitoring Data {imei}({nombreContenedor})
-        </h3>
-        {rangoLabel != null && rangoLabel !== '' && (
-          <p className="text-xs text-muted-foreground">Search by Date: {rangoLabel}</p>
-        )}
-        {!compact && (
-          <p className="text-[11px] text-muted-foreground">
-            Use la barra inferior para zoom · etiquetas de Suministro / Retorno al acercar
-          </p>
-        )}
+    <div className={cn('w-full', compact ? 'space-y-2' : 'space-y-3')}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-xs text-muted-foreground">
+          {nombreContenedor}
+          {rangoLabel ? ` · ${rangoLabel}` : ''}
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 text-xs"
+          onClick={() =>
+            setBrush({ startIndex: 0, endIndex: Math.max(0, data.length - 1) })
+          }
+        >
+          <ZoomOut className="h-3.5 w-3.5 mr-1" />
+          Reset zoom
+        </Button>
       </div>
 
-      <div className={cn('flex gap-3', compact ? 'flex-col' : 'flex-col lg:flex-row')}>
-        <div className="flex-1 min-w-0 space-y-2">
-          {zoomActivo && (
-            <div className="flex justify-end">
-              <Button type="button" variant="outline" size="sm" onClick={resetZoom}>
-                <ZoomOut className="h-3.5 w-3.5 mr-1.5" />
-                Restablecer zoom
-              </Button>
-            </div>
-          )}
-          <div className={compact ? 'h-[260px] w-full min-h-[260px]' : 'h-[460px]'}>
-            <ResponsiveContainer width="100%" height="100%">
+      <div
+        className={cn(
+          'flex flex-col gap-3',
+          !compact && 'lg:flex-row lg:items-stretch'
+        )}
+      >
+        <div className="min-w-0 flex-1 rounded-md border bg-card p-2">
+          <div style={{ width: '100%', height: chartH }}>
+            <ResponsiveContainer>
               <LineChart
                 data={data}
                 margin={{
-                  top: compact ? 12 : 20,
-                  right: 8,
+                  top: labeledActivas.length ? 22 : 8,
+                  right: tieneHigh ? 56 : tienePct ? 48 : 12,
                   left: 4,
-                  bottom: compact ? 4 : 8,
+                  bottom: 8,
                 }}
               >
                 <CartesianGrid stroke="#e0e0e0" strokeDasharray="3 3" />
@@ -268,7 +318,7 @@ export function HistorialReeferChart({
                     compact
                       ? undefined
                       : {
-                          value: 'Temperature (C°)',
+                          value: tempLabel,
                           angle: -90,
                           position: 'insideLeft',
                           style: { fontSize: 11, fill: '#424242' },
@@ -280,12 +330,31 @@ export function HistorialReeferChart({
                     yAxisId="pct"
                     orientation="right"
                     tick={{ fontSize: 10, fill: '#616161' }}
-                    width={compact ? 36 : 60}
+                    width={compact ? 36 : 48}
                     label={
                       compact
                         ? undefined
                         : {
-                            value: 'Percentage (%)',
+                            value: '%',
+                            angle: 90,
+                            position: 'insideRight',
+                            style: { fontSize: 11, fill: '#424242' },
+                          }
+                    }
+                  />
+                )}
+                {tieneHigh && (
+                  <YAxis
+                    yAxisId="high"
+                    orientation="right"
+                    tick={{ fontSize: 10, fill: '#616161' }}
+                    width={compact ? 36 : 48}
+                    dx={tienePct ? 42 : 0}
+                    label={
+                      compact
+                        ? undefined
+                        : {
+                            value: 'ppm',
                             angle: 90,
                             position: 'insideRight',
                             style: { fontSize: 11, fill: '#424242' },
@@ -299,7 +368,7 @@ export function HistorialReeferChart({
                 {activas.map((s) => (
                   <Line
                     key={s.key}
-                    yAxisId={s.axis === 'pct' ? 'pct' : 'temp'}
+                    yAxisId={yAxisIdOf(s.axis)}
                     type="monotone"
                     dataKey={s.key}
                     name={s.label}
@@ -309,15 +378,17 @@ export function HistorialReeferChart({
                     connectNulls
                     isAnimationActive={false}
                   >
-                    {s.showValueLabels === true && !compact && (
+                    {labelsOn[s.key] === true && (
                       <LabelList
                         dataKey={s.key}
                         content={(props) => (
-                          <SparseTempLabel
+                          <SparseValueLabel
                             {...props}
                             brush={brush}
                             color={s.color}
-                            offsetY={s.key === 'retorno' ? -10 : 14}
+                            unit={s.unit}
+                            offsetY={labelOffsetForRank(labelRank.get(s.key) ?? 0)}
+                            maxLabels={maxLabels}
                           />
                         )}
                       />
@@ -345,39 +416,63 @@ export function HistorialReeferChart({
             'shrink-0 rounded-md border bg-muted/20 px-2 py-3',
             compact
               ? 'w-full flex flex-wrap gap-1 content-start max-h-none'
-              : 'lg:w-[148px]'
+              : 'lg:w-[168px]'
           )}
         >
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-2 px-1 w-full">
-            Leyenda
+          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-2 px-1 w-full">
+            Series
           </p>
-          <div
-            className={cn(
-              compact ? 'flex flex-wrap gap-1' : 'flex flex-col gap-1'
-            )}
-          >
-            {disponibles.map((s) => {
-              const on = visible[s.key] !== false;
-              return (
+          {!compact && (
+            <div className="flex items-center justify-between gap-1 px-1 mb-1 w-full text-[10px] text-muted-foreground">
+              <span>Visible</span>
+              <span>Valores</span>
+            </div>
+          )}
+          {disponibles.map((s) => {
+            const on = enabled[s.key] !== false;
+            const lab = labelsOn[s.key] === true;
+            return (
+              <div
+                key={s.key}
+                className={cn(
+                  'flex items-center gap-1.5 w-full rounded px-1 py-1 text-xs',
+                  on ? 'opacity-100' : 'opacity-40'
+                )}
+              >
                 <button
-                  key={s.key}
                   type="button"
-                  onClick={() => toggleSerie(s.key)}
-                  className={cn(
-                    'flex items-center gap-2 rounded px-1.5 py-1 text-left text-xs transition-opacity hover:bg-muted/60',
-                    !on && 'opacity-45'
-                  )}
+                  className="flex items-center gap-1.5 min-w-0 flex-1 text-left"
+                  onClick={() =>
+                    setEnabled((prev) => ({ ...prev, [s.key]: !on }))
+                  }
                   title={on ? 'Ocultar serie' : 'Mostrar serie'}
                 >
                   <span
-                    className="inline-block h-3 w-4 shrink-0 rounded-sm border border-black/10"
-                    style={{ backgroundColor: on ? s.color : '#bdbdbd' }}
+                    className="h-2.5 w-2.5 shrink-0 rounded-sm"
+                    style={{ backgroundColor: s.color }}
                   />
-                  <span className="leading-tight">{s.label}</span>
+                  <span className="truncate">{s.label}</span>
                 </button>
-              );
-            })}
-          </div>
+                {!compact && (
+                  <Checkbox
+                    checked={lab}
+                    disabled={!on}
+                    onCheckedChange={(v) =>
+                      setLabelsOn((prev) => ({
+                        ...prev,
+                        [s.key]: v === true,
+                      }))
+                    }
+                    aria-label={`Etiquetas de ${s.label}`}
+                    title="Mostrar etiquetas de valor"
+                  />
+                )}
+              </div>
+            );
+          })}
+          {disponibles.length === 0 && (
+            <p className="text-xs text-muted-foreground px-1">Sin series con datos</p>
+          )}
         </aside>
       </div>
     </div>

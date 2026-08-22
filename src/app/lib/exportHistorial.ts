@@ -2,16 +2,31 @@ import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { DatoOficialHistorial } from '../types';
-import { TABLA_HISTORIAL_COLUMNAS, celdaHistorial, ordenarTablaDesc } from './historialOficial';
+import { ordenarTablaDesc } from './historialOficial';
 import { downloadJsonFile } from './downloadJson';
 import {
   formatDateTimeInTz,
   resolveDisplayTimeZone,
 } from './telemetryTimezone';
+import type { TemperaturaUnidad } from './temperatureUnit';
+import { normalizeTemperaturaUnidad } from './temperatureUnit';
+import {
+  celdaVistaHistorial,
+  defaultHistorialVistaPrefs,
+  resolveTableColumnKeys,
+  tableColumnHeader,
+} from '../modules/historialVista';
 
 export interface HistorialExportRango {
   desde: Date;
   hasta: Date;
+}
+
+export interface HistorialExportOpts {
+  zonaHoraria?: string | null;
+  /** Columnas de datos (sin fecha); si se omite, preset REEFER. */
+  tableKeys?: string[];
+  unidad?: TemperaturaUnidad;
 }
 
 function p2(n: number): string {
@@ -55,11 +70,19 @@ function fmtRango(
 
 function filasExport(
   datos: DatoOficialHistorial[],
-  zonaHoraria?: string | null
+  opts?: HistorialExportOpts
 ): { headers: string[]; rows: string[][] } {
-  const headers = TABLA_HISTORIAL_COLUMNAS.map((c) => c.header);
+  const zonaHoraria = opts?.zonaHoraria;
+  const unidad = normalizeTemperaturaUnidad(opts?.unidad);
+  const keys = resolveTableColumnKeys(
+    opts?.tableKeys ?? defaultHistorialVistaPrefs().tableKeys
+  );
+  const colKeys = ['fecha_registro', ...keys];
+  const headers = colKeys.map((k) =>
+    k === 'fecha_registro' ? 'Fecha' : tableColumnHeader(k, unidad)
+  );
   const rows = ordenarTablaDesc(datos).map((row) =>
-    TABLA_HISTORIAL_COLUMNAS.map((c) => celdaHistorial(row, c.key, zonaHoraria))
+    colKeys.map((k) => celdaVistaHistorial(row, k, zonaHoraria, unidad))
   );
   return { headers, rows };
 }
@@ -84,9 +107,10 @@ export function exportHistorialCsv(
   imei: string,
   codigo: string,
   rango: HistorialExportRango,
-  zonaHoraria?: string | null
+  zonaHoraria?: string | null,
+  opts?: Omit<HistorialExportOpts, 'zonaHoraria'>
 ): void {
-  const { headers, rows } = filasExport(datos, zonaHoraria);
+  const { headers, rows } = filasExport(datos, { ...opts, zonaHoraria });
   const tz = resolveDisplayTimeZone(zonaHoraria);
   const sep = ';';
   const escape = (s: string) =>
@@ -115,9 +139,10 @@ export function exportHistorialXlsx(
   imei: string,
   codigo: string,
   rango: HistorialExportRango,
-  zonaHoraria?: string | null
+  zonaHoraria?: string | null,
+  opts?: Omit<HistorialExportOpts, 'zonaHoraria'>
 ): void {
-  const { headers, rows } = filasExport(datos, zonaHoraria);
+  const { headers, rows } = filasExport(datos, { ...opts, zonaHoraria });
   const tz = resolveDisplayTimeZone(zonaHoraria);
   const meta: string[][] = [
     [`IMEI: ${imei}`],
@@ -141,9 +166,10 @@ export function exportHistorialPdf(
   codigo: string,
   nombreContenedor: string,
   rango: HistorialExportRango,
-  zonaHoraria?: string | null
+  zonaHoraria?: string | null,
+  opts?: Omit<HistorialExportOpts, 'zonaHoraria'>
 ): void {
-  const { headers, rows } = filasExport(datos, zonaHoraria);
+  const { headers, rows } = filasExport(datos, { ...opts, zonaHoraria });
   const tz = resolveDisplayTimeZone(zonaHoraria);
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
   doc.setFontSize(11);
