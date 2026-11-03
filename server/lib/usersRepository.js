@@ -187,8 +187,9 @@ function validateUserShape(user, { requirePassword = false } = {}) {
   let deviceAccess = Array.isArray(user.deviceAccess)
     ? user.deviceAccess.map(String)
     : [];
-  // Solo superadmin tiene flota completa por defecto.
-  if (superUser) {
+  // Superadmin siempre ve toda la flota. Un admin solo la recibe completa
+  // si el superadmin lo marcó al crear o editar la cuenta.
+  if (superUser || deviceAccess.includes('all')) {
     deviceAccess = ['all'];
   }
 

@@ -68,6 +68,7 @@ const emptyForm = {
   zonaHoraria: 'GMT-5',
   puedeControlTemperatura: false,
   puedeAnalisisTelemetria: false,
+  flotaCompleta: false,
 };
 
 function personalPayload(form: typeof emptyForm) {
@@ -166,6 +167,8 @@ export default function Usuarios() {
       zonaHoraria: u.zonaHoraria ?? 'GMT-5',
       puedeControlTemperatura: u.puedeControlTemperatura === true,
       puedeAnalisisTelemetria: u.puedeAnalisisTelemetria === true,
+      flotaCompleta:
+        resolveUserCategory(u) === 'admin' && u.deviceAccess?.includes('all') === true,
     });
     setError(null);
     setDialogOpen(true);
@@ -203,11 +206,11 @@ export default function Usuarios() {
 
       if (category === 'superadmin' || category === 'admin') {
         const maxN = Number(form.maxManagedUsers);
+        const flotaCompleta = isSuper && category === 'admin' && form.flotaCompleta === true;
         const adminFields =
           category === 'admin'
             ? {
-                // Flota la asigna el superadmin en Administración (no 'all').
-                deviceAccess: [] as string[],
+                deviceAccess: (flotaCompleta ? ['all'] : []) as string[],
                 groupIds: [] as string[],
                 maxManagedUsers: Number.isFinite(maxN) ? maxN : 3,
                 deviceNames: undefined,
@@ -219,10 +222,10 @@ export default function Usuarios() {
           const keepAccess =
             category === 'admin' && editingId
               ? {
-                  deviceAccess: prev?.deviceAccess?.includes('all')
-                    ? []
-                    : (prev?.deviceAccess ?? []),
-                  groupIds: prev?.groupIds ?? [],
+                  deviceAccess: flotaCompleta
+                    ? (['all'] as string[])
+                    : (prev?.deviceAccess ?? []).filter((x) => x !== 'all'),
+                  groupIds: flotaCompleta ? [] : (prev?.groupIds ?? []),
                   maxManagedUsers: Number.isFinite(maxN) ? maxN : 3,
                   deviceNames: undefined,
                 }
@@ -367,6 +370,12 @@ export default function Usuarios() {
                           >
                             <Thermometer className="h-3 w-3" />
                             Control
+                          </Badge>
+                        )}
+                        {resolveUserCategory(u) === 'admin' &&
+                          u.deviceAccess?.includes('all') === true && (
+                          <Badge variant="outline" className="text-[10px]" title="Flota completa">
+                            Flota completa
                           </Badge>
                         )}
                         {u.puedeAnalisisTelemetria === true && (
@@ -608,6 +617,27 @@ export default function Usuarios() {
                     <p className="text-[11px] text-muted-foreground">
                       Por defecto 3. Solo el superadmin puede ampliarla.
                     </p>
+                  </div>
+                )}
+                {form.category === 'admin' && (
+                  <div className="flex items-start gap-3 rounded-md border p-3">
+                    <Checkbox
+                      id="flota-completa"
+                      checked={form.flotaCompleta}
+                      onCheckedChange={(v) =>
+                        setForm((f) => ({ ...f, flotaCompleta: v === true }))
+                      }
+                    />
+                    <div className="grid gap-1 leading-none">
+                      <Label htmlFor="flota-completa" className="cursor-pointer">
+                        Flota completa de dispositivos
+                      </Label>
+                      <p className="text-[11px] text-muted-foreground">
+                        Solo el superadmin puede dar toda la flota a esta cuenta de
+                        administrador. Si no se marca, los equipos se asignan después
+                        en Administración.
+                      </p>
+                    </div>
                   </div>
                 )}
               </>

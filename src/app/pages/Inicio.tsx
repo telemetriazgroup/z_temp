@@ -325,8 +325,13 @@ export default function Inicio() {
                 .
               </>
             ) : (
-              'Resumen operativo de la flota y extractos urgentes.'
+              'Resumen operativo de la flota guardada en base.'
             )}
+            {data?.syncedAt ? (
+              <span className="block text-xs mt-1">
+                Sincronizada {formatWhen(data.syncedAt)}
+              </span>
+            ) : null}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -487,8 +492,8 @@ export default function Inicio() {
                 </div>
                 {(data.links.probes3h?.length ?? 0) > 0 && (
                   <p className="text-[11px] text-muted-foreground">
-                    Trazabilidad: {data.links.probes3h.length} sondas en las últimas 3 h
-                    (cada consulta de último estado).
+                    Trazabilidad: {data.links.probes3h.length} sondas en las últimas 3 h.
+                    Las APIs las consulta el servidor; esta pantalla lee la base.
                   </p>
                 )}
               </CardContent>

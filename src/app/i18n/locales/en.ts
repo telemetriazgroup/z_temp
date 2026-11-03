@@ -67,6 +67,7 @@ export const enMessages: MessageTree = {
     administracion: 'Administration',
     usuarios: 'Users',
     empresas: 'Companies',
+    sincronizacion: 'Sync',
     monitoreo: 'Monitoring',
     controlAuditoria: 'Control / Audit',
     auditoriaUsuarios: 'User audit',

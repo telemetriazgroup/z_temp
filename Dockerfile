@@ -11,19 +11,18 @@ WORKDIR /app
 # Copiar manifestos de dependencias (pnpm-workspace.yaml: allowBuilds para pnpm 10+)
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* package-lock.json* ./
 
-# Instalar dependencias: pnpm si hay pnpm-lock, si no npm
+# package-lock.json del repo no coincide con package.json (npm ci falla).
+# pnpm-lock manda si existe; si no, npm install resuelve el árbol en la imagen.
 RUN if [ -f pnpm-lock.yaml ]; then \
       pnpm install --frozen-lockfile; \
-    elif [ -f package-lock.json ]; then \
-      npm ci; \
     else \
-      pnpm install; \
+      npm install; \
     fi
 
 COPY . .
 
 # Build de producción (Vite → dist/)
-RUN if [ -f pnpm-lock.yaml ] || [ ! -f package-lock.json ]; then \
+RUN if [ -f pnpm-lock.yaml ]; then \
       pnpm run build; \
     else \
       npm run build; \

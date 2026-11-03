@@ -1,5 +1,3 @@
-import { observeTelemetryFetch } from './dashboard/observeTelemetry.js';
-
 const TUNEL_BASE = process.env.TUNEL_API_BASE ?? 'http://161.132.53.51:9051';
 const STARCOOL_BASE = process.env.STARCOOL_API_BASE ?? 'http://161.132.206.104:9112';
 /** Misma API StarCool documentada en api_star.md (host :9051). */
@@ -14,7 +12,7 @@ const SOURCES = [
 
 const STARCOOL_CODIGOS = new Set(['STARCOOL', 'STARCOOL2']);
 
-function ultimaActualizacionMs(value) {
+export function ultimaActualizacionMs(value) {
   if (value == null || value === '') return NaN;
   const s = String(value).trim();
   if (!s) return NaN;
@@ -43,7 +41,7 @@ function preferirEntreStarcool(a, b) {
   return a;
 }
 
-function mergeStarcoolOrigenes(dispositivos) {
+export function mergeStarcoolOrigenes(dispositivos) {
   const porImei = new Map();
   const resto = [];
   for (const d of dispositivos) {
@@ -58,10 +56,12 @@ function mergeStarcoolOrigenes(dispositivos) {
   return [...resto, ...porImei.values()];
 }
 
-async function fetchSource(source) {
+async function fetchSource(source, { timeoutMs = 50_000 } = {}) {
   const started = Date.now();
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const res = await fetch(source.url, { method: 'GET' });
+    const res = await fetch(source.url, { method: 'GET', signal: ctrl.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
     if (!json?.data?.dispositivos || !Array.isArray(json.data.dispositivos)) {
@@ -80,43 +80,42 @@ async function fetchSource(source) {
       dispositivos,
     };
   } catch (e) {
+    const aborted = e?.name === 'AbortError';
     return {
       codigo: source.codigo,
       url: source.url,
       ok: false,
       latencyMs: Date.now() - started,
-      error: e?.message ?? String(e),
+      error: aborted ? `timeout ${timeoutMs}ms` : (e?.message ?? String(e)),
       dispositivos: [],
     };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 /**
- * Consulta todos los orígenes y devuelve dispositivos + detalle por link.
- * Registra trazabilidad de links (últimas 3 h) y equipos nuevos.
+ * Consulta los orígenes en paralelo. Cada link falla solo: un timeout
+ * no descarta lo que los demás ya respondieron.
+ * No escribe en base; eso lo hace la sincronización programada.
  */
-export async function fetchAllDispositivosDetailed() {
-  const links = await Promise.all(SOURCES.map(fetchSource));
+export async function fetchSourcesDetailed({ timeoutMs = 50_000 } = {}) {
+  const links = await Promise.all(SOURCES.map((source) => fetchSource(source, { timeoutMs })));
   const dispositivos = [];
   const errors = [];
   for (const link of links) {
     if (link.ok) dispositivos.push(...link.dispositivos);
     else errors.push(`${link.codigo}: ${link.error}`);
   }
-  const merged = mergeStarcoolOrigenes(dispositivos);
-  await observeTelemetryFetch(links, merged);
   return {
-    dispositivos: merged,
-    links: links.map(({ dispositivos: devices, ...rest }) => ({
-      ...rest,
-      deviceCount: devices?.length ?? 0,
-    })),
+    dispositivos: mergeStarcoolOrigenes(dispositivos),
+    links,
     errors,
   };
 }
 
 export async function fetchAllDispositivos() {
-  const { dispositivos, errors } = await fetchAllDispositivosDetailed();
+  const { dispositivos, errors } = await fetchSourcesDetailed();
   if (dispositivos.length === 0) {
     throw new Error(errors.join(' | ') || 'Sin telemetría');
   }

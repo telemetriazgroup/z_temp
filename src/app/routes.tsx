@@ -20,6 +20,7 @@ import Perfil from "./pages/Perfil";
 import Empresas from "./pages/Empresas";
 import AuditoriaUsuarios from "./pages/AuditoriaUsuarios";
 import AnalisisSenal from "./pages/AnalisisSenal";
+import Sincronizacion from "./pages/Sincronizacion";
 import {
   appBasenameNoSlash,
   ensureBasenameTrailingSlash,
@@ -128,6 +129,10 @@ const routeTree = [
       {
         path: "analisis-senal",
         element: <AnalisisSenal />,
+      },
+      {
+        path: "sincronizacion",
+        element: <Sincronizacion />,
       },
       {
         path: "analisis-senal/:imei",

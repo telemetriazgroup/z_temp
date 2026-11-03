@@ -3,7 +3,7 @@ import { ensureDashboardSchema } from '../db.js';
 import { getEnvios, getIncidentes } from '../alertEngine.js';
 import { getUserByUsername } from '../usersRepository.js';
 import { getDeviceNameByImei } from '../deviceNamesRepository.js';
-import { fetchAllDispositivosDetailed, deviceRowKey } from '../telemetry.js';
+import { deviceRowKey } from '../telemetry.js';
 import {
   getPeriodAverages,
   getDailySeries,
@@ -14,6 +14,7 @@ import {
   filterDispositivosForUser,
   captureDashboardSnapshotSafe,
 } from './snapshot.js';
+import { getSyncState, loadCurrentDispositivos } from './fleetStore.js';
 import { getLinkStatuses, getLinkProbeHistory } from './linkHealth.js';
 import {
   listDevicesPendingReview,
@@ -253,12 +254,78 @@ export function createDashboardRouter() {
 
   router.post('/snapshot', async (req, res) => {
     if (req.headers['x-ztrack-super-user'] !== 'true') {
-      return res.status(403).json({ ok: false, error: 'Solo admin puede forzar snapshot' });
+      return res.status(403).json({ ok: false, error: 'Solo el superadmin puede sincronizar' });
     }
     try {
       await ensureDashboardSchema();
-      const data = await captureDashboardSnapshotSafe();
+      const data = await captureDashboardSnapshotSafe({ trigger: 'manual' });
+      if (data?.skipped === 'busy') {
+        return res.status(409).json({
+          ok: false,
+          error: 'Ya hay una sincronización en curso',
+        });
+      }
       res.json({ ok: true, data });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  router.get('/sync', async (req, res) => {
+    try {
+      const user = resolveAccessUser(req);
+      if (!isSuper(req, user)) {
+        return res.status(403).json({ ok: false, error: 'Solo superusuario' });
+      }
+      await ensureDashboardSchema();
+      const [state, counts, links] = await Promise.all([
+        getSyncState(),
+        loadCurrentDispositivos().then((list) => {
+          const ausentes = list.filter((d) => d.ausente_api === true).length;
+          return { total: list.length, presentes: list.length - ausentes, ausentes };
+        }),
+        getLinkStatuses(),
+      ]);
+      const intervalMs = Number(
+        process.env.DASHBOARD_SNAPSHOT_MS ??
+          Math.max(Number(process.env.CORREO_POLL_MS ?? 2 * 60 * 1000), 5 * 60 * 1000)
+      );
+      res.json({
+        ok: true,
+        data: { state, counts, links, intervalMs },
+      });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  router.get('/fleet', async (req, res) => {
+    try {
+      await ensureDashboardSchema();
+      const user = resolveAccessUser(req);
+      let dispositivos = [];
+      let telemetryError = null;
+      try {
+        dispositivos = await loadCurrentDispositivos();
+      } catch (e) {
+        telemetryError = e.message;
+      }
+      const visibles = filterDispositivosForUser(dispositivos, user);
+      if (!telemetryError && visibles.length === 0) {
+        telemetryError =
+          'La flota todavía no está en base. El sistema la sincroniza solo, cada 5 minutos.';
+      }
+      const sync = await getSyncState().catch(() => null);
+      res.json({
+        ok: true,
+        data: {
+          dispositivos: visibles,
+          zona_horaria: 'GMT-5',
+          captured_at: sync?.finishedAt ?? null,
+          syncedAt: sync?.finishedAt ?? null,
+          telemetryError,
+        },
+      });
     } catch (e) {
       res.status(500).json({ ok: false, error: e.message });
     }
@@ -307,13 +374,16 @@ export function createDashboardRouter() {
 
       let dispositivos = [];
       let telemetryError = null;
-      let liveLinks = [];
+      let sync = null;
       try {
-        const detailed = await fetchAllDispositivosDetailed();
-        dispositivos = detailed.dispositivos;
-        liveLinks = detailed.links;
-        if (dispositivos.length === 0 && detailed.errors.length) {
-          telemetryError = detailed.errors.join(' | ');
+        dispositivos = await loadCurrentDispositivos();
+        sync = await getSyncState();
+        if (dispositivos.length === 0) {
+          telemetryError =
+            'La flota todavía no está en base. El sistema la sincroniza solo, cada 5 minutos.';
+          if (sync == null) {
+            void captureDashboardSnapshotSafe({ trigger: 'boot' });
+          }
         }
       } catch (e) {
         telemetryError = e.message;
@@ -382,12 +452,13 @@ export function createDashboardRouter() {
           averages,
           weekSeries,
           weekStatus,
-          latestSnapshotAt: latest?.captured_at ?? null,
+          latestSnapshotAt: latest?.captured_at ?? sync?.finishedAt ?? null,
+          syncedAt: sync?.finishedAt ?? null,
           telemetryError,
           urgent,
           links: {
             current: linkStatuses,
-            liveCheck: liveLinks,
+            liveCheck: Array.isArray(sync?.detail?.links) ? sync.detail.links : [],
             probes3h: linkProbes,
             alert: linkAlert,
           },

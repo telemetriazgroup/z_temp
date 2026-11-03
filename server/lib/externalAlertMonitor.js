@@ -15,7 +15,8 @@ import {
   resolveRangoOptsForDevice,
 } from './deviceAlertConfigRepository.js';
 import { getDeviceNameByImei } from './deviceNamesRepository.js';
-import { fetchAllDispositivos, deviceRowKey } from './telemetry.js';
+import { deviceRowKey } from './telemetry.js';
+import { loadCurrentDispositivos } from './dashboard/fleetStore.js';
 import {
   fetchHistorialUltimasHoras,
   effectiveEnRangoAlertaFromDispositivo,
@@ -98,7 +99,10 @@ export async function buildExternalAlertMonitor(options = {}) {
   let dispositivos = [];
   let telemetriaError = null;
   try {
-    dispositivos = await fetchAllDispositivos();
+    dispositivos = await loadCurrentDispositivos();
+    if (!dispositivos.length) {
+      telemetriaError = 'Flota aún no sincronizada en base de datos';
+    }
   } catch (e) {
     telemetriaError = e instanceof Error ? e.message : String(e);
   }

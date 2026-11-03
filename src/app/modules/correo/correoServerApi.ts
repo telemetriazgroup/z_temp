@@ -383,6 +383,130 @@ export async function sendTestEmailViaServer(payload: Omit<SendEmailPayload, 'sm
   return parseRes(res);
 }
 
+export type DashboardSyncLink = {
+  codigo: string;
+  url?: string | null;
+  ok: boolean;
+  latencyMs?: number | null;
+  error?: string | null;
+  deviceCount?: number;
+  checked_at?: string | null;
+  latency_ms?: number | null;
+  error_message?: string | null;
+  device_count?: number;
+};
+
+export type DashboardSyncStatus = {
+  intervalMs: number;
+  state: {
+    startedAt: string | null;
+    finishedAt: string | null;
+    trigger: string | null;
+    ok: boolean | null;
+    error: string | null;
+    detail: {
+      links?: DashboardSyncLink[];
+      total?: number;
+      presentes?: number;
+      ausentes?: number;
+      phase?: string;
+    };
+  } | null;
+  counts: { total: number; presentes: number; ausentes: number };
+  links: DashboardSyncLink[];
+};
+
+export async function fetchDashboardSync(opts?: {
+  username?: string | null;
+  superUser?: boolean;
+}): Promise<DashboardSyncStatus> {
+  const res = await fetch(`${BASE}/dashboard/sync`, {
+    headers: headers(opts?.username, opts?.superUser),
+  });
+  const body = await parseRes<{ data: DashboardSyncStatus }>(res);
+  return body.data;
+}
+
+export async function runDashboardSync(opts?: {
+  username?: string | null;
+  superUser?: boolean;
+}): Promise<unknown> {
+  const res = await fetch(`${BASE}/dashboard/snapshot`, {
+    method: 'POST',
+    headers: headers(opts?.username, true),
+  });
+  const body = await parseRes<{ data: unknown }>(res);
+  return body.data;
+}
+
+export type ReporteProgramado = {
+  id: string;
+  nombre: string;
+  cliente: string;
+  emails: string[];
+  periodoHoras: 6 | 8 | 12 | 24;
+  horaEnvio: number;
+  minutoEnvio: number;
+  alcance: 'completa' | 'asignada';
+  enabled: boolean;
+  ownerUsername?: string | null;
+  lastSentSlot?: string | null;
+  lastSentAt?: string | null;
+  lastError?: string | null;
+  proximosEnvios?: string[];
+};
+
+export async function fetchReportesProgramados(opts?: {
+  username?: string | null;
+  superUser?: boolean;
+}): Promise<ReporteProgramado[]> {
+  const res = await fetch(`${BASE}/reportes-programados`, {
+    headers: headers(opts?.username, opts?.superUser),
+  });
+  const body = await parseRes<{ data: ReporteProgramado[] }>(res);
+  return body.data;
+}
+
+export async function saveReporteProgramado(
+  input: Partial<ReporteProgramado> & { emails: string[] },
+  opts?: { username?: string | null; superUser?: boolean }
+): Promise<ReporteProgramado> {
+  const id = input.id;
+  const res = await fetch(
+    id ? `${BASE}/reportes-programados/${encodeURIComponent(id)}` : `${BASE}/reportes-programados`,
+    {
+      method: id ? 'PUT' : 'POST',
+      headers: headers(opts?.username, opts?.superUser),
+      body: JSON.stringify(input),
+    }
+  );
+  const body = await parseRes<{ data: ReporteProgramado }>(res);
+  return body.data;
+}
+
+export async function deleteReporteProgramado(
+  id: string,
+  opts?: { username?: string | null; superUser?: boolean }
+): Promise<void> {
+  const res = await fetch(`${BASE}/reportes-programados/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: headers(opts?.username, opts?.superUser),
+  });
+  await parseRes(res);
+}
+
+export async function enviarReporteProgramado(
+  id: string,
+  opts?: { username?: string | null; superUser?: boolean }
+): Promise<{ subject: string }> {
+  const res = await fetch(`${BASE}/reportes-programados/${encodeURIComponent(id)}/enviar`, {
+    method: 'POST',
+    headers: headers(opts?.username, opts?.superUser),
+  });
+  const body = await parseRes<{ data: { subject: string } }>(res);
+  return body.data;
+}
+
 export async function fetchDashboardOverview(opts?: {
   username?: string | null;
   superUser?: boolean;

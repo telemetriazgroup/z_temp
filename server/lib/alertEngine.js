@@ -19,7 +19,8 @@ import {
   buildFueraDeLineaEmail,
 } from './emailBuilder.js';
 import { buildTrazabilidadEmailPack } from './emailTraceability.js';
-import { fetchAllDispositivos, deviceRowKey } from './telemetry.js';
+import { deviceRowKey } from './telemetry.js';
+import { loadCurrentDispositivos } from './dashboard/fleetStore.js';
 import { getSmtpConfig } from './smtpRepository.js';
 import { getDeviceNameByImei } from './deviceNamesRepository.js';
 import { resolveUmbralesForDevice, getDeviceAlertConfig, getDeviceAlertConfigMap, saveDeviceAlertConfig, resolveRangoOptsForDevice } from './deviceAlertConfigRepository.js';
@@ -670,7 +671,10 @@ export async function runAlertCycle(options = {}) {
 
   let dispositivos;
   try {
-    dispositivos = await fetchAllDispositivos();
+    dispositivos = await loadCurrentDispositivos();
+    if (!dispositivos.length) {
+      throw new Error('Flota aún no sincronizada en base de datos');
+    }
   } catch (e) {
     result.errors.push(e.message);
     result.criterio = `Error al consultar telemetría: ${e.message}`;
@@ -1513,7 +1517,7 @@ function alertConfigLabel(rowKey, ownerUsername = null) {
 }
 
 async function resolveDispositivoForRowKey(rowKey) {
-  const dispositivos = await fetchAllDispositivos();
+  const dispositivos = await loadCurrentDispositivos();
   return dispositivos.find((d) => deviceRowKey(d) === rowKey) ?? null;
 }
 

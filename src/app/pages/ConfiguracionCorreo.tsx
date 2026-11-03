@@ -85,6 +85,7 @@ import { Badge } from '../components/ui/badge';
 import { Switch } from '../components/ui/switch';
 import { Checkbox } from '../components/ui/checkbox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
+import { ReportesProgramadosPanel } from '../components/ReportesProgramadosPanel';
 import {
   Table,
   TableBody,
@@ -886,6 +887,7 @@ export default function ConfiguracionCorreo() {
         <TabsList>
           {canSeeRemitente && <TabsTrigger value="remitente">Remitente</TabsTrigger>}
           <TabsTrigger value="grupos">Grupos de correo</TabsTrigger>
+          <TabsTrigger value="reportes">Reportes programados</TabsTrigger>
           <TabsTrigger value="log">Registro de envíos</TabsTrigger>
           <TabsTrigger value="alertas">Alertas por equipo</TabsTrigger>
           {canSeeCiclos && <TabsTrigger value="ciclos">Ciclos de análisis</TabsTrigger>}
@@ -1101,6 +1103,10 @@ export default function ConfiguracionCorreo() {
               </Card>
             )}
           </div>
+        </TabsContent>
+
+        <TabsContent value="reportes" className="mt-4">
+          <ReportesProgramadosPanel />
         </TabsContent>
 
         <TabsContent value="log" className="mt-4">

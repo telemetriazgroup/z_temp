@@ -87,6 +87,13 @@ import { createDashboardRouter } from './lib/dashboard/routes.js';
 import { createSenalRouter } from './lib/senal/routes.js';
 import { ensureAnalisisSchema } from './lib/db.js';
 import { captureDashboardSnapshotSafe } from './lib/dashboard/snapshot.js';
+import {
+  deleteSchedule,
+  listSchedulesPublic,
+  saveSchedule,
+  sendScheduleNow,
+  tickReportesProgramados,
+} from './lib/reporteProgramado.js';
 import { processSenalIncrementalSafe } from './lib/senal/engine.js';
 import { buildExternalAlertMonitor } from './lib/externalAlertMonitor.js';
 
@@ -199,6 +206,60 @@ function requireExternalApiKey(req, res) {
 
 app.get('/health', (_req, res) => {
   res.json({ ok: true, service: 'ztrack-correo', pollMs: POLL_MS });
+});
+
+app.get('/reefer/api/correo/reportes-programados', (req, res) => {
+  const actor = requireUserManager(req, res);
+  if (!actor) return;
+  res.json({ ok: true, data: listSchedulesPublic(actor) });
+});
+
+app.post('/reefer/api/correo/reportes-programados', (req, res) => {
+  const actor = requireUserManager(req, res);
+  if (!actor) return;
+  try {
+    const data = saveSchedule(req.body ?? {}, actor);
+    res.json({ ok: true, data });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+app.put('/reefer/api/correo/reportes-programados/:id', (req, res) => {
+  const actor = requireUserManager(req, res);
+  if (!actor) return;
+  try {
+    const data = saveSchedule({ ...(req.body ?? {}), id: req.params.id }, actor);
+    res.json({ ok: true, data });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+app.delete('/reefer/api/correo/reportes-programados/:id', (req, res) => {
+  const actor = requireUserManager(req, res);
+  if (!actor) return;
+  try {
+    deleteSchedule(req.params.id, actor);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/reefer/api/correo/reportes-programados/:id/enviar', async (req, res) => {
+  const actor = requireUserManager(req, res);
+  if (!actor) return;
+  try {
+    const visible = listSchedulesPublic(actor);
+    if (!visible.some((s) => s.id === req.params.id)) {
+      return res.status(404).json({ ok: false, error: 'Reporte no encontrado' });
+    }
+    const data = await sendScheduleNow(req.params.id);
+    res.json({ ok: true, data });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
 });
 
 app.get('/reefer/api/correo/status', (_req, res) => {
@@ -1310,7 +1371,7 @@ app.listen(PORT, '0.0.0.0', () => {
       const { startSenalJobRunner } = await import('./lib/senal/jobRunner.js');
       startSenalJobRunner();
       setTimeout(() => {
-        captureDashboardSnapshotSafe()
+        captureDashboardSnapshotSafe({ trigger: 'boot' })
           .then(async (r) => {
             console.log('[dashboard] snapshot inicial', r?.id ?? r?.skipped ?? 'ok');
             const senal = await processSenalIncrementalSafe();
@@ -1320,7 +1381,7 @@ app.listen(PORT, '0.0.0.0', () => {
           .catch((e) => console.warn('[dashboard] snapshot inicial:', e.message));
       }, 8000);
       setInterval(() => {
-        captureDashboardSnapshotSafe()
+        captureDashboardSnapshotSafe({ trigger: 'interval' })
           .then(() => processSenalIncrementalSafe())
           .catch((e) => console.warn('[dashboard] snapshot:', e.message));
       }, DASHBOARD_SNAPSHOT_MS);
@@ -1339,4 +1400,10 @@ app.listen(PORT, '0.0.0.0', () => {
       console.error('[correo] ciclo', e.message)
     );
   }, POLL_MS);
+  setInterval(() => {
+    tickReportesProgramados().catch((e) =>
+      console.warn('[reporte] tick', e.message)
+    );
+  }, 60_000);
+  console.log('[reporte] comportamiento cada 6/8/12/24 h, revisión cada 60s');
 });

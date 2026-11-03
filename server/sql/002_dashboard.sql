@@ -124,3 +124,33 @@ CREATE TABLE IF NOT EXISTS dashboard_user_login (
 
 CREATE INDEX IF NOT EXISTS idx_dashboard_user_login_time
   ON dashboard_user_login (logged_in_at DESC);
+
+-- Último estado conocido por equipo. No se borra si el dispositivo deja de venir en la API.
+CREATE TABLE IF NOT EXISTS dashboard_device_current (
+  row_key TEXT PRIMARY KEY,
+  imei TEXT NOT NULL,
+  codigo TEXT,
+  payload JSONB NOT NULL,
+  ausente_api BOOLEAN NOT NULL DEFAULT false,
+  ausente_desde TIMESTAMPTZ,
+  first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_api_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_dashboard_device_current_codigo
+  ON dashboard_device_current (codigo);
+
+CREATE INDEX IF NOT EXISTS idx_dashboard_device_current_ausente
+  ON dashboard_device_current (ausente_api);
+
+-- Última ejecución del recolector (intervalo o manual).
+CREATE TABLE IF NOT EXISTS dashboard_sync_state (
+  id INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  trigger TEXT,
+  ok BOOLEAN,
+  error TEXT,
+  detail JSONB NOT NULL DEFAULT '{}'::jsonb
+);

@@ -444,6 +444,8 @@ export interface DashboardOverview {
   weekSeries: DashboardDayPoint[];
   weekStatus: DashboardWeekStatus;
   latestSnapshotAt: string | null;
+  /** Momento en que el servidor terminó de guardar la flota. */
+  syncedAt?: string | null;
   telemetryError?: string | null;
   urgent: {
     envios: DashboardUrgentEnvio[];

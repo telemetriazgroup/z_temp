@@ -47,6 +47,7 @@ import {
   Sun,
   Moon,
   RadioTower,
+  RefreshCw,
 } from 'lucide-react';
 import type { GrupoCorreo } from './modules/correo/types';
 import { cn } from './components/ui/utils';
@@ -217,6 +218,9 @@ export default function Layout() {
         : []),
       ...(userIsSuperAdmin(user)
         ? [{ path: '/empresas' as const, label: t('nav.empresas'), icon: Building2 }]
+        : []),
+      ...(userIsSuperAdmin(user)
+        ? [{ path: '/sincronizacion' as const, label: t('nav.sincronizacion'), icon: RefreshCw }]
         : []),
       ...(!isAdminOnly
         ? [{ path: '/monitoreo' as const, label: t('nav.monitoreo'), icon: Monitor }]

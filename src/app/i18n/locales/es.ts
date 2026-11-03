@@ -67,6 +67,7 @@ export const esMessages: MessageTree = {
     administracion: 'Administración',
     usuarios: 'Usuarios',
     empresas: 'Empresas',
+    sincronizacion: 'Sincronización',
     monitoreo: 'Monitoreo',
     controlAuditoria: 'Control / Auditoría',
     auditoriaUsuarios: 'Auditoría usuarios',

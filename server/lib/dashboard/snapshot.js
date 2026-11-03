@@ -1,4 +1,15 @@
-import { fetchAllDispositivos, deviceRowKey } from '../telemetry.js';
+import { fetchSourcesDetailed, deviceRowKey } from '../telemetry.js';
+import { recordLinkProbes } from './linkHealth.js';
+import { upsertKnownDevices } from './deviceRegistry.js';
+import { ensureDashboardSchema } from '../db.js';
+import {
+  countCurrentDevices,
+  getSyncState,
+  loadCurrentDispositivos,
+  markSourceDevicesAbsent,
+  saveSyncState,
+  upsertCurrentDevices,
+} from './fleetStore.js';
 import {
   getDeviceAlertConfigMap,
 } from '../deviceAlertConfigRepository.js';
@@ -160,37 +171,135 @@ export function filterDispositivosForUser(dispositivos, user) {
   });
 }
 
-/**
- * Captura flota actual y la persiste en PostgreSQL.
- */
-export async function captureDashboardSnapshot() {
-  const dispositivos = await fetchAllDispositivos();
-  const { fleet, samples } = computeFleetCounts(dispositivos);
-  const saved = await saveSnapshotTransaction(fleet, samples);
-  try {
-    await pruneDashboardHistory();
-  } catch (e) {
-    console.warn('[dashboard] prune:', e.message);
-  }
+function linkSummary(link) {
   return {
-    ...saved,
-    total: fleet.total,
-    online: fleet.online,
-    wait: fleet.wait,
-    offline: fleet.offline,
-    en_rango: fleet.en_rango,
-    fuera_rango: fleet.fuera_rango,
+    codigo: link.codigo,
+    url: link.url,
+    ok: link.ok,
+    latencyMs: link.latencyMs ?? null,
+    error: link.error ?? null,
+    deviceCount: link.dispositivos?.length ?? 0,
+  };
+}
+
+/**
+ * El sistema consulta las APIs y deja la flota en PostgreSQL.
+ * Un origen lento o caído no borra sus equipos: se conserva el último payload.
+ * Una respuesta vacía tampoco marca ausencias (evita un glitch que vacíe el origen).
+ */
+export async function captureDashboardSnapshot({ trigger = 'interval' } = {}) {
+  await ensureDashboardSchema();
+  const startedAt = new Date().toISOString();
+  await saveSyncState({
+    started_at: startedAt,
+    finished_at: null,
+    trigger,
+    ok: null,
+    error: null,
+    detail: { phase: 'fetching' },
+  });
+
+  const { links } = await fetchSourcesDetailed({ timeoutMs: 50_000 });
+  const seenAt = new Date().toISOString();
+  const summaries = [];
+
+  for (const link of links) {
+    summaries.push(linkSummary(link));
+    if (!link.ok) continue;
+    const list = Array.isArray(link.dispositivos) ? link.dispositivos : [];
+    if (list.length === 0) continue;
+    await upsertCurrentDevices(list, seenAt);
+    await markSourceDevicesAbsent(
+      link.codigo,
+      list.map((d) => deviceRowKey(d)),
+      seenAt
+    );
+  }
+
+  try {
+    await recordLinkProbes(links);
+  } catch (e) {
+    console.warn('[dashboard] sondas:', e.message);
+  }
+
+  const stored = await loadCurrentDispositivos();
+  if (stored.length > 0) {
+    try {
+      await upsertKnownDevices(stored);
+    } catch (e) {
+      console.warn('[dashboard] equipos conocidos:', e.message);
+    }
+  }
+
+  let saved = null;
+  let fleetCounts = null;
+  if (stored.length > 0) {
+    const { fleet, samples } = computeFleetCounts(stored);
+    fleetCounts = fleet;
+    saved = await saveSnapshotTransaction(fleet, samples);
+    try {
+      await pruneDashboardHistory();
+    } catch (e) {
+      console.warn('[dashboard] prune:', e.message);
+    }
+  }
+
+  const counts = await countCurrentDevices();
+  const anyOk = summaries.some((l) => l.ok && l.deviceCount > 0);
+  const detail = {
+    links: summaries,
+    ...counts,
+    snapshotId: saved?.id ?? null,
+  };
+  const finishedAt = new Date().toISOString();
+  const error = anyOk || stored.length > 0 ? null : 'Ningún origen devolvió equipos';
+  await saveSyncState({
+    started_at: startedAt,
+    finished_at: finishedAt,
+    trigger,
+    ok: error == null,
+    error,
+    detail,
+  });
+
+  return {
+    id: saved?.id ?? null,
+    captured_at: saved?.captured_at ?? finishedAt,
+    total: fleetCounts?.total ?? counts.total,
+    online: fleetCounts?.online ?? 0,
+    wait: fleetCounts?.wait ?? 0,
+    offline: fleetCounts?.offline ?? 0,
+    en_rango: fleetCounts?.en_rango ?? 0,
+    fuera_rango: fleetCounts?.fuera_rango ?? 0,
+    ...counts,
+    links: summaries,
+    trigger,
+    finishedAt,
   };
 }
 
 let capturing = false;
 
-export async function captureDashboardSnapshotSafe() {
+export async function captureDashboardSnapshotSafe(opts) {
   if (capturing) return { skipped: 'busy' };
   capturing = true;
   try {
-    return await captureDashboardSnapshot();
+    return await captureDashboardSnapshot(opts);
+  } catch (e) {
+    await saveSyncState({
+      started_at: new Date().toISOString(),
+      finished_at: new Date().toISOString(),
+      trigger: opts?.trigger ?? 'interval',
+      ok: false,
+      error: e?.message ?? String(e),
+      detail: (await getSyncState().catch(() => null))?.detail ?? {},
+    }).catch(() => {});
+    throw e;
   } finally {
     capturing = false;
   }
+}
+
+export function dashboardSyncInProgress() {
+  return capturing;
 }

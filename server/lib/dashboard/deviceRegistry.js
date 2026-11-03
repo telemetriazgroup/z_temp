@@ -9,7 +9,6 @@ import { deviceRowKey } from '../telemetry.js';
  * Devuelve los INSERT posteriores a ese bootstrap.
  */
 export async function upsertKnownDevices(dispositivos) {
-  const nuevos = [];
   const now = new Date().toISOString();
   const countR = await query(
     `SELECT COUNT(*)::int AS n FROM dashboard_known_device`
@@ -17,55 +16,63 @@ export async function upsertKnownDevices(dispositivos) {
   const bootstrapping = (countR.rows[0]?.n ?? 0) === 0;
   const initialStatus = bootstrapping ? 'revisado' : 'pendiente';
 
+  const rows = [];
   for (const d of dispositivos) {
-    const rowKey = deviceRowKey(d);
-    const conexion = String(d.estado_conexion ?? 'offline').toLowerCase();
+    if (d?.imei == null || d.imei === '') continue;
     const power =
       d.power_state_texto === 'on' || d.power_state_texto === 'off'
         ? d.power_state_texto
         : null;
-
-    const r = await query(
-      `INSERT INTO dashboard_known_device (
-         row_key, imei, codigo, first_seen_at, last_seen_at,
-         first_estado_conexion, review_status,
-         last_estado_conexion, last_power_state, meta
-       ) VALUES ($1,$2,$3,$4,$4,$5,$6,$5,$7,$8::jsonb)
-       ON CONFLICT (row_key) DO UPDATE SET
-         last_seen_at = EXCLUDED.last_seen_at,
-         codigo = COALESCE(EXCLUDED.codigo, dashboard_known_device.codigo),
-         last_estado_conexion = EXCLUDED.last_estado_conexion,
-         last_power_state = EXCLUDED.last_power_state
-       RETURNING row_key, imei, codigo, first_seen_at, review_status,
-                 (xmax = 0) AS inserted`,
-      [
-        rowKey,
-        d.imei,
-        d.codigo ?? null,
-        now,
-        conexion,
-        initialStatus,
-        power,
-        JSON.stringify({
-          ultima_actualizacion: d.ultima_actualizacion ?? null,
-        }),
-      ]
-    );
-
-    const row = r.rows[0];
-    const inserted = row?.inserted === true || row?.inserted === 't';
-    if (inserted && !bootstrapping) {
-      nuevos.push({
-        rowKey: row.row_key,
-        imei: row.imei,
-        codigo: row.codigo,
-        first_seen_at: row.first_seen_at,
-        review_status: row.review_status,
-      });
-    }
+    rows.push({
+      row_key: deviceRowKey(d),
+      imei: String(d.imei),
+      codigo: d.codigo ?? null,
+      conexion: String(d.estado_conexion ?? 'offline').toLowerCase(),
+      power,
+      meta: { ultima_actualizacion: d.ultima_actualizacion ?? null },
+    });
   }
+  if (!rows.length) return [];
 
-  return nuevos;
+  const payload = JSON.stringify(rows);
+  const inserted = await query(
+    `INSERT INTO dashboard_known_device (
+       row_key, imei, codigo, first_seen_at, last_seen_at,
+       first_estado_conexion, review_status,
+       last_estado_conexion, last_power_state, meta
+     )
+     SELECT row_key, imei, codigo, $2::timestamptz, $2::timestamptz,
+            conexion, $3, conexion, power, meta
+     FROM jsonb_to_recordset($1::jsonb) AS x(
+       row_key text, imei text, codigo text, conexion text, power text, meta jsonb
+     )
+     ON CONFLICT (row_key) DO NOTHING
+     RETURNING row_key, imei, codigo, first_seen_at, review_status`,
+    [payload, now, initialStatus]
+  );
+
+  await query(
+    `UPDATE dashboard_known_device AS k SET
+       last_seen_at = $2::timestamptz,
+       codigo = COALESCE(x.codigo, k.codigo),
+       last_estado_conexion = x.conexion,
+       last_power_state = x.power,
+       meta = x.meta
+     FROM jsonb_to_recordset($1::jsonb) AS x(
+       row_key text, imei text, codigo text, conexion text, power text, meta jsonb
+     )
+     WHERE k.row_key = x.row_key`,
+    [payload, now]
+  );
+
+  if (bootstrapping) return [];
+  return inserted.rows.map((row) => ({
+    rowKey: row.row_key,
+    imei: row.imei,
+    codigo: row.codigo,
+    first_seen_at: row.first_seen_at,
+    review_status: row.review_status,
+  }));
 }
 
 export async function listDevicesPendingReview({ limit = 20 } = {}) {
