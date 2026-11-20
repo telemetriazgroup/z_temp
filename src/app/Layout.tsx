@@ -48,6 +48,8 @@ import {
   Moon,
   RadioTower,
   RefreshCw,
+  FileBarChart,
+  Folders,
 } from 'lucide-react';
 import type { GrupoCorreo } from './modules/correo/types';
 import { cn } from './components/ui/utils';
@@ -147,6 +149,7 @@ export default function Layout() {
       location.pathname === '/' ||
       location.pathname === '/listado' ||
       location.pathname.startsWith('/listado/') ||
+      location.pathname === '/informes' ||
       location.pathname === '/alarmas' ||
       location.pathname === '/incidentes-correo' ||
       location.pathname === '/ayuda' ||
@@ -194,6 +197,7 @@ export default function Layout() {
       return [
         { path: '/', label: t('nav.home'), icon: Home },
         { path: '/listado', label: t('nav.listado'), icon: List },
+        { path: '/informes', label: t('nav.informes'), icon: FileBarChart },
         { path: '/alarmas', label: t('nav.alarmas'), icon: Bell },
         { path: '/incidentes-correo', label: t('nav.incidentesCorreo'), icon: Inbox },
         { path: '/ayuda', label: t('nav.ayuda'), icon: HelpCircle },
@@ -210,6 +214,10 @@ export default function Layout() {
     return [
       { path: '/', label: t('nav.home'), icon: Home },
       { path: '/listado', label: t('nav.listado'), icon: List },
+      { path: '/informes', label: t('nav.informes'), icon: FileBarChart },
+      ...(canManage
+        ? [{ path: '/informes-masivos' as const, label: t('nav.campanas'), icon: Folders }]
+        : []),
       ...(canManage
         ? [{ path: '/administracion' as const, label: t('nav.administracion'), icon: Settings }]
         : []),

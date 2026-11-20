@@ -72,6 +72,8 @@ export const enMessages: MessageTree = {
     controlAuditoria: 'Control / Audit',
     auditoriaUsuarios: 'User audit',
     analisisSenal: 'Signal analysis',
+    informes: 'Report generator',
+    campanas: 'Report campaigns',
     alarmas: 'Alarms',
     catalogoAlarmas: 'Alarm catalog',
     configAlarmas: 'Alarm settings',

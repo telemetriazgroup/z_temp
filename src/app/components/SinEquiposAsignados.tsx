@@ -46,6 +46,7 @@ export function SinEquiposAsignados() {
 export function pathRequiresFleet(pathname: string): boolean {
   if (pathname === '/') return true;
   if (pathname === '/listado' || pathname.startsWith('/listado/')) return true;
+  if (pathname === '/informes' || pathname === '/informes-masivos') return true;
   if (pathname === '/monitoreo') return true;
   if (pathname === '/alarmas') return true;
   if (pathname === '/configuracion-alarmas') return true;

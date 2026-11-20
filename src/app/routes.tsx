@@ -21,6 +21,8 @@ import Empresas from "./pages/Empresas";
 import AuditoriaUsuarios from "./pages/AuditoriaUsuarios";
 import AnalisisSenal from "./pages/AnalisisSenal";
 import Sincronizacion from "./pages/Sincronizacion";
+import GeneradorInformes from "./pages/GeneradorInformes";
+import CampanasInformes from "./pages/CampanasInformes";
 import {
   appBasenameNoSlash,
   ensureBasenameTrailingSlash,
@@ -133,6 +135,14 @@ const routeTree = [
       {
         path: "sincronizacion",
         element: <Sincronizacion />,
+      },
+      {
+        path: "informes",
+        element: <GeneradorInformes />,
+      },
+      {
+        path: "informes-masivos",
+        element: <CampanasInformes />,
       },
       {
         path: "analisis-senal/:imei",

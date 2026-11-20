@@ -40,6 +40,14 @@ import {
   fetchCorreoStatus,
   fetchServerSmtp,
   saveServerSmtp,
+  fetchServerDrive,
+  saveServerDrive,
+  saveServerDriveFolder,
+  previewCortesCampaña,
+  crearCarpetasCampañaApi,
+  deleteServerDrive,
+  type CorteCampaña,
+  type DriveConfigServerView,
   fetchServerGrupos,
   saveServerGrupo,
   deleteServerGrupo,
@@ -209,6 +217,16 @@ export default function ConfiguracionCorreo() {
   const [smtpPasswordSaved, setSmtpPasswordSaved] = useState(false);
   const [smtpUpdatedAt, setSmtpUpdatedAt] = useState<string | null>(null);
   const [smtpFromName, setSmtpFromName] = useState('ZTRACK TELEMETRY');
+  const [smtpTestTo, setSmtpTestTo] = useState('');
+  const [sendingSmtpTest, setSendingSmtpTest] = useState(false);
+  const [driveInfo, setDriveInfo] = useState<DriveConfigServerView | null>(null);
+  const [driveUploading, setDriveUploading] = useState(false);
+  const [driveFolderUrl, setDriveFolderUrl] = useState('');
+  const [campanaCliente, setCampanaCliente] = useState('');
+  const [campanaDesde, setCampanaDesde] = useState('');
+  const [campanaHasta, setCampanaHasta] = useState('');
+  const [campanaCortes, setCampanaCortes] = useState<CorteCampaña[] | null>(null);
+  const [campanaBusy, setCampanaBusy] = useState(false);
   const [dispositivos, setDispositivos] = useState<DispositivoUltimoEstado[]>([]);
   const [grupos, setGrupos] = useState<GrupoCorreo[]>([]);
   const [envioLogs, setEnvioLogs] = useState<CorreoEnvioLog[]>([]);
@@ -303,6 +321,11 @@ export default function ConfiguracionCorreo() {
         setCiclos(await fetchServerCiclos(40, actingUser));
       } else {
         setCiclos([]);
+      }
+      if (canSeeRemitente) {
+        const drive = await fetchServerDrive(actingUser).catch(() => null);
+        setDriveInfo(drive);
+        setDriveFolderUrl(drive?.folderUrl ?? '');
       }
       setServerStatus(await fetchCorreoStatus());
       const st = await fetchDeviceAlertState(actingUser);
@@ -584,6 +607,128 @@ export default function ConfiguracionCorreo() {
       toast.success('Remitente guardado en la base interna del servidor');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Error al guardar SMTP');
+    }
+  };
+
+  const handleSendSmtpTest = async () => {
+    const to = smtpTestTo.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+      toast.error('Indique un correo de destino para la prueba');
+      return;
+    }
+    const payload = buildSmtpSavePayload();
+    if (payload == null) {
+      toast.error('Indique el Gmail remitente y la clave de 16 caracteres');
+      return;
+    }
+    setSendingSmtpTest(true);
+    try {
+      const saved = await saveServerSmtp(payload, actingUser);
+      if (payload.appPassword) {
+        persistSmtpConfig({
+          user: saved.user,
+          appPassword: payload.appPassword,
+          fromName: saved.fromName,
+        });
+      }
+      setSmtpPasswordSaved(saved.hasPassword);
+      setSmtpUpdatedAt(saved.updatedAt);
+      setSmtpPass('');
+      await sendTestEmailViaServer({
+        to: [to],
+        subject: 'ZTRACK — prueba de remitente',
+        text: 'El remitente SMTP quedó configurado. Los avisos de informes pueden salir desde esta cuenta.',
+      });
+      setServerStatus(await fetchCorreoStatus());
+      toast.success(`Prueba enviada a ${to}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'No se pudo enviar la prueba');
+    } finally {
+      setSendingSmtpTest(false);
+    }
+  };
+
+  const handleDriveFile = async (file: File | null) => {
+    if (!file) return;
+    if (file.size > 100_000) {
+      toast.error('El JSON de la cuenta de servicio es demasiado grande');
+      return;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await file.text());
+    } catch {
+      toast.error('Ese archivo no es JSON');
+      return;
+    }
+    setDriveUploading(true);
+    try {
+      const saved = await saveServerDrive(parsed, actingUser);
+      setDriveInfo(saved);
+      setDriveFolderUrl(saved.folderUrl ?? '');
+      toast.success(`Drive enlazado con ${saved.clientEmail}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'No se pudo guardar la cuenta de Drive');
+    } finally {
+      setDriveUploading(false);
+    }
+  };
+
+  const handleDriveClear = async () => {
+    if (!window.confirm('¿Quitar la cuenta de servicio de Drive del servidor?')) return;
+    setDriveUploading(true);
+    try {
+      setDriveInfo(await deleteServerDrive(actingUser));
+      setDriveFolderUrl('');
+      setCampanaCortes(null);
+      toast.success('Cuenta de Drive quitada');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'No se pudo quitar la cuenta de Drive');
+    } finally {
+      setDriveUploading(false);
+    }
+  };
+
+  const handleSaveDriveFolder = async () => {
+    setDriveUploading(true);
+    try {
+      const saved = await saveServerDriveFolder(driveFolderUrl, actingUser);
+      setDriveInfo(saved);
+      setDriveFolderUrl(saved.folderUrl ?? '');
+      toast.success('Carpeta general guardada');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'No se pudo guardar la carpeta');
+    } finally {
+      setDriveUploading(false);
+    }
+  };
+
+  const handleVerCortes = async (crear: boolean) => {
+    setCampanaBusy(true);
+    try {
+      const input = {
+        cliente: campanaCliente,
+        desde: campanaDesde,
+        hasta: campanaHasta,
+      };
+      const cortes = crear
+        ? (await crearCarpetasCampañaApi(input, actingUser)).cortes
+        : await previewCortesCampaña(input, actingUser);
+      setCampanaCortes(cortes);
+      if (!crear) {
+        toast.success('Orden de carpetas listo');
+      } else {
+        const nuevas = cortes.filter((c) => !c.existia).length;
+        toast.success(
+          nuevas === 0
+            ? 'Esas carpetas ya existían. No se crearon de nuevo.'
+            : `Carpetas listas. ${nuevas} nueva(s); el resto ya estaba.`
+        );
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'No se pudo armar el orden de la campaña');
+    } finally {
+      setCampanaBusy(false);
     }
   };
 
@@ -886,6 +1031,7 @@ export default function ConfiguracionCorreo() {
       <Tabs defaultValue="grupos">
         <TabsList>
           {canSeeRemitente && <TabsTrigger value="remitente">Remitente</TabsTrigger>}
+          {canSeeRemitente && <TabsTrigger value="drive">Drive</TabsTrigger>}
           <TabsTrigger value="grupos">Grupos de correo</TabsTrigger>
           <TabsTrigger value="reportes">Reportes programados</TabsTrigger>
           <TabsTrigger value="log">Registro de envíos</TabsTrigger>
@@ -954,6 +1100,193 @@ export default function ConfiguracionCorreo() {
                   Guardar remitente
                 </Button>
               </div>
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="smtp-test-to">Correo de prueba</Label>
+                <div className="flex flex-wrap gap-2">
+                  <Input
+                    id="smtp-test-to"
+                    type="email"
+                    className="max-w-md"
+                    value={smtpTestTo}
+                    onChange={(e) => setSmtpTestTo(e.target.value)}
+                    placeholder="destino@empresa.com"
+                  />
+                  <Button
+                    variant="secondary"
+                    onClick={() => void handleSendSmtpTest()}
+                    disabled={sendingSmtpTest}
+                  >
+                    {sendingSmtpTest ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Mail className="h-4 w-4 mr-2" />
+                    )}
+                    Enviar prueba
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Guarda el remitente y manda un aviso corto a ese correo. La clave de 16
+                  caracteres se escribe arriba; no hace falta un grupo de equipos.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+        )}
+
+        {canSeeRemitente && (
+        <TabsContent value="drive" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex flex-wrap items-center gap-2">
+                Cuenta de servicio de Drive
+                {driveInfo?.configured && (
+                  <Badge className="bg-emerald-600">Enlazada</Badge>
+                )}
+              </CardTitle>
+              <CardDescription>
+                Suba el JSON descargado de Google Cloud. Queda en el servidor, en el mismo
+                volumen que el remitente. La clave privada no se muestra ni se guarda en el
+                navegador.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {driveInfo?.configured ? (
+                <div className="text-sm space-y-1">
+                  <p>
+                    Cuenta: <span className="font-medium">{driveInfo.clientEmail}</span>
+                  </p>
+                  <p>
+                    Proyecto: <span className="font-medium">{driveInfo.projectId}</span>
+                  </p>
+                  {driveInfo.updatedAt && (
+                    <p className="text-muted-foreground">
+                      Actualizada el {new Date(driveInfo.updatedAt).toLocaleString('es-ES')}.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Todavía no hay una cuenta de servicio. Elija el archivo .json de la clave.
+                </p>
+              )}
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
+                  type="file"
+                  accept="application/json,.json"
+                  className="max-w-md"
+                  disabled={driveUploading}
+                  onChange={(e) => {
+                    const input = e.currentTarget;
+                    void handleDriveFile(input.files?.[0] ?? null).finally(() => {
+                      input.value = '';
+                    });
+                  }}
+                />
+                {driveInfo?.configured && (
+                  <Button
+                    variant="outline"
+                    disabled={driveUploading}
+                    onClick={() => void handleDriveClear()}
+                  >
+                    Quitar
+                  </Button>
+                )}
+              </div>
+              {driveInfo?.configured && (
+                <div className="space-y-3 border-t pt-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="drive-folder">Carpeta general de la unidad compartida</Label>
+                    <div className="flex flex-wrap gap-2">
+                      <Input
+                        id="drive-folder"
+                        className="max-w-xl"
+                        value={driveFolderUrl}
+                        onChange={(e) => setDriveFolderUrl(e.target.value)}
+                        placeholder="https://drive.google.com/drive/folders/…"
+                      />
+                      <Button
+                        variant="secondary"
+                        disabled={driveUploading}
+                        onClick={() => void handleSaveDriveFolder()}
+                      >
+                        Guardar carpeta
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Es el enlace raíz. Cada campaña crea debajo la carpeta del cliente, luego
+                      MES_AÑO y dentro SEMANA_n. Una semana de lunes a domingo que cruza de mes
+                      se parte: los días de cada mes van a su propia semana.
+                    </p>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div className="space-y-2">
+                      <Label htmlFor="campana-cliente">Cliente</Label>
+                      <Input
+                        id="campana-cliente"
+                        value={campanaCliente}
+                        onChange={(e) => setCampanaCliente(e.target.value)}
+                        placeholder="DONOFRIO"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="campana-desde">Desde</Label>
+                      <Input
+                        id="campana-desde"
+                        type="date"
+                        value={campanaDesde}
+                        onChange={(e) => setCampanaDesde(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="campana-hasta">Hasta</Label>
+                      <Input
+                        id="campana-hasta"
+                        type="date"
+                        value={campanaHasta}
+                        onChange={(e) => setCampanaHasta(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="outline"
+                      disabled={campanaBusy}
+                      onClick={() => void handleVerCortes(false)}
+                    >
+                      Ver orden
+                    </Button>
+                    <Button
+                      disabled={campanaBusy || !driveInfo.folderId}
+                      onClick={() => void handleVerCortes(true)}
+                    >
+                      {campanaBusy ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : null}
+                      Crear carpetas
+                    </Button>
+                  </div>
+                  {campanaCortes && (
+                    <ul className="text-sm space-y-1">
+                      {campanaCortes.map((c) => (
+                        <li key={c.ruta + c.desde}>
+                          {c.carpetaUrl ? (
+                            <a className="underline" href={c.carpetaUrl} target="_blank" rel="noreferrer">
+                              {c.ruta}
+                            </a>
+                          ) : (
+                            <span className="font-medium">{c.ruta}</span>
+                          )}{' '}
+                          <span className="text-muted-foreground">
+                            {c.desde} a {c.hasta}
+                            {c.existia ? ' · ya existía' : ''}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

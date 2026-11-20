@@ -34,7 +34,9 @@ RUN if [ -f pnpm-lock.yaml ]; then \
 FROM node:22-alpine
 
 ENV TZ=America/Lima
-RUN apk add --no-cache nginx tzdata font-dejavu
+ENV MPLBACKEND=Agg
+RUN apk add --no-cache nginx tzdata font-dejavu \
+      python3 py3-pandas py3-numpy py3-matplotlib py3-pillow py3-reportlab
 
 COPY nginx.conf /etc/nginx/http.d/default.conf
 COPY docker-entrypoint.sh /docker-entrypoint.sh

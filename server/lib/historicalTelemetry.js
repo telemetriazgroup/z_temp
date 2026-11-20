@@ -304,10 +304,19 @@ export async function fetchHistorialRango(codigo, imei, fechaInicial, fechaFinal
   const res = await fetch(url, { method: 'GET' });
   if (!res.ok) throw new Error(`Historial HTTP ${res.status}`);
   const json = await res.json();
-  if (json?.code !== 200 || !Array.isArray(json?.data?.datos)) {
+  return normalizarRespuestaHistorial(json);
+}
+
+/** La API responde code 200 también cuando no hay filas (`data` es un texto). */
+export function normalizarRespuestaHistorial(json) {
+  const code = Number(json?.code);
+  if (code !== 200) {
     throw new Error(json?.message ?? 'Respuesta de historial inválida');
   }
-  return json.data;
+  const data = json?.data;
+  if (Array.isArray(data?.datos)) return data;
+  if (Array.isArray(data)) return { ...json, datos: data };
+  return { datos: [], total_datos: 0 };
 }
 
 export async function fetchHistorialUltimasHoras(

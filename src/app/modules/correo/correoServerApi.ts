@@ -64,6 +64,99 @@ export async function fetchServerSmtp(actingUser?: string | null): Promise<SmtpC
   return body.data;
 }
 
+export type DriveConfigServerView = {
+  configured: boolean;
+  clientEmail: string | null;
+  projectId: string | null;
+  updatedAt: string | null;
+  folderId: string | null;
+  folderUrl: string | null;
+};
+
+export type CorteCampaña = {
+  cliente: string;
+  anio: number;
+  mes: number;
+  mesCarpeta: string;
+  semana: number;
+  semanaCarpeta: string;
+  desde: string;
+  hasta: string;
+  ruta: string;
+  carpetaId?: string;
+  carpetaUrl?: string;
+  existia?: boolean;
+};
+
+export async function fetchServerDrive(actingUser?: string | null): Promise<DriveConfigServerView> {
+  const res = await fetch(`${BASE}/config/drive`, {
+    headers: headers(actingUser, true),
+  });
+  const body = await parseRes<{ data: DriveConfigServerView }>(res);
+  return body.data;
+}
+
+export async function saveServerDrive(
+  credentials: unknown,
+  actingUser?: string | null
+): Promise<DriveConfigServerView> {
+  const res = await fetch(`${BASE}/config/drive`, {
+    method: 'PUT',
+    headers: headers(actingUser, true),
+    body: JSON.stringify(credentials),
+  });
+  const body = await parseRes<{ data: DriveConfigServerView }>(res);
+  return body.data;
+}
+
+export async function saveServerDriveFolder(
+  url: string,
+  actingUser?: string | null
+): Promise<DriveConfigServerView> {
+  const res = await fetch(`${BASE}/config/drive/carpeta`, {
+    method: 'PUT',
+    headers: headers(actingUser, true),
+    body: JSON.stringify({ url }),
+  });
+  const body = await parseRes<{ data: DriveConfigServerView }>(res);
+  return body.data;
+}
+
+export async function previewCortesCampaña(
+  input: { cliente: string; desde: string; hasta: string },
+  actingUser?: string | null
+): Promise<CorteCampaña[]> {
+  const res = await fetch(`${BASE}/config/drive/cortes`, {
+    method: 'POST',
+    headers: headers(actingUser, true),
+    body: JSON.stringify(input),
+  });
+  const body = await parseRes<{ data: CorteCampaña[] }>(res);
+  return body.data;
+}
+
+export async function crearCarpetasCampañaApi(
+  input: { cliente: string; desde: string; hasta: string },
+  actingUser?: string | null
+): Promise<{ cliente: string; cortes: CorteCampaña[] }> {
+  const res = await fetch(`${BASE}/config/drive/carpetas`, {
+    method: 'POST',
+    headers: headers(actingUser, true),
+    body: JSON.stringify(input),
+  });
+  const body = await parseRes<{ data: { cliente: string; cortes: CorteCampaña[] } }>(res);
+  return body.data;
+}
+
+export async function deleteServerDrive(actingUser?: string | null): Promise<DriveConfigServerView> {
+  const res = await fetch(`${BASE}/config/drive`, {
+    method: 'DELETE',
+    headers: headers(actingUser, true),
+  });
+  const body = await parseRes<{ data: DriveConfigServerView }>(res);
+  return body.data;
+}
+
 export async function saveServerSmtp(
   config: SmtpConfigSaveInput,
   actingUser?: string | null

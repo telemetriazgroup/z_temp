@@ -72,6 +72,8 @@ export const esMessages: MessageTree = {
     controlAuditoria: 'Control / Auditoría',
     auditoriaUsuarios: 'Auditoría usuarios',
     analisisSenal: 'Análisis de señal',
+    informes: 'Generador de informes',
+    campanas: 'Campañas de informes',
     alarmas: 'Alarmas',
     catalogoAlarmas: 'Catálogo Alarmas',
     configAlarmas: 'Configuración Alarmas',

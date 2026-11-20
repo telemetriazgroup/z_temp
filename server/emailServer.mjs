@@ -24,6 +24,14 @@ import {
 } from './lib/alertEngine.js';
 import { getSmtpConfig, saveSmtpConfig, smtpPublicView } from './lib/smtpRepository.js';
 import {
+  drivePublicView,
+  saveDriveServiceAccount,
+  saveDriveFolder,
+  clearDriveServiceAccount,
+} from './lib/driveCredentials.js';
+import { planCarpetas } from './lib/informe/cortesCampaña.js';
+import { crearCarpetasCampaña } from './lib/informe/driveCarpetas.js';
+import {
   filterGruposForActor,
   validateAndNormalizeGrupoSave,
   grupoOwnedBy,
@@ -85,6 +93,9 @@ import {
 import { createAnalisisRouter } from './lib/analisis/routes.js';
 import { createDashboardRouter } from './lib/dashboard/routes.js';
 import { createSenalRouter } from './lib/senal/routes.js';
+import { createInformeRouter } from './lib/informe/routes.js';
+import { createCampanasRouter } from './lib/informe/campanasRoutes.js';
+import { tickCampanas } from './lib/informe/campanas.js';
 import { ensureAnalisisSchema } from './lib/db.js';
 import { captureDashboardSnapshotSafe } from './lib/dashboard/snapshot.js';
 import {
@@ -110,6 +121,8 @@ app.use(express.json({ limit: '2mb' }));
 app.use('/reefer/api/analisis', createAnalisisRouter());
 app.use('/reefer/api/correo/dashboard', createDashboardRouter());
 app.use('/reefer/api/senal', createSenalRouter());
+app.use('/reefer/api/informes', createCampanasRouter());
+app.use('/reefer/api/informes', createInformeRouter());
 
 function isValidEmail(s) {
   return typeof s === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -355,6 +368,88 @@ app.put('/reefer/api/correo/config/smtp', (req, res) => {
       detail: { user: saved.user, fromName: saved.fromName },
     });
     res.json({ ok: true, data: smtpPublicView(saved) });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/reefer/api/correo/config/drive', (req, res) => {
+  if (!requireSuperUser(req, res)) return;
+  res.json({ ok: true, data: drivePublicView() });
+});
+
+app.put('/reefer/api/correo/config/drive', (req, res) => {
+  try {
+    if (!requireSuperUser(req, res)) return;
+    const saved = saveDriveServiceAccount(req.body ?? {});
+    auditActorEvent(req, {
+      action: 'correo.drive_update',
+      module: 'correo',
+      summary: `Guardó la cuenta de servicio de Drive (${saved.clientEmail})`,
+      detail: { clientEmail: saved.clientEmail, projectId: saved.projectId },
+    });
+    res.json({ ok: true, data: saved });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+app.delete('/reefer/api/correo/config/drive', (req, res) => {
+  if (!requireSuperUser(req, res)) return;
+  const saved = clearDriveServiceAccount();
+  auditActorEvent(req, {
+    action: 'correo.drive_delete',
+    module: 'correo',
+    summary: 'Quitó la cuenta de servicio de Drive',
+  });
+  res.json({ ok: true, data: saved });
+});
+
+app.put('/reefer/api/correo/config/drive/carpeta', (req, res) => {
+  try {
+    if (!requireSuperUser(req, res)) return;
+    const saved = saveDriveFolder(req.body ?? {});
+    auditActorEvent(req, {
+      action: 'correo.drive_folder',
+      module: 'correo',
+      summary: 'Guardó la carpeta general de Drive',
+      detail: { folderId: saved.folderId },
+    });
+    res.json({ ok: true, data: saved });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/reefer/api/correo/config/drive/cortes', (req, res) => {
+  try {
+    if (!requireSuperUser(req, res)) return;
+    const body = req.body ?? {};
+    const cortes = planCarpetas(body.cliente, body.desde, body.hasta);
+    res.json({ ok: true, data: cortes });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/reefer/api/correo/config/drive/carpetas', async (req, res) => {
+  try {
+    if (!requireSuperUser(req, res)) return;
+    const body = req.body ?? {};
+    const rootId = drivePublicView().folderId;
+    const data = await crearCarpetasCampaña({
+      cliente: body.cliente,
+      desde: body.desde,
+      hasta: body.hasta,
+      rootId,
+    });
+    auditActorEvent(req, {
+      action: 'correo.drive_carpetas',
+      module: 'correo',
+      summary: `Creó carpetas de campaña ${data.cliente} (${body.desde} a ${body.hasta})`,
+      detail: { cliente: data.cliente, desde: body.desde, hasta: body.hasta, cortes: data.cortes.length },
+    });
+    res.json({ ok: true, data });
   } catch (e) {
     res.status(400).json({ ok: false, error: e.message });
   }
@@ -1406,4 +1501,11 @@ app.listen(PORT, '0.0.0.0', () => {
     );
   }, 60_000);
   console.log('[reporte] comportamiento cada 6/8/12/24 h, revisión cada 60s');
+  setInterval(() => {
+    tickCampanas().catch((e) => console.warn('[campaña] tick', e.message));
+  }, 60_000);
+  setTimeout(() => {
+    tickCampanas().catch((e) => console.warn('[campaña] reanudación', e.message));
+  }, 12_000);
+  console.log('[campaña] informes masivos, revisión cada 60s');
 });
