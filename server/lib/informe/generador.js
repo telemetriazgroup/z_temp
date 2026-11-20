@@ -93,8 +93,15 @@ function runPython(csvPath, cfgPath) {
         reject(new Error(tail || `El generador terminó con código ${code}`));
         return;
       }
+      let result;
+      try {
+        result = JSON.parse(line.slice('RESULT '.length));
+      } catch (err) {
+        reject(new Error(`El generador devolvió un resultado ilegible: ${err.message}`));
+        return;
+      }
       resolve({
-        result: JSON.parse(line.slice('RESULT '.length)),
+        result,
         log: stdout
           .split('\n')
           .filter((l) => l && !l.startsWith('RESULT '))

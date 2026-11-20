@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -99,6 +100,17 @@ def slug_archivo(nombre: str) -> str:
     s = re.sub(r"[^\w.\-]+", "_", str(nombre).strip(), flags=re.UNICODE)
     s = re.sub(r"_+", "_", s).strip("._")
     return s or "equipo"
+
+
+def _finito(valor, vacio=None):
+    """None si el promedio no existe (día sin horas evaluables)."""
+    try:
+        x = float(valor)
+    except (TypeError, ValueError):
+        return vacio
+    if math.isnan(x) or math.isinf(x):
+        return vacio
+    return x
 
 
 def procesar(ruta_csv, cfg, desde=None, hasta=None, nombre_override=None,
@@ -322,8 +334,8 @@ def procesar(ruta_csv, cfg, desde=None, hasta=None, nombre_override=None,
         "paginas": int(total),
         "filas_reconstruidas": int(filas_recon),
         "huecos": int(len(huecos)),
-        "cumplimiento": float(resumen["pct_en_rango"].mean()),
-        "horas_en_rango_prom": float(resumen["horas_en_rango"].mean()),
+        "cumplimiento": _finito(resumen["pct_en_rango"].mean()),
+        "horas_en_rango_prom": _finito(resumen["horas_en_rango"].mean(), 0.0),
         "horas_fuera_rango": float(resumen["horas_fuera_rango"].sum()) if len(resumen) else 0.0,
         "horas_defrost": float(resumen["horas_defrost"].sum()) if len(resumen) else 0.0,
         "dias_detalle": [

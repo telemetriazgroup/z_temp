@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -11,6 +12,17 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from ztrack_main import CONFIG_POR_DEFECTO, procesar  # noqa: E402
+
+
+def _json_finito(valor):
+    """NaN e infinito no son JSON. Un día sin horas evaluables no debe tumbar el proceso."""
+    if isinstance(valor, float) and (math.isnan(valor) or math.isinf(valor)):
+        return None
+    if isinstance(valor, dict):
+        return {k: _json_finito(v) for k, v in valor.items()}
+    if isinstance(valor, list):
+        return [_json_finito(v) for v in valor]
+    return valor
 
 
 def main():
@@ -51,7 +63,7 @@ def main():
         "resumen": Path(archivos["resumen"]).name if archivos.get("resumen") else None,
         "huecos_csv": Path(archivos["huecos"]).name if archivos.get("huecos") else None,
     }
-    print("RESULT " + json.dumps(out, ensure_ascii=False), flush=True)
+    print("RESULT " + json.dumps(_json_finito(out), ensure_ascii=False, allow_nan=False), flush=True)
     return 0
 
 
