@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { iniciarOutbox, setWaSender } from './outbox.js';
@@ -7,6 +8,39 @@ import { reasignarTelefono, registrarMensaje } from './repository.js';
 import { jidDeTelefono, normalizarTelefono, telefonoDeJid } from './telefono.js';
 
 const sessionsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../wa-sessions');
+let reintentoPerfil = false;
+
+/** El candado de Chromium apunta al contenedor anterior. Ese proceso ya no existe. */
+function perfilAjeno() {
+  const lock = path.join(sessionsDir, 'session', 'SingletonLock');
+  let destino = '';
+  try {
+    destino = fs.readlinkSync(lock);
+  } catch {
+    return false;
+  }
+  const [host, pidRaw] = String(destino).split('-');
+  if (!host || host !== os.hostname()) return true;
+  const pid = Number(pidRaw);
+  if (!pid) return true;
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+function quitarCandadosPerfil() {
+  const dir = path.join(sessionsDir, 'session');
+  for (const nombre of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
+    try {
+      fs.unlinkSync(path.join(dir, nombre));
+    } catch {
+      /* el candado ya no está */
+    }
+  }
+}
 
 const estado = {
   fase: 'detenido',
@@ -153,8 +187,10 @@ export async function startWaClient() {
   registrarPaso('chromium', 'Chromium', exe, 'ok');
   iniciando = true;
   tocar({ fase: 'iniciando', error: null });
+  let reintentar = false;
   try {
     fs.mkdirSync(sessionsDir, { recursive: true });
+    if (perfilAjeno()) quitarCandadosPerfil();
     registrarPaso('sesion', 'Carpeta de sesión', sessionsDir, fs.existsSync(sessionsDir) ? 'ok' : 'warn');
     const { default: pkg } = await import('whatsapp-web.js');
     const { Client, LocalAuth } = pkg;
@@ -189,6 +225,7 @@ export async function startWaClient() {
       registrarPaso('conectado', 'WhatsApp conectado', `Sesión activa ${wid || ''}`.trim(), 'ok');
       const errorIdx = pasos.findIndex((p) => p.id === 'error');
       if (errorIdx >= 0) pasos.splice(errorIdx, 1);
+      reintentoPerfil = false;
     });
     c.on('auth_failure', (msg) => {
       tocar({ fase: 'error', error: String(msg || 'auth_failure') });
@@ -217,12 +254,25 @@ export async function startWaClient() {
     client = c;
     await c.initialize();
   } catch (e) {
-    tocar({ fase: 'error', error: e.message });
-    registrarPaso('error', 'Error', e.message, 'error');
+    const texto = String(e?.message || e);
+    const candado = /profile appears to be in use|SingletonLock|Code: 21/.test(texto);
     client = null;
+    if (candado && !reintentoPerfil) {
+      reintentoPerfil = true;
+      reintentar = true;
+      quitarCandadosPerfil();
+      console.warn('[wa] perfil de Chromium bloqueado por un contenedor anterior; se reintenta');
+    } else {
+      const visible = candado
+        ? 'Chromium dejó el perfil bloqueado por un arranque anterior. Reinicie la sesión de WhatsApp.'
+        : texto;
+      tocar({ fase: 'error', error: visible });
+      registrarPaso('error', 'Error', visible, 'error');
+    }
   } finally {
     iniciando = false;
   }
+  if (reintentar) return startWaClient();
   return estadoWa();
 }
 
