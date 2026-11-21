@@ -242,15 +242,24 @@ export default function WhatsAppAlertas() {
                   ? `Últimos 100 de ${telefono}. Con fechas se amplía la consulta de ese intervalo.`
                   : 'Elija un número.'}
               </p>
-              <div className="max-h-[28rem] space-y-2 overflow-auto">
-                {mensajes.map((m) => (
-                  <div key={m.id} className="rounded border px-3 py-2 text-sm">
-                    <div className="text-xs text-muted-foreground">
-                      {m.direccion === 'in' ? 'Respuesta' : 'Enviado'} · {new Date(m.creado_en).toLocaleString('es-PE')} · {m.tipo || 'chat'}
+              <div className="flex max-h-[28rem] flex-col gap-2 overflow-auto rounded bg-muted/30 p-3">
+                {[...mensajes].reverse().map((m) => {
+                  const usuario = m.direccion === 'in';
+                  return (
+                    <div key={m.id} className={`flex ${usuario ? 'justify-start' : 'justify-end'}`}>
+                      <div
+                        className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${
+                          usuario ? 'bg-background border' : 'bg-emerald-600 text-white'
+                        }`}
+                      >
+                        <div className={`text-[11px] ${usuario ? 'text-muted-foreground' : 'text-emerald-100'}`}>
+                          {usuario ? 'Usuario' : 'ZTRACK'} · {new Date(m.creado_en).toLocaleString('es-PE')}
+                        </div>
+                        <p className="whitespace-pre-wrap">{m.texto}</p>
+                      </div>
                     </div>
-                    <p className="whitespace-pre-wrap">{m.texto}</p>
-                  </div>
-                ))}
+                  );
+                })}
                 {telefono && mensajes.length === 0 && (
                   <p className="text-sm text-muted-foreground">No hay mensajes en ese corte.</p>
                 )}

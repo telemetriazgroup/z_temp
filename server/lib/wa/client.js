@@ -3,7 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { iniciarOutbox, setWaSender } from './outbox.js';
 import { recibirMensaje } from './conversacion.js';
-import { registrarMensaje } from './repository.js';
+import { reasignarTelefono, registrarMensaje } from './repository.js';
 import { jidDeTelefono, normalizarTelefono, telefonoDeJid } from './telefono.js';
 
 const sessionsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../wa-sessions');
@@ -98,6 +98,41 @@ export async function enviarMensajePrueba({ telefono, texto } = {}) {
   };
 }
 
+function telefonoReal(crudo, from) {
+  const telefono = normalizarTelefono(crudo);
+  const lid = String(from || '').endsWith('@lid') ? telefonoDeJid(from) : '';
+  if (!telefono || telefono === lid) return '';
+  if (telefono.length < 11 || telefono.length > 13) return '';
+  return telefono;
+}
+
+async function resolverEntrada(msg, wa) {
+  const from = String(msg.from || '');
+  try {
+    const contact = await msg.getContact();
+    const crudo = contact?.number || (String(contact?.id?._serialized || '').endsWith('@c.us') ? contact.id.user : '');
+    const telefono = telefonoReal(crudo, from);
+    if (telefono) return { telefono, jid: jidDeTelefono(telefono), lid: telefonoDeJid(from) };
+  } catch (e) {
+    console.warn('[wa] contacto', e.message);
+  }
+  if (from.endsWith('@lid') && wa?.getContactLidAndPhone) {
+    try {
+      const [par] = await wa.getContactLidAndPhone([from]);
+      const telefono = telefonoReal(par?.pn, from);
+      if (telefono) return { telefono, jid: jidDeTelefono(telefono), lid: telefonoDeJid(from) };
+    } catch (e) {
+      console.warn('[wa] lid', e.message);
+    }
+  }
+  const telefono = telefonoDeJid(from);
+  return {
+    telefono,
+    jid: from.endsWith('@c.us') ? from : jidDeTelefono(telefono),
+    lid: '',
+  };
+}
+
 async function qrADataUrl(qr) {
   const QRCode = (await import('qrcode')).default;
   return QRCode.toDataURL(qr, { margin: 1, width: 280 });
@@ -168,11 +203,14 @@ export async function startWaClient() {
       if (from.endsWith('@g.us') || msg.fromMe) return;
       const texto = String(msg.body || '').trim();
       if (!texto) return;
-      recibirMensaje({
-        jid: from.endsWith('@c.us') ? from : `${telefonoDeJid(from)}@c.us`,
-        telefono: telefonoDeJid(from),
-        texto,
-      }).catch((e) => console.warn('[wa] mensaje', e.message));
+      resolverEntrada(msg, c)
+        .then(async (entrada) => {
+          if (entrada.lid && entrada.lid !== entrada.telefono) {
+            await reasignarTelefono(entrada.lid, entrada.telefono).catch(() => {});
+          }
+          return recibirMensaje({ jid: entrada.jid, telefono: entrada.telefono, texto });
+        })
+        .catch((e) => console.warn('[wa] mensaje', e.message));
     });
     setWaSender((jid, text) => c.sendMessage(jid, text));
     iniciarOutbox();

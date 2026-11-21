@@ -1,47 +1,43 @@
 import { registrarMensaje } from './repository.js';
-import { TIEMPOS_WA, proximoEnvio, avanzarSlot } from './tiempos.js';
+import { TIEMPOS_WA, proximoEnvio } from './tiempos.js';
 
 const cola = [];
 let seq = 1;
 let sender = null;
-let timer = null;
-let enviando = false;
+let timerChat = null;
+let timerAlerta = null;
+let enviandoChat = false;
+let enviandoAlerta = false;
 let slotAlerta = 0;
-let slotConversacion = 0;
-const ultimoJid = new Map();
-const ultimoInbound = new Map();
+const programadoJid = new Map();
 
 export function setWaSender(fn) {
   sender = fn;
 }
 
-export function marcarInbound(jid) {
-  if (jid) ultimoInbound.set(jid, Date.now());
+export function marcarInbound() {
+  /* la respuesta ya no depende de una ventana de chat activo */
 }
 
-export function chatActivo(jid) {
-  const t = ultimoInbound.get(jid) || 0;
-  return t > 0 && Date.now() - t < TIEMPOS_WA.activoMs;
+export function chatActivo() {
+  return true;
 }
 
 export function pendientePorJid(jid) {
-  return cola.some((j) => j.jid === jid);
+  return cola.some((j) => j.jid === jid && !j.esAlerta);
 }
 
 export function encolarTexto(jid, text, { esAlerta = false, contactoId = null, telefono = null, tipo = null } = {}) {
   if (!jid || !text) return null;
   const ahora = Date.now();
-  const activo = !esAlerta && chatActivo(jid);
   const enviarEn = proximoEnvio({
     ahora,
     esAlerta,
-    chatActivo: activo,
-    ultimoJid: ultimoJid.get(jid) || 0,
+    ultimoJid: esAlerta ? 0 : programadoJid.get(jid) || 0,
     slotAlerta,
-    slotConversacion,
   });
-  if (esAlerta) slotAlerta = avanzarSlot(enviarEn, true);
-  else if (!activo) slotConversacion = avanzarSlot(enviarEn, false);
+  if (esAlerta) slotAlerta = enviarEn + TIEMPOS_WA.gapAlertaMs;
+  else programadoJid.set(jid, enviarEn);
   const job = {
     id: seq++,
     jid,
@@ -53,46 +49,83 @@ export function encolarTexto(jid, text, { esAlerta = false, contactoId = null, t
     tipo,
   };
   cola.push(job);
-  cola.sort((a, b) => a.enviarEn - b.enviarEn || a.id - b.id);
   return job;
 }
 
-async function drenar() {
-  if (enviando || !sender) return;
-  const ahora = Date.now();
-  const idx = cola.findIndex((j) => j.enviarEn <= ahora);
-  if (idx < 0) return;
-  const job = cola.splice(idx, 1)[0];
-  enviando = true;
+async function despachar(job) {
+  await sender(job.jid, job.text);
+  if (!job.esAlerta) {
+    programadoJid.set(job.jid, Math.max(programadoJid.get(job.jid) || 0, Date.now()));
+  }
+  await registrarMensaje({
+    contactoId: job.contactoId,
+    telefono: job.telefono || job.jid.split('@')[0],
+    direccion: 'out',
+    texto: job.text,
+    tipo: job.tipo || (job.esAlerta ? 'alerta' : 'chat'),
+  }).catch(() => {});
+}
+
+function tomar(esAlerta, ahora) {
+  const idx = cola.findIndex((j) => j.esAlerta === esAlerta && j.enviarEn <= ahora);
+  if (idx < 0) return null;
+  return cola.splice(idx, 1)[0];
+}
+
+async function drenarChat() {
+  if (enviandoChat || enviandoAlerta || !sender) return;
+  const job = tomar(false, Date.now());
+  if (!job) return;
+  enviandoChat = true;
   try {
-    await sender(job.jid, job.text);
-    ultimoJid.set(job.jid, Date.now());
-    await registrarMensaje({
-      contactoId: job.contactoId,
-      telefono: job.telefono || job.jid.split('@')[0],
-      direccion: 'out',
-      texto: job.text,
-      tipo: job.tipo || (job.esAlerta ? 'alerta' : 'chat'),
-    }).catch(() => {});
+    await despachar(job);
   } catch (e) {
     job.intentos = (job.intentos || 0) + 1;
     if (job.intentos < 3) {
-      job.enviarEn = Date.now() + TIEMPOS_WA.gapActivoMs;
+      job.enviarEn = Date.now() + TIEMPOS_WA.gapChatMs;
       cola.push(job);
     } else {
-      console.warn('[wa] no se pudo enviar', job.jid, e.message);
+      console.warn('[wa] no se pudo responder', job.jid, e.message);
     }
   } finally {
-    enviando = false;
+    enviandoChat = false;
+  }
+}
+
+async function drenarAlerta() {
+  if (enviandoChat || enviandoAlerta || !sender) return;
+  if (cola.some((j) => !j.esAlerta && j.enviarEn <= Date.now())) return;
+  const job = tomar(true, Date.now());
+  if (!job) return;
+  enviandoAlerta = true;
+  try {
+    await despachar(job);
+  } catch (e) {
+    job.intentos = (job.intentos || 0) + 1;
+    if (job.intentos < 3) {
+      job.enviarEn = Date.now() + TIEMPOS_WA.gapChatMs;
+      cola.push(job);
+    } else {
+      console.warn('[wa] no se pudo enviar alerta', job.jid, e.message);
+    }
+  } finally {
+    enviandoAlerta = false;
   }
 }
 
 export function iniciarOutbox() {
-  if (timer) return;
-  timer = setInterval(() => {
-    drenar().catch((e) => console.warn('[wa] outbox', e.message));
-  }, TIEMPOS_WA.tickMs);
-  timer.unref?.();
+  if (!timerChat) {
+    timerChat = setInterval(() => {
+      drenarChat().catch((e) => console.warn('[wa] chat', e.message));
+    }, TIEMPOS_WA.tickChatMs);
+    timerChat.unref?.();
+  }
+  if (!timerAlerta) {
+    timerAlerta = setInterval(() => {
+      drenarAlerta().catch((e) => console.warn('[wa] alerta', e.message));
+    }, TIEMPOS_WA.tickAlertaMs);
+    timerAlerta.unref?.();
+  }
 }
 
 export function colaPendiente() {

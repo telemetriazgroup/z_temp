@@ -1,40 +1,27 @@
 /**
- * Ritmo de salida, el mismo criterio con el que se construyó zgroup-bot:
- * una alerta nueva por minuto entre destinatarios, y respuestas al chat
- * activo como máximo cada 10 s. El aviso a un número aún no activado espera 90 s.
+ * Dos ritmos distintos.
+ * El chat (prueba, ESTADO, respuestas) espera 4 s y no entra en la cola de alertas.
+ * Las alertas siguen a 1 por minuto, en su propio hilo, para no frenar la conversación.
  */
 export const TIEMPOS_WA = {
   gapAlertaMs: Number(process.env.OUTBOX_GAP_ALERTA_MS ?? 60_000),
-  gapActivoMs: Number(process.env.OUTBOX_GAP_ACTIVO_MS ?? 10_000),
+  gapChatMs: Number(process.env.OUTBOX_GAP_CHAT_MS ?? 4_000),
   activoMs: Number(process.env.OUTBOX_ACTIVO_MS ?? 15 * 60_000),
   avisoNoActivoMs: Number(process.env.AVISO_NO_ACTIVO_MS ?? 90_000),
   respuestasRequeridas: Number(process.env.PRUEBA_RESPUESTAS_REQUERIDAS ?? 3),
-  tickMs: 2_000,
+  tickChatMs: 400,
+  tickAlertaMs: 1_000,
 };
 
-/**
- * Calcula cuándo puede salir el próximo mensaje.
- * Las alertas no se adelantan al chat activo: van en su propio cupo de 1/min.
- */
-export function proximoEnvio({
-  ahora,
-  esAlerta,
-  chatActivo,
-  ultimoJid = 0,
-  slotAlerta = 0,
-  slotConversacion = 0,
-}) {
-  const t = TIEMPOS_WA;
-  if (esAlerta) {
-    return Math.max(ahora, slotAlerta);
-  }
-  if (chatActivo) {
-    return Math.max(ahora, ultimoJid + t.gapActivoMs);
-  }
-  return Math.max(ahora, slotConversacion);
-}
+/** @deprecated usar gapChatMs */
+export const gapActivoMs = TIEMPOS_WA.gapChatMs;
 
-export function avanzarSlot(envioEn, esAlerta) {
-  const paso = esAlerta ? TIEMPOS_WA.gapAlertaMs : TIEMPOS_WA.gapAlertaMs;
-  return envioEn + paso;
+/**
+ * El chat sale 4 s después del mensaje anterior a ese número.
+ * La alerta solo mira su propio cupo de 1 por minuto.
+ */
+export function proximoEnvio({ ahora, esAlerta, ultimoJid = 0, slotAlerta = 0 }) {
+  if (esAlerta) return Math.max(ahora, slotAlerta);
+  const previo = ultimoJid > 0 ? ultimoJid + TIEMPOS_WA.gapChatMs : ahora + TIEMPOS_WA.gapChatMs;
+  return Math.max(ahora, previo);
 }

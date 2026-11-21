@@ -6,30 +6,27 @@ const ahora = 1_000_000;
 const alerta = proximoEnvio({
   ahora,
   esAlerta: true,
-  chatActivo: true,
   slotAlerta: ahora + 5_000,
 });
-assert.equal(alerta, ahora + 5_000, 'una alerta espera el cupo de 1 por minuto');
+assert.equal(alerta, ahora + 5_000, 'una alerta espera su propio cupo');
 
 const segunda = proximoEnvio({
   ahora: alerta,
   esAlerta: true,
-  chatActivo: false,
   slotAlerta: alerta + TIEMPOS_WA.gapAlertaMs,
 });
-assert.equal(segunda - alerta, TIEMPOS_WA.gapAlertaMs, 'el segundo destinatario sale 60 s después');
+assert.equal(segunda - alerta, TIEMPOS_WA.gapAlertaMs, 'el segundo destinatario de alerta sale 60 s después');
 
-const chat = proximoEnvio({
-  ahora,
+const respuesta = proximoEnvio({ ahora, esAlerta: false, ultimoJid: 0, slotAlerta: ahora + 50_000 });
+assert.equal(respuesta, ahora + TIEMPOS_WA.gapChatMs, 'la respuesta espera 4 s y no el minuto de la alerta');
+
+const siguiente = proximoEnvio({
+  ahora: respuesta,
   esAlerta: false,
-  chatActivo: true,
-  ultimoJid: ahora - 1_000,
+  ultimoJid: respuesta,
   slotAlerta: ahora + 50_000,
 });
-assert.equal(chat, ahora - 1_000 + TIEMPOS_WA.gapActivoMs, 'el chat activo no espera el minuto de las alertas');
+assert.equal(siguiente - respuesta, TIEMPOS_WA.gapChatMs, 'el siguiente mensaje del mismo chat sale 4 s después');
+assert.equal(TIEMPOS_WA.gapChatMs, 4_000);
 
-console.log('tiempos ok', {
-  gapAlertaMs: TIEMPOS_WA.gapAlertaMs,
-  gapActivoMs: TIEMPOS_WA.gapActivoMs,
-  respuestas: TIEMPOS_WA.respuestasRequeridas,
-});
+console.log('tiempos ok', { gapAlertaMs: TIEMPOS_WA.gapAlertaMs, gapChatMs: TIEMPOS_WA.gapChatMs });

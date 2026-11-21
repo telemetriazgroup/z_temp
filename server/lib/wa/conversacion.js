@@ -165,13 +165,11 @@ export async function recibirMensaje({ jid, telefono, texto }) {
       'respuesta_prueba',
       `Respuesta ${actualizado.pruebaRespuestas}/${actualizado.pruebaRequeridas}: ${String(texto).slice(0, 120)}`
     );
-    if (!pendientePorJid(jid)) {
-      encolarTexto(jid, textoPaso(actualizado), {
-        contactoId: actualizado.id,
-        telefono: actualizado.telefono,
-        tipo: 'prueba',
-      });
-    }
+    encolarTexto(jid, textoPaso(actualizado), {
+      contactoId: actualizado.id,
+      telefono: actualizado.telefono,
+      tipo: 'prueba',
+    });
     if (intencion === 'estado') {
       const resumen = await resumenEquipos(actualizado);
       encolarTexto(jid, resumen, {

@@ -183,7 +183,7 @@ export default function Layout() {
 
   useEffect(() => {
     if (!user || userIsSuperAdmin(user)) return;
-    if (location.pathname === '/whatsapp') {
+    if (location.pathname === '/whatsapp' || location.pathname === '/informes-masivos') {
       navigate('/', { replace: true });
     }
   }, [user, location.pathname, navigate]);
@@ -223,7 +223,7 @@ export default function Layout() {
       { path: '/', label: t('nav.home'), icon: Home },
       { path: '/listado', label: t('nav.listado'), icon: List },
       { path: '/informes', label: t('nav.informes'), icon: FileBarChart },
-      ...(canManage
+      ...(userIsSuperAdmin(user)
         ? [{ path: '/informes-masivos' as const, label: t('nav.campanas'), icon: Folders }]
         : []),
       ...(canManage

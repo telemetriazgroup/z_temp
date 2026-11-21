@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { FileDown, Loader2, Search } from 'lucide-react';
 import { useAuth } from '../AuthContext';
-import { displayNameForDevice } from '../modules/usuario';
+import { displayNameForDevice, userMayAccessImei } from '../modules/usuario';
 import { readDeviceLocalNames, refreshDeviceNamesFromServer } from '../lib/deviceLocalNames';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
@@ -51,6 +51,7 @@ function daysAgo(n: number): string {
 export default function GeneradorInformes() {
   const { user } = useAuth();
   const [equipos, setEquipos] = useState<EquipoInforme[]>([]);
+  const [flotaCargada, setFlotaCargada] = useState(false);
   const [nombresListos, setNombresListos] = useState(0);
   const [busqueda, setBusqueda] = useState('');
   const [equipoKey, setEquipoKey] = useState('');
@@ -67,7 +68,8 @@ export default function GeneradorInformes() {
   useEffect(() => {
     void fetchEquiposInforme()
       .then(setEquipos)
-      .catch((e) => setError(e instanceof Error ? e.message : 'No se pudo cargar la flota'));
+      .catch((e) => setError(e instanceof Error ? e.message : 'No se pudo cargar la flota'))
+      .finally(() => setFlotaCargada(true));
     void refreshDeviceNamesFromServer()
       .catch(() => {})
       .finally(() => setNombresListos((n) => n + 1));
@@ -84,6 +86,10 @@ export default function GeneradorInformes() {
   }, [job?.id, job?.status]);
 
   const localNames = useMemo(() => readDeviceLocalNames(), [nombresListos, user]);
+  const flota = useMemo(
+    () => equipos.filter((e) => userMayAccessImei(user, e.imei)),
+    [equipos, user]
+  );
 
   const nombreAsignado = (equipo: EquipoInforme): string | null => {
     const shown = displayNameForDevice(user, equipo.imei, rowKeyOf(equipo), localNames, SIN_ASIGNAR);
@@ -91,14 +97,14 @@ export default function GeneradorInformes() {
     return equipo.nombre;
   };
 
-  const equipo = equipos.find((e) => `${e.codigo}|${e.imei}` === equipoKey) ?? null;
+  const equipo = flota.find((e) => `${e.codigo}|${e.imei}` === equipoKey) ?? null;
   const nombreLigado = equipo ? nombreAsignado(equipo) : null;
   const nombreInforme = nombreLigado || nombreLibre.trim();
 
   const coincidencias = useMemo(() => {
     const q = busqueda.trim().toLowerCase();
     if (q.length < 1) return [];
-    return equipos
+    return flota
       .filter((e) => {
         const nombre = (nombreAsignado(e) ?? SIN_ASIGNAR).toLowerCase();
         return (
@@ -108,7 +114,7 @@ export default function GeneradorInformes() {
         );
       })
       .slice(0, 20);
-  }, [busqueda, equipos, localNames, user]);
+  }, [busqueda, flota, localNames, user]);
 
   const generar = async () => {
     if (!equipo) {
@@ -154,8 +160,8 @@ export default function GeneradorInformes() {
         <h1 className="text-2xl font-semibold">Generador de informes</h1>
         <p className="text-sm text-muted-foreground">
           Informe de cadena de frío por día, armado con el historial oficial del equipo.
-          No hace falta subir un CSV: suministro, retorno, evaporador, set point y estado
-          de energía salen de la telemetría.
+          Solo se pueden elegir los equipos asignados a esta cuenta. Suministro, retorno,
+          evaporador, set point y estado de energía salen de la telemetría.
         </p>
       </div>
 
@@ -198,6 +204,16 @@ export default function GeneradorInformes() {
                 >
                   Quitar
                 </button>
+              </p>
+            )}
+            {equipos.length > 0 && flota.length === 0 && (
+              <p className="text-sm text-muted-foreground">
+                Ningún equipo de esta cuenta está en la flota actual.
+              </p>
+            )}
+            {flotaCargada && equipos.length === 0 && (
+              <p className="text-sm text-muted-foreground">
+                Esta cuenta no tiene equipos asignados para generar informes.
               </p>
             )}
             {busqueda.trim().length > 0 && (

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Navigate } from 'react-router';
 import { Loader2, Search } from 'lucide-react';
 import { useAuth } from '../AuthContext';
-import { displayNameForDevice, userCanManageUsers } from '../modules/usuario';
+import { displayNameForDevice, userIsSuperAdmin } from '../modules/usuario';
 import { readDeviceLocalNames, refreshDeviceNamesFromServer } from '../lib/deviceLocalNames';
 import { fetchEquiposInforme, type EquipoInforme } from '../modules/informe/informeApi';
 import {
@@ -129,7 +129,7 @@ export default function CampanasInformes() {
       .slice(0, 12);
   }, [busqueda, equipos, elegidos, localNames, user]);
 
-  if (!userCanManageUsers(user)) return <Navigate to="/" replace />;
+  if (!userIsSuperAdmin(user)) return <Navigate to="/" replace />;
 
   const abrirNueva = () => {
     setEditId(null);

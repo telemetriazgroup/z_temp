@@ -187,6 +187,14 @@ export async function registrarEvento(contactoId, tipo, detalle) {
   );
 }
 
+export async function reasignarTelefono(desde, hacia) {
+  const origen = normalizarTelefono(desde);
+  const destino = normalizarTelefono(hacia);
+  if (!origen || !destino || origen === destino) return 0;
+  const r = await query(`UPDATE wa_mensaje SET telefono = $1 WHERE telefono = $2`, [destino, origen]);
+  return r.rowCount || 0;
+}
+
 export async function registrarMensaje({ contactoId, telefono, direccion, texto, tipo }) {
   await query(
     `INSERT INTO wa_mensaje (contacto_id, telefono, direccion, texto, tipo)

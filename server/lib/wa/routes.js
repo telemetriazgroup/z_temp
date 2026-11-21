@@ -29,17 +29,13 @@ function esSuper(actor) {
   return actor?.superUser === true || actor?.category === 'superadmin';
 }
 
-function esGestor(actor) {
-  return esSuper(actor) || actor?.category === 'admin';
-}
-
 function limiteDia(fecha, fin) {
   if (!fecha || !/^\d{4}-\d{2}-\d{2}$/.test(String(fecha))) return null;
   const hora = fin ? '23:59:59.999' : '00:00:00.000';
   return new Date(`${fecha}T${hora}-05:00`).toISOString();
 }
 
-export function createWaRouter({ requireSuperUser, actorOf }) {
+export function createWaRouter({ actorOf }) {
   const r = express.Router();
 
   r.use(async (req, res, next) => {
@@ -122,9 +118,8 @@ export function createWaRouter({ requireSuperUser, actorOf }) {
   });
 
   r.use((req, res, next) => {
-    const user = actorOf(req);
-    if (!esGestor(user)) {
-      if (!requireSuperUser(req, res)) return;
+    if (!esSuper(actorOf(req))) {
+      return res.status(403).json({ ok: false, error: 'Se requiere superadmin' });
     }
     next();
   });
@@ -136,7 +131,7 @@ export function createWaRouter({ requireSuperUser, actorOf }) {
       cola: colaPendiente(),
       tiempos: {
         gapAlertaSeg: TIEMPOS_WA.gapAlertaMs / 1000,
-        gapActivoSeg: TIEMPOS_WA.gapActivoMs / 1000,
+        gapChatSeg: TIEMPOS_WA.gapChatMs / 1000,
         activoMin: TIEMPOS_WA.activoMs / 60000,
         avisoNoActivoSeg: TIEMPOS_WA.avisoNoActivoMs / 1000,
         respuestasRequeridas: TIEMPOS_WA.respuestasRequeridas,
@@ -248,7 +243,7 @@ export function createWaRouter({ requireSuperUser, actorOf }) {
 
   r.post('/usuarios/:username/aprobar', async (req, res) => {
     const user = actorOf(req);
-    if (!esGestor(user)) return res.status(403).json({ ok: false, error: 'Se requiere admin o superadmin' });
+    if (!esSuper(user)) return res.status(403).json({ ok: false, error: 'Se requiere superadmin' });
     const contacto = await contactoPorUsername(req.params.username);
     if (!contacto) return res.status(404).json({ ok: false, error: 'Ese usuario no tiene número de WhatsApp' });
     res.json({ ok: true, data: await aprobarManual(contacto.id) });
