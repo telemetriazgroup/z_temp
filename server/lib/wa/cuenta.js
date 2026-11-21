@@ -18,8 +18,15 @@ function esCliente(user) {
 
 /**
  * Números que deben recibir la alerta de un equipo.
- * La cuenta del cliente cubre los equipos que ya tiene asignados.
- * El grupo de correo suma a quien tenga ese correo, si el grupo activó WhatsApp.
+ *
+ * 1) Cuenta ZTRACK: si el IMEI está en deviceAccess/grupos de la cuenta
+ *    y esa cuenta tiene WhatsApp vinculado + prueba aprobada.
+ * 2) Grupo de correo: si el grupo tiene WhatsApp activo, suma contactos
+ *    cuyo correo de usuario está en los destinatarios del grupo.
+ *
+ * Consulta de estado/gráfica en chat NO usa el grupo de correo: solo la
+ * flota de la cuenta ligada al número (ver equiposCuenta.js).
+ *
  * En ambos casos el número tiene que estar aprobado y no silenciado.
  */
 export async function destinatariosDeAlerta({ rowKey, imei, grupoWhatsapp = false, emails = [] }) {
