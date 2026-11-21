@@ -40,6 +40,8 @@ import {
   fetchCorreoStatus,
   fetchServerSmtp,
   saveServerSmtp,
+  fetchApiAsistenciaEmails,
+  saveApiAsistenciaEmails,
   fetchServerDrive,
   saveServerDrive,
   saveServerDriveFolder,
@@ -196,7 +198,7 @@ function emptyGrupo(ownerUsername?: string): Omit<GrupoCorreo, 'createdAt' | 'up
   return {
     id: generateGrupoCorreoId(),
     nombre: '',
-    cliente: 'IFF',
+    cliente: '',
     emails: [],
     devices: [],
     enabled: true,
@@ -218,6 +220,7 @@ export default function ConfiguracionCorreo() {
   const [smtpUpdatedAt, setSmtpUpdatedAt] = useState<string | null>(null);
   const [smtpFromName, setSmtpFromName] = useState('ZTRACK TELEMETRY');
   const [smtpTestTo, setSmtpTestTo] = useState('');
+  const [apiAsistencia, setApiAsistencia] = useState('ztrack@zgroup.com.pe');
   const [sendingSmtpTest, setSendingSmtpTest] = useState(false);
   const [driveInfo, setDriveInfo] = useState<DriveConfigServerView | null>(null);
   const [driveUploading, setDriveUploading] = useState(false);
@@ -241,7 +244,9 @@ export default function ConfiguracionCorreo() {
     null
   );
   const [editingCreatedAt, setEditingCreatedAt] = useState<string | undefined>(undefined);
-  const [emailsDraft, setEmailsDraft] = useState('');
+  const [emailInput, setEmailInput] = useState('');
+  const [emailEditIndex, setEmailEditIndex] = useState<number | null>(null);
+  const [emailEditValue, setEmailEditValue] = useState('');
   const [ciclos, setCiclos] = useState<CorreoCicloAnalisis[]>([]);
   const [cicloDetalle, setCicloDetalle] = useState<CorreoCicloAnalisis | null>(null);
   const [limpiarOpen, setLimpiarOpen] = useState(false);
@@ -323,6 +328,8 @@ export default function ConfiguracionCorreo() {
         setCiclos([]);
       }
       if (canSeeRemitente) {
+        const asistencia = await fetchApiAsistenciaEmails(actingUser).catch(() => null);
+        if (asistencia && asistencia.length) setApiAsistencia(asistencia.join(', '));
         const drive = await fetchServerDrive(actingUser).catch(() => null);
         setDriveInfo(drive);
         setDriveFolderUrl(drive?.folderUrl ?? '');
@@ -413,8 +420,7 @@ export default function ConfiguracionCorreo() {
     const cfg = entry.config;
     const live = liveDeviceForRowKey(entry.rowKey);
     const setPoint = live?.ultimo_dato?.set_point ?? null;
-    const defaultMargen =
-      setPoint != null && !Number.isNaN(setPoint) ? toleranciaSetpointDefault(setPoint) : 0.5;
+    const defaultMargen = toleranciaSetpointDefault(setPoint ?? 0);
 
     setAlertEdit(entry);
     setAlertMode(cfg?.mode === 'custom' ? 'custom' : 'standard');
@@ -610,6 +616,25 @@ export default function ConfiguracionCorreo() {
     }
   };
 
+  const handleSaveApiAsistencia = async () => {
+    if (!canSeeRemitente) {
+      toast.error('Solo superadmin puede configurar estos correos');
+      return;
+    }
+    const emails = parseEmailList(apiAsistencia);
+    if (emails.length === 0) {
+      toast.error('Indique al menos un correo. Por defecto queda ztrack@zgroup.com.pe');
+      return;
+    }
+    try {
+      const saved = await saveApiAsistenciaEmails(emails, actingUser);
+      setApiAsistencia(saved.join(', '));
+      toast.success('Correos de asistencia de API guardados');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Error al guardar los correos');
+    }
+  };
+
   const handleSendSmtpTest = async () => {
     const to = smtpTestTo.trim();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
@@ -737,7 +762,8 @@ export default function ConfiguracionCorreo() {
     setEditing(null);
     setEditingCreatedAt(undefined);
     setIsEditingExisting(false);
-    setEmailsDraft('');
+    setEmailInput('');
+    setEmailEditIndex(null);
   };
 
   const openNewGrupo = () => {
@@ -749,7 +775,8 @@ export default function ConfiguracionCorreo() {
     setEditing(emptyGrupo(actingUser ?? undefined));
     setEditingCreatedAt(undefined);
     setIsEditingExisting(false);
-    setEmailsDraft('');
+    setEmailInput('');
+    setEmailEditIndex(null);
     setDialogOpen(true);
     if (dispositivos.length === 0 && !loading) void loadDevices();
   };
@@ -766,9 +793,61 @@ export default function ConfiguracionCorreo() {
     });
     setEditingCreatedAt(g.createdAt);
     setIsEditingExisting(true);
-    setEmailsDraft(g.emails.join(', '));
+    setEmailInput('');
+    setEmailEditIndex(null);
     setDialogOpen(true);
     if (dispositivos.length === 0 && !loading) void loadDevices();
+  };
+
+  const correoValido = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+
+  const agregarCorreos = () => {
+    if (editing == null) return;
+    const incoming = parseEmailList(emailInput);
+    if (incoming.length === 0) {
+      toast.error('Escriba un correo, o varios separados por coma');
+      return;
+    }
+    const invalido = incoming.find((e) => !correoValido(e));
+    if (invalido) {
+      toast.error(`Correo no válido: ${invalido}`);
+      return;
+    }
+    const actuales = new Set(editing.emails.map((e) => e.toLowerCase()));
+    const nuevos = incoming.filter((e) => !actuales.has(e.toLowerCase()));
+    if (nuevos.length === 0) {
+      toast.message('Esos correos ya están en el grupo');
+      setEmailInput('');
+      return;
+    }
+    const next = [...editing.emails, ...nuevos];
+    if (maxEmails != null && next.length > maxEmails) {
+      toast.error(`Como admin solo puede indicar hasta ${maxEmails} correos`);
+      return;
+    }
+    setEditing({ ...editing, emails: next });
+    setEmailInput('');
+  };
+
+  const guardarEdicionCorreo = () => {
+    if (editing == null || emailEditIndex == null) return;
+    const value = emailEditValue.trim();
+    if (!correoValido(value)) {
+      toast.error('Correo no válido');
+      return;
+    }
+    const repetido = editing.emails.some(
+      (e, i) => i !== emailEditIndex && e.toLowerCase() === value.toLowerCase()
+    );
+    if (repetido) {
+      toast.error('Ese correo ya está en el grupo');
+      return;
+    }
+    setEditing({
+      ...editing,
+      emails: editing.emails.map((e, i) => (i === emailEditIndex ? value : e)),
+    });
+    setEmailEditIndex(null);
   };
 
   const handleSaveGrupo = async () => {
@@ -777,7 +856,18 @@ export default function ConfiguracionCorreo() {
       toast.error('El nombre del grupo es obligatorio');
       return;
     }
-    const emails = parseEmailList(emailsDraft);
+    const pendientes = parseEmailList(emailInput);
+    const invalido = pendientes.find((e) => !correoValido(e));
+    if (invalido) {
+      toast.error(`Correo no válido: ${invalido}`);
+      return;
+    }
+    const emails = [
+      ...editing.emails,
+      ...pendientes.filter(
+        (e) => !editing.emails.some((a) => a.toLowerCase() === e.toLowerCase())
+      ),
+    ];
     if (emails.length === 0) {
       toast.error('Indique al menos un correo destinatario');
       return;
@@ -1098,6 +1188,27 @@ export default function ConfiguracionCorreo() {
                 <Button onClick={handleSaveSmtp}>
                   <Save className="h-4 w-4 mr-2" />
                   Guardar remitente
+                </Button>
+              </div>
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="api-asistencia">
+                  API sin conexión — asistencia técnica
+                </Label>
+                <Input
+                  id="api-asistencia"
+                  value={apiAsistencia}
+                  onChange={(e) => setApiAsistencia(e.target.value)}
+                  placeholder="ztrack@zgroup.com.pe, otro@zgroup.com.pe"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Si un enlace deja de entregar datos y todos sus equipos quedan fuera de
+                  línea más de 3 horas, el aviso va solo a estos correos, cada hora. No se
+                  envía al cliente: se presume una falla de la API. Separe varios correos
+                  con coma.
+                </p>
+                <Button variant="secondary" onClick={() => void handleSaveApiAsistencia()}>
+                  <Save className="h-4 w-4 mr-2" />
+                  Guardar correos de API
                 </Button>
               </div>
               <div className="space-y-2 sm:col-span-2">
@@ -1890,10 +2001,7 @@ export default function ConfiguracionCorreo() {
                     alerta30Minutos,
                   };
                   const rango = computeRangoLimites(setPoint, draftCfg);
-                  const defaultMargen =
-                    setPoint != null && !Number.isNaN(setPoint)
-                      ? toleranciaSetpointDefault(setPoint)
-                      : 0.5;
+                  const defaultMargen = toleranciaSetpointDefault(setPoint ?? 0);
                   return (
                     <>
                       <p className="text-xs text-muted-foreground">
@@ -1905,7 +2013,7 @@ export default function ConfiguracionCorreo() {
                           <>
                             {' '}
                             · Banda efectiva: {rango.min.toFixed(1)} … {rango.max.toFixed(1)} °C
-                            {rango.personalizado ? ' (personalizada)' : ' (±10 % del setpoint)'}
+                            {rango.personalizado ? ' (personalizada)' : ' (±4 °C del setpoint)'}
                           </>
                         )}
                       </p>
@@ -1957,8 +2065,7 @@ export default function ConfiguracionCorreo() {
                         </div>
                       ) : (
                         <p className="text-xs text-muted-foreground">
-                          Por defecto: ±{defaultMargen.toFixed(2)} °C
-                          {setPoint != null && !Number.isNaN(setPoint) ? ' (10 % del setpoint)' : ''}.
+                          Por defecto: ±{defaultMargen.toFixed(1)} °C del setpoint.
                         </p>
                       )}
                     </>
@@ -2188,7 +2295,7 @@ export default function ConfiguracionCorreo() {
                   <Input
                     value={editing.cliente}
                     onChange={(e) => setEditing({ ...editing, cliente: e.target.value })}
-                    placeholder="IFF"
+                    placeholder="Nombre del cliente"
                   />
                 </div>
               </div>
@@ -2202,15 +2309,85 @@ export default function ConfiguracionCorreo() {
                     </span>
                   )}
                 </Label>
-                <Input
-                  value={emailsDraft}
-                  onChange={(e) => setEmailsDraft(e.target.value)}
-                  placeholder={
-                    maxEmails != null
-                      ? `hasta ${maxEmails} correos separados por coma`
-                      : 'correo1@empresa.com, correo2@…'
-                  }
-                />
+                <div className="flex gap-2">
+                  <Input
+                    value={emailInput}
+                    onChange={(e) => setEmailInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        agregarCorreos();
+                      }
+                    }}
+                    placeholder="correo@empresa.com o varios separados por coma"
+                  />
+                  <Button type="button" variant="secondary" onClick={agregarCorreos}>
+                    <Plus className="h-4 w-4 mr-1" />
+                    Agregar
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Pegue varios correos separados por coma, o agréguelos de uno en uno. Luego puede
+                  editarlos o quitarlos.
+                </p>
+                {editing.emails.length > 0 && (
+                  <ul className="space-y-1">
+                    {editing.emails.map((correo, index) => (
+                      <li
+                        key={`${correo}-${index}`}
+                        className="flex items-center gap-2 rounded-md border px-2 py-1"
+                      >
+                        {emailEditIndex === index ? (
+                          <>
+                            <Input
+                              value={emailEditValue}
+                              onChange={(e) => setEmailEditValue(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  guardarEdicionCorreo();
+                                }
+                              }}
+                              className="h-8"
+                            />
+                            <Button type="button" size="sm" onClick={guardarEdicionCorreo}>
+                              Listo
+                            </Button>
+                          </>
+                        ) : (
+                          <>
+                            <span className="text-sm flex-1 truncate">{correo}</span>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setEmailEditIndex(index);
+                                setEmailEditValue(correo);
+                              }}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setEditing({
+                                  ...editing,
+                                  emails: editing.emails.filter((_, i) => i !== index),
+                                });
+                                if (emailEditIndex === index) setEmailEditIndex(null);
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4 text-red-600" />
+                            </Button>
+                          </>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <Switch

@@ -157,6 +157,27 @@ export async function deleteServerDrive(actingUser?: string | null): Promise<Dri
   return body.data;
 }
 
+export async function fetchApiAsistenciaEmails(actingUser?: string | null): Promise<string[]> {
+  const res = await fetch(`${BASE}/config/api-asistencia`, {
+    headers: headers(actingUser, true),
+  });
+  const body = await parseRes<{ data: { emails: string[] } }>(res);
+  return body.data.emails ?? [];
+}
+
+export async function saveApiAsistenciaEmails(
+  emails: string[],
+  actingUser?: string | null
+): Promise<string[]> {
+  const res = await fetch(`${BASE}/config/api-asistencia`, {
+    method: 'PUT',
+    headers: headers(actingUser, true),
+    body: JSON.stringify({ emails }),
+  });
+  const body = await parseRes<{ data: { emails: string[] } }>(res);
+  return body.data.emails ?? [];
+}
+
 export async function saveServerSmtp(
   config: SmtpConfigSaveInput,
   actingUser?: string | null

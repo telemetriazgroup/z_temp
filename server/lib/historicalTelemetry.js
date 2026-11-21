@@ -5,6 +5,7 @@ const STARCOOL2_BASE = process.env.STARCOOL2_API_BASE ?? TUNEL_BASE;
 import { formatoFechaQueryApi, parseTelemetryDate, parseTelemetryTimestamp, startOfDayMs, formatTimeShortTz, formatChartAxisLabel, formatDateTimeTz } from './timezone.js';
 import { getMargenesSetpoint, toleranciaSetpointDefault } from './rangoTemperatura.js';
 import { defrostActivoEfectivo, filaDefrostEfectivo } from './powerState.js';
+import { powerStateEfectivo } from './powerEfectivo.js';
 
 const MS_HORA = 60 * 60 * 1000;
 export const HISTORICAL_WINDOW_HOURS = 12;
@@ -277,8 +278,15 @@ export function resolveOutOfRangeSince(datos, referencia = new Date(), rangoOpts
   return resolveOutOfRangeSinceWithEval(datos, referencia, rangoOpts, rowEnRangoEffective);
 }
 
+function muestraEnRangoEntre(datos, desdeMs, hastaMs, rangoOpts) {
+  const sorted = sortHistorialConEffective(datos, rowEnRangoTemperaturaParaAlerta, rangoOpts);
+  return sorted.some((item) => item.effective === true && item.ts > desdeMs && item.ts < hastaMs);
+}
+
 /**
  * Ajusta o invalida la referencia persistida según historial reciente.
+ * Adelantar el inicio solo porque la ventana de 12 h se deslizó no es un episodio nuevo:
+ * no borra los umbrales ya enviados. Solo se reinician si hubo una vuelta a rango entre ambos inicios.
  * @returns {{ since: string, resetUmbrales: boolean } | null} null = equipo recuperado (en rango)
  */
 export function reconcileEpisodeReference(episode, datos, now = new Date(), rangoOpts = null) {
@@ -287,8 +295,15 @@ export function reconcileEpisodeReference(episode, datos, now = new Date(), rang
 
   const prev = parseTelemetryTimestamp(episode.since);
   const next = parseTelemetryTimestamp(resolved);
-  if (Number.isNaN(prev) || Math.abs(next - prev) > 60_000) {
+  if (Number.isNaN(prev) || Number.isNaN(next)) {
+    return { since: resolved, resetUmbrales: false };
+  }
+
+  if (next > prev + 60_000 && muestraEnRangoEntre(datos, prev, next, rangoOpts)) {
     return { since: resolved, resetUmbrales: true };
+  }
+  if (next < prev - 60_000) {
+    return { since: resolved, resetUmbrales: false };
   }
   return { since: episode.since, resetUmbrales: false };
 }
@@ -339,11 +354,11 @@ export function timestampRegistroHistorial(row) {
  * Intervalos con equipo apagado (power_state 0), ordenados cronológicamente.
  * @returns {{ since: string, until: string | null, durationHours: number }[]}
  */
-export function computeApagadoIntervals(datos, referencia = new Date()) {
+export function computeApagadoIntervals(datos, referencia = new Date(), codigo = null) {
   const sorted = [...(datos ?? [])]
     .map((row) => ({
       ts: timestampRegistro(row),
-      apagado: row.power_state === 0,
+      apagado: powerStateEfectivo(row, codigo ?? row.codigo) === 0,
     }))
     .filter((x) => !Number.isNaN(x.ts))
     .sort((a, b) => a.ts - b.ts);

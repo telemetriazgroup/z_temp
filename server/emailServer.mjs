@@ -23,6 +23,7 @@ import {
   getDeviceEventosView,
 } from './lib/alertEngine.js';
 import { getSmtpConfig, saveSmtpConfig, smtpPublicView } from './lib/smtpRepository.js';
+import { getApiAsistenciaEmails, saveApiAsistenciaEmails } from './lib/apiAsistenciaRepository.js';
 import {
   drivePublicView,
   saveDriveServiceAccount,
@@ -368,6 +369,27 @@ app.put('/reefer/api/correo/config/smtp', (req, res) => {
       detail: { user: saved.user, fromName: saved.fromName },
     });
     res.json({ ok: true, data: smtpPublicView(saved) });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/reefer/api/correo/config/api-asistencia', (req, res) => {
+  if (!requireSuperUser(req, res)) return;
+  res.json({ ok: true, data: { emails: getApiAsistenciaEmails() } });
+});
+
+app.put('/reefer/api/correo/config/api-asistencia', (req, res) => {
+  try {
+    if (!requireSuperUser(req, res)) return;
+    const saved = saveApiAsistenciaEmails(req.body?.emails);
+    auditActorEvent(req, {
+      action: 'correo.api_asistencia_update',
+      module: 'correo',
+      summary: `Actualizó avisos de API sin conexión (${saved.emails.join(', ')})`,
+      detail: { emails: saved.emails },
+    });
+    res.json({ ok: true, data: { emails: saved.emails, updatedAt: saved.updatedAt } });
   } catch (e) {
     res.status(400).json({ ok: false, error: e.message });
   }

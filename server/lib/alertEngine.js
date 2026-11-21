@@ -17,11 +17,15 @@ import {
   buildApagadoEmail,
   buildRecuperacionEnRangoEmail,
   buildFueraDeLineaEmail,
+  buildApiSinConexionEmail,
 } from './emailBuilder.js';
 import { buildTrazabilidadEmailPack } from './emailTraceability.js';
 import { deviceRowKey } from './telemetry.js';
 import { loadCurrentDispositivos } from './dashboard/fleetStore.js';
 import { getSmtpConfig } from './smtpRepository.js';
+import { getApiAsistenciaEmails } from './apiAsistenciaRepository.js';
+import { detectarEnlacesCaidos, horasSinComunicacion } from './enlaceCaido.js';
+import { getLinkStatuses } from './dashboard/linkHealth.js';
 import { getDeviceNameByImei } from './deviceNamesRepository.js';
 import { resolveUmbralesForDevice, getDeviceAlertConfig, getDeviceAlertConfigMap, saveDeviceAlertConfig, resolveRangoOptsForDevice } from './deviceAlertConfigRepository.js';
 import { isEquipoApagado, isEquipoEncendido, defrostActivoEfectivo } from './powerState.js';
@@ -41,7 +45,9 @@ import {
   prepareHistorialTrazabilidad,
   TRACEABILITY_WINDOW_HOURS,
   HISTORICAL_WINDOW_HOURS,
+  timestampRegistroHistorial,
 } from './historicalTelemetry.js';
+import { powerStateEfectivo } from './powerEfectivo.js';
 
 const MAX_CICLOS = 200;
 /** Horas sin telemetría para alertar fuera de línea. */
@@ -64,11 +70,13 @@ function getState() {
     lastRecovered: {},
     offline: {},
     offlineOps: {},
+    apiEnlace: {},
   });
   if (!s.episodes) s.episodes = {};
   if (!s.lastRecovered) s.lastRecovered = {};
   if (!s.offline) s.offline = {};
   if (!s.offlineOps) s.offlineOps = {};
+  if (!s.apiEnlace) s.apiEnlace = {};
   return s;
 }
 
@@ -149,16 +157,6 @@ function ensureApagadoEpisode(state, rowKey, now) {
   });
 }
 
-function horasSinComunicacion(dispositivo, now) {
-  const mins = dispositivo?.minutos_desde_ultimo_dato;
-  if (mins != null && !Number.isNaN(Number(mins))) {
-    return Math.max(0, Number(mins) / 60);
-  }
-  const ua = parseTelemetryTimestamp(dispositivo?.ultima_actualizacion);
-  if (Number.isNaN(ua)) return null;
-  return Math.max(0, (now.getTime() - ua) / (60 * 60 * 1000));
-}
-
 function emailsUsuarioGrupo(grupo) {
   return (grupo.emails ?? [])
     .map((e) => String(e).trim())
@@ -230,14 +228,10 @@ function startEpisode(state, rowKey, since, meta = {}) {
   return state.episodes[rowKey];
 }
 
-/** Reinicia umbrales enviados al cambiar el día calendario GMT-5. */
+/** Conserva los umbrales ya enviados del episodio. Un umbral no se repite hasta volver a rango. */
 function ensureDailySentUmbrales(episode, now) {
-  const hoy = todayKey(now);
   if (!Array.isArray(episode.sentUmbrales)) episode.sentUmbrales = [];
-  if (episode.sentUmbralesDay !== hoy) {
-    episode.sentUmbrales = [];
-    episode.sentUmbralesDay = hoy;
-  }
+  episode.sentUmbralesDay = todayKey(now);
   return episode.sentUmbrales;
 }
 
@@ -625,6 +619,134 @@ async function sendRecuperacionEnRangoMail({
 /**
  * @param {{ trigger?: 'automatic' | 'manual' }} [options]
  */
+/**
+ * Thermoking/TUNEL: el último estado a veces marca power_state 0 con las fases
+ * en varios amperios. Se confirma con la última muestra oficial de la hora.
+ */
+async function apagadoReal(dispositivo, cache) {
+  if (isEquipoApagado(dispositivo) !== true) return false;
+  const codigo = String(dispositivo?.codigo ?? '').trim().toUpperCase();
+  if (codigo !== 'TERMOKING' && codigo !== 'TUNEL' && codigo !== 'THERMOKING') {
+    return true;
+  }
+  const key = `${codigo}:${dispositivo.imei}`;
+  if (cache.has(key)) return cache.get(key);
+  let real = true;
+  try {
+    const hist = await fetchHistorialUltimasHoras(
+      dispositivo.codigo,
+      dispositivo.imei,
+      1,
+      new Date()
+    );
+    let last = null;
+    let lastTs = -Infinity;
+    for (const row of hist.datos ?? []) {
+      const ts = timestampRegistroHistorial(row);
+      if (Number.isNaN(ts) || ts < lastTs) continue;
+      lastTs = ts;
+      last = row;
+    }
+    if (last && powerStateEfectivo(last, codigo) === 1) real = false;
+  } catch {
+    real = true;
+  }
+  cache.set(key, real);
+  return real;
+}
+
+function apiEnlaceDue(state, codigo, now) {
+  const last = state.apiEnlace?.[codigo]?.lastSentAt;
+  if (!last) return true;
+  const t = new Date(last).getTime();
+  if (Number.isNaN(t)) return true;
+  return now.getTime() - t >= ZTRACK_OFFLINE_INTERVAL_MS;
+}
+
+/**
+ * Un correo por enlace caído, a asistencia técnica, a las 3 h y luego cada hora.
+ * No avisa a los clientes: se presume falla de la API.
+ */
+async function avisarEnlacesCaidos({ state, now, smtp, enlaces, result }) {
+  if (!state.apiEnlace) state.apiEnlace = {};
+  const vivos = new Set(enlaces.map((e) => e.codigo));
+  for (const codigo of Object.keys(state.apiEnlace)) {
+    if (!vivos.has(codigo)) delete state.apiEnlace[codigo];
+  }
+  if (enlaces.length === 0) return;
+
+  const destinatarios = getApiAsistenciaEmails();
+  const sonda = new Map();
+  try {
+    const statuses = await getLinkStatuses();
+    for (const s of statuses ?? []) {
+      if (s?.codigo) sonda.set(s.codigo, s);
+    }
+  } catch {
+    /* el aviso sale igual, sin el texto de la sonda */
+  }
+
+  for (const enlace of enlaces) {
+    if (!apiEnlaceDue(state, enlace.codigo, now)) continue;
+    const status = sonda.get(enlace.codigo);
+    const content = buildApiSinConexionEmail({
+      codigo: enlace.codigo,
+      horas: enlace.horas,
+      equipos: enlace.equipos,
+      since: enlace.since,
+      error: status && status.ok === false ? status.error_message : null,
+    });
+    const envioId = uid('envio');
+    try {
+      const messageId = await sendMail(smtp, destinatarios, content);
+      state.apiEnlace[enlace.codigo] = {
+        since: enlace.since,
+        lastSentAt: now.toISOString(),
+        horas: enlace.horas,
+        equipos: enlace.equipos,
+      };
+      addEnvio({
+        id: envioId,
+        alertKind: 'api_sin_conexion',
+        destinatarioTipo: 'ops',
+        codigo: enlace.codigo,
+        descripcionEquipo: `API ${enlace.codigo}`,
+        nombrePlataforma: `API ${enlace.codigo}`,
+        horasOffline: enlace.horas,
+        referenciaDesde: enlace.since,
+        destinatarios: [...destinatarios],
+        subject: content.subject,
+        sentAt: now.toISOString(),
+        messageId,
+        success: true,
+      });
+      addIncidente({
+        id: uid('inc'),
+        tipo: 'correo_enviado',
+        envioId,
+        alertKind: 'api_sin_conexion',
+        destinatarioTipo: 'ops',
+        codigo: enlace.codigo,
+        descripcionEquipo: `API ${enlace.codigo}`,
+        nombrePlataforma: `API ${enlace.codigo} · ${enlace.equipos} equipos`,
+        horasOffline: enlace.horas,
+        referenciaDesde: enlace.since,
+        estado: 'pendiente',
+        subject: content.subject,
+        destinatarios: [...destinatarios],
+        enviadoAt: now.toISOString(),
+        comentarios: [],
+      });
+      result.emailsSent++;
+      result.resumen.correoEnviado++;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      result.errors.push(`API ${enlace.codigo} sin conexión: ${msg}`);
+      result.resumen.errores++;
+    }
+  }
+}
+
 export async function runAlertCycle(options = {}) {
   const trigger = options.trigger === 'manual' ? 'manual' : 'automatic';
   const startedAt = new Date().toISOString();
@@ -688,6 +810,10 @@ export async function runAlertCycle(options = {}) {
   const state = getState();
   const now = new Date();
   const hoy = todayKey(now);
+  const cacheApagadoFases = new Map();
+  const enlacesCaidos = detectarEnlacesCaidos(dispositivos, now, OFFLINE_ALERT_HOURS);
+  const enlaceCaidoPorCodigo = new Map(enlacesCaidos.map((e) => [e.codigo, e]));
+  await avisarEnlacesCaidos({ state, now, smtp, enlaces: enlacesCaidos, result });
 
   for (const grupo of allGrupos) {
     const grupoOwner = grupo.ownerUsername ?? null;
@@ -741,6 +867,21 @@ export async function runAlertCycle(options = {}) {
         continue;
       }
 
+      if (
+        dispositivo.ausente_api === true ||
+        String(dispositivo.estado_conexion ?? '').toLowerCase() === 'historial'
+      ) {
+        pushEval(evaluaciones, {
+          ...base,
+          estado: 'historico',
+          accion: 'ninguna',
+          enRango: null,
+          criterio:
+            'Ya no viene en la API de este periodo. Queda en historial con su última conexión y no se avisa como fuera de línea.',
+        });
+        continue;
+      }
+
       const rangoOpts = resolveRangoOptsForDevice(assignment.rowKey, grupoOwner);
       const enRangoRaw = dispositivo.en_rango;
       const enRangoEfectivo = effectiveEnRangoAlertaFromDispositivo(dispositivo, rangoOpts);
@@ -762,6 +903,25 @@ export async function runAlertCycle(options = {}) {
       // —— Fuera de línea (> OFFLINE_ALERT_HOURS sin telemetría) ——
       const horasOffline = horasSinComunicacion(dispositivo, now);
       if (horasOffline != null && horasOffline >= OFFLINE_ALERT_HOURS) {
+        const codigoEnlace = String(dispositivo.codigo ?? '').trim();
+        const enlaceCaido = enlaceCaidoPorCodigo.get(codigoEnlace);
+        if (enlaceCaido) {
+          pushEval(evaluaciones, {
+            ...base,
+            estado: 'fuera_linea_sin_envio',
+            accion: 'ninguna',
+            enRango: null,
+            diaCalendario: hoy,
+            horasOffline: Math.round(horasOffline * 10) / 10,
+            telemetria: telem,
+            criterio:
+              `FUERA DE LÍNEA porque el enlace ${codigoEnlace} no entrega datos ` +
+              `(~${enlaceCaido.horas} h, ${enlaceCaido.equipos} equipos). ` +
+              'No se avisa al cliente: se presume falla de la API. El aviso va a asistencia técnica.',
+          });
+          continue;
+        }
+
         const { dispositivoReeferId, nombrePlataforma } = resolveLabels(
           assignment,
           dispositivo
@@ -927,7 +1087,7 @@ export async function runAlertCycle(options = {}) {
         clearOfflineEpisode(state, grupo.id, assignment.rowKey);
       }
 
-      if (isEquipoApagado(dispositivo) === true) {
+      if (await apagadoReal(dispositivo, cacheApagadoFases)) {
         clearEpisodeIfKind(state, assignment.rowKey, 'fuera_rango', now);
         const episode = ensureApagadoEpisode(state, assignment.rowKey, now);
         const horasAcumuladas = horasDesdeReferenciaEquipo(dispositivo, episode.since, now);
@@ -1276,7 +1436,11 @@ export async function runAlertCycle(options = {}) {
       const horasAcumTxt = `${horasAcumuladas} h acum.`;
       const horasDiaTxt = `${horasEnDiaReport} h hoy`;
 
-      if (umbralHoras == null || umbralYaEnviado(episode, umbralHoras)) {
+      if (
+        umbralHoras == null ||
+        umbralYaEnviado(episode, umbralHoras) ||
+        horasAcumuladas < umbralHoras
+      ) {
         let criterio;
         if (sentUmbrales.length > 0) {
           const ultimo = sentUmbrales[sentUmbrales.length - 1];
@@ -1710,7 +1874,11 @@ export async function getDeviceEventosView(rowKey) {
     episode: state.episodes?.[rowKey] ?? null,
     lastRecovered: state.lastRecovered?.[rowKey] ?? null,
     intervalosFueraRango: computeOutOfRangeIntervals(hist.datos, rangoOpts, now),
-    intervalosApagado: computeApagadoIntervals(hist.datos, now),
+    intervalosApagado: computeApagadoIntervals(
+      hist.datos,
+      now,
+      dispositivo.codigo ?? found.assignment.codigo
+    ),
     incidentes,
     historialPuntos: hist.datos?.length ?? 0,
     consultadoAt: now.toISOString(),

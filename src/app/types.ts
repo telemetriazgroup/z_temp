@@ -234,9 +234,21 @@ export interface UltimoDatoDispositivo {
   set_point: number | null;
 }
 
+export interface Historico3hGuardado {
+  ancla: string | null;
+  desde: string;
+  hasta: string;
+  datos: DatoOficialHistorial[];
+  saved_at: string;
+}
+
 export interface DispositivoUltimoEstado {
   imei: string;
-  estado_conexion: 'online' | 'offline' | 'wait';
+  estado_conexion: 'online' | 'offline' | 'wait' | 'historial';
+  /** Ya no viene en la API de este periodo. Sigue en base con su último dato. */
+  ausente_api?: boolean;
+  /** Ventana de 3 h anterior a la última conexión, guardada al salir de la API. */
+  historico_3h?: Historico3hGuardado | null;
   ultima_actualizacion: string | null;
   minutos_desde_ultimo_dato: number | null;
   power_state_texto: 'on' | 'off' | null;
@@ -252,6 +264,7 @@ export interface ResumenDispositivos {
   online: number;
   wait: number;
   offline: number;
+  historial?: number;
   en_defrost: number;
   power_on: number;
   power_off: number;

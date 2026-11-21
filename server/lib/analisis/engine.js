@@ -224,7 +224,7 @@ export async function runAnalisisMensual(input) {
     intervals: apagadosCandidatos,
     falsosPorSuministroPuntos,
     falsosSuministro,
-  } = computeApagadoIntervalsAnalisis(datos, ref);
+  } = computeApagadoIntervalsAnalisis(datos, ref, codigo);
   const apagadosRaw = apagadosCandidatos.filter(
     (i) => new Date(i.since).getTime() >= window.desdeMs
   );
@@ -240,7 +240,7 @@ export async function runAnalisisMensual(input) {
     datos,
     rangoOpts,
     ref,
-    rowEnRangoParaAnalisis
+    (row, opts) => rowEnRangoParaAnalisis(row, opts, codigo)
   ).filter((i) => new Date(i.since).getTime() >= window.desdeMs);
 
   const gaps = computeSinTransmisionIntervals(datos).filter(

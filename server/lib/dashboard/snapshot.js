@@ -6,6 +6,7 @@ import {
   countCurrentDevices,
   getSyncState,
   loadCurrentDispositivos,
+  archivarHistorico3hAusentesEnBackground,
   markSourceDevicesAbsent,
   saveSyncState,
   upsertCurrentDevices,
@@ -23,8 +24,9 @@ import { resolveUserEffectiveImeis } from '../gruposEquiposRepository.js';
 import { pickTelemetryFromDispositivo } from '../senal/telemetry.js';
 
 function conexionOf(d) {
+  if (d?.ausente_api === true) return 'historial';
   const s = String(d.estado_conexion ?? '').toLowerCase();
-  if (s === 'online' || s === 'wait') return s;
+  if (s === 'online' || s === 'wait' || s === 'offline' || s === 'historial') return s;
   return 'offline';
 }
 
@@ -54,6 +56,7 @@ function emptyByCodigoBucket() {
     online: 0,
     wait: 0,
     offline: 0,
+    historial: 0,
     en_rango: 0,
     fuera_rango: 0,
     apagado: 0,
@@ -71,6 +74,7 @@ export function computeFleetCounts(dispositivos, configMap = null) {
     online: 0,
     wait: 0,
     offline: 0,
+    historial: 0,
     power_on: 0,
     power_off: 0,
     en_defrost: 0,
@@ -96,6 +100,14 @@ export function computeFleetCounts(dispositivos, configMap = null) {
 
     counts.total++;
     counts[conexion]++;
+    const codigo = d.codigo ? String(d.codigo).toUpperCase() : 'OTRO';
+    if (!by_codigo[codigo]) by_codigo[codigo] = emptyByCodigoBucket();
+    const bc = by_codigo[codigo];
+    bc.total++;
+    bc[conexion]++;
+
+    if (conexion === 'historial') continue;
+
     if (power === 'on') counts.power_on++;
     else if (power === 'off') counts.power_off++;
     if (defrost) counts.en_defrost++;
@@ -104,11 +116,6 @@ export function computeFleetCounts(dispositivos, configMap = null) {
     else if (rango === 'apagado') counts.apagado++;
     else counts.indeterminado++;
 
-    const codigo = d.codigo ? String(d.codigo).toUpperCase() : 'OTRO';
-    if (!by_codigo[codigo]) by_codigo[codigo] = emptyByCodigoBucket();
-    const bc = by_codigo[codigo];
-    bc.total++;
-    bc[conexion]++;
     if (rango === 'normal') bc.en_rango++;
     else if (rango === 'fuera') bc.fuera_rango++;
     else if (rango === 'apagado') bc.apagado++;
@@ -128,8 +135,9 @@ export function computeFleetCounts(dispositivos, configMap = null) {
   }
 
   const knownRango = counts.en_rango + counts.fuera_rango;
+  const activos = counts.total - counts.historial;
   const pct_online =
-    counts.total > 0 ? Math.round((1000 * counts.online) / counts.total) / 10 : 0;
+    activos > 0 ? Math.round((1000 * counts.online) / activos) / 10 : 0;
   const pct_en_rango =
     knownRango > 0
       ? Math.round((1000 * counts.en_rango) / knownRango) / 10
@@ -215,6 +223,8 @@ export async function captureDashboardSnapshot({ trigger = 'interval' } = {}) {
       seenAt
     );
   }
+
+  archivarHistorico3hAusentesEnBackground();
 
   try {
     await recordLinkProbes(links);

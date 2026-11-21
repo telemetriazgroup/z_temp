@@ -30,7 +30,7 @@ export interface DeviceAlertConfig {
   alerta1Hora?: boolean;
   /** Incluir aviso a los 30 minutos fuera de rango / apagado. */
   alerta30Minutos?: boolean;
-  /** Usar márgenes °C personalizados en lugar de ±10 % del setpoint. */
+  /** Usar márgenes °C personalizados en lugar de ±4 °C del setpoint. */
   useRangoPersonalizado?: boolean;
   /** Grados bajo el setpoint considerados EN RANGO. */
   margenInferior?: number;

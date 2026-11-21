@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchBuscarDatosOficiales } from '../api/datosOficiales';
+import { parseTelemetryTimestampClient } from '../lib/telemetryTimezone';
 import type {
   BuscarDatosOficialesResponse,
   DatoOficialHistorial,
@@ -107,6 +108,8 @@ interface Props {
   sectionId?: string;
   /** zona_horaria del listado (ej. GMT-4 / GMT-5). */
   zonaHoraria?: string | null;
+  /** Muestra oficial más reciente, para corregir un power_state falso. */
+  onMuestraReciente?: (row: DatoOficialHistorial | null) => void;
 }
 
 export function HistorialOficialDetalle({
@@ -117,6 +120,7 @@ export function HistorialOficialDetalle({
   focusRango = null,
   sectionId = 'historial-oficial',
   zonaHoraria = null,
+  onMuestraReciente,
 }: Props) {
   const { user } = useAuth();
   const esSuperUser = user?.superUser === true;
@@ -138,6 +142,19 @@ export function HistorialOficialDetalle({
   const [respuesta, setRespuesta] = useState<BuscarDatosOficialesResponse | null>(
     null
   );
+  useEffect(() => {
+    if (!onMuestraReciente) return;
+    const datos = respuesta?.data?.datos ?? [];
+    let best: DatoOficialHistorial | null = null;
+    let bestTs = -Infinity;
+    for (const row of datos) {
+      const ts = parseTelemetryTimestampClient(row.created_at ?? row.fecha ?? null);
+      if (Number.isNaN(ts) || ts < bestTs) continue;
+      bestTs = ts;
+      best = row;
+    }
+    onMuestraReciente(best);
+  }, [respuesta, onMuestraReciente]);
   /** Si hay foco/filtro sobre un subrango ya cargado, no se vuelve a pedir. */
   const [filtroVistaMs, setFiltroVistaMs] = useState<{
     desde: number;
@@ -857,7 +874,8 @@ export function HistorialOficialDetalle({
                                   row,
                                   'fecha_registro',
                                   zonaHoraria,
-                                  tempUnidad
+                                  tempUnidad,
+                                  codigo
                                 )}
                               </TableCell>
                               {tableKeysResolved.map((key) => {
@@ -865,7 +883,8 @@ export function HistorialOficialDetalle({
                                   row,
                                   key,
                                   zonaHoraria,
-                                  tempUnidad
+                                  tempUnidad,
+                                  codigo
                                 );
                                 const def = fieldDefForTableKey(key);
                                 const tendencia =

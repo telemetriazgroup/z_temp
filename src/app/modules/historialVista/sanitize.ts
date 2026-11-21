@@ -1,4 +1,5 @@
 import type { DatoOficialHistorial } from '../../types';
+import { powerStateEfectivo } from '../../lib/powerEfectivo';
 import { getHistorialFieldDef } from './catalog';
 import type { HistorialFieldDef } from './types';
 
@@ -12,10 +13,11 @@ function toNum(v: unknown): number | null {
 /** Valor crudo del row (incluye power override / battery). */
 export function rawFieldValue(
   row: DatoOficialHistorial,
-  def: HistorialFieldDef
+  def: HistorialFieldDef,
+  codigo?: string | null
 ): number | null {
   if (def.transform === 'power_state_override') {
-    return resolvePowerState(row);
+    return resolvePowerState(row, codigo);
   }
   let n = toNum((row as Record<string, unknown>)[def.key]);
   if (n == null) return null;
@@ -26,17 +28,15 @@ export function rawFieldValue(
 }
 
 /**
- * Power: 1 = ON, 0 = OFF.
- * Si alguna fase > 0.5 → ON aunque power_state diga 0.
+ * Power efectivo: 1 = ON, 0 = OFF.
+ * Thermoking y TUNEL: cualquier fase > 0.1 A anula un apagado.
+ * Starcool: suministro y retorno alrededor del setpoint.
  */
-export function resolvePowerState(row: DatoOficialHistorial): number | null {
-  const ph1 = toNum(row.consumption_ph_1) ?? 0;
-  const ph2 = toNum(row.consumption_ph_2) ?? 0;
-  const ph3 = toNum(row.consumption_ph_3) ?? 0;
-  if (ph1 > 0.5 || ph2 > 0.5 || ph3 > 0.5) return 1;
-  const ps = toNum(row.power_state);
-  if (ps == null) return null;
-  return ps === 1 ? 1 : 0;
+export function resolvePowerState(
+  row: DatoOficialHistorial,
+  codigo?: string | null
+): number | null {
+  return powerStateEfectivo(row, codigo);
 }
 
 function inRange(n: number, def: HistorialFieldDef): boolean {
@@ -57,11 +57,12 @@ function inRange(n: number, def: HistorialFieldDef): boolean {
 /** Para gráfica: fuera de rango o inválido → null (no dibuja). */
 export function sanitizeChartValue(
   row: DatoOficialHistorial,
-  key: string
+  key: string,
+  codigo?: string | null
 ): number | null {
   const def = getHistorialFieldDef(key);
   if (!def?.chartable) return null;
-  const n = rawFieldValue(row, def);
+  const n = rawFieldValue(row, def, codigo);
   if (n == null) return null;
   if (!inRange(n, def)) return null;
   return n;
@@ -72,7 +73,8 @@ export function sanitizeChartValue(
  */
 export function sanitizeTableValue(
   row: DatoOficialHistorial,
-  key: string
+  key: string,
+  codigo?: string | null
 ): number | 'NA' | null | string {
   const def = getHistorialFieldDef(key);
   if (!def) {
@@ -80,11 +82,11 @@ export function sanitizeTableValue(
     return n;
   }
   if (def.transform === 'power_state_override') {
-    const ps = resolvePowerState(row);
+    const ps = resolvePowerState(row, codigo);
     if (ps == null) return null;
     return ps === 1 ? 'Encendido' : 'Apagado';
   }
-  const n = rawFieldValue(row, def);
+  const n = rawFieldValue(row, def, codigo);
   if (n == null) return null;
   if (!inRange(n, def)) return 'NA';
   return n;

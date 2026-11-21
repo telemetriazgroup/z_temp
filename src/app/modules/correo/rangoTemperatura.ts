@@ -1,10 +1,11 @@
 import type { DeviceAlertConfig } from './types';
 import type { DispositivoUltimoEstado } from '../../types';
+import { powerStateEfectivo } from '../../lib/powerEfectivo';
 
 export function isEquipoApagado(dispositivo: DispositivoUltimoEstado): boolean | null {
-  const ps = dispositivo.ultimo_dato?.power_state;
-  if (ps === 0) return true;
-  if (ps === 1) return false;
+  const efectivo = powerStateEfectivo(dispositivo.ultimo_dato, dispositivo.codigo);
+  if (efectivo === 0) return true;
+  if (efectivo === 1) return false;
   if (dispositivo.power_state_texto === 'off') return true;
   if (dispositivo.power_state_texto === 'on') return false;
   return null;
@@ -23,9 +24,11 @@ export function defrostActivoEfectivo(dispositivo: DispositivoUltimoEstado): boo
 
 export type EstadoRangoListado = 'apagado' | 'normal' | 'fuera' | 'indeterminado';
 
-export function toleranciaSetpointDefault(setPoint: number): number {
-  if (setPoint === 0 || Number.isNaN(setPoint)) return 0.5;
-  return Math.abs(setPoint) * 0.1;
+/** Tolerancia por defecto de alertas: ±4 °C respecto al setpoint. */
+export const TOLERANCIA_SETPOINT_C = 4;
+
+export function toleranciaSetpointDefault(_setPoint: number): number {
+  return TOLERANCIA_SETPOINT_C;
 }
 
 export function rangoOptsFromConfig(cfg: DeviceAlertConfig | null | undefined) {
@@ -48,7 +51,7 @@ export function getMargenesSetpoint(
       personalizado: true,
     };
   }
-  const t = setPoint != null && !Number.isNaN(setPoint) ? toleranciaSetpointDefault(setPoint) : 0.5;
+  const t = toleranciaSetpointDefault(setPoint ?? 0);
   return { inferior: t, superior: t, personalizado: false };
 }
 
@@ -76,7 +79,7 @@ export function formatRangoTemperatura(
   if (rango == null) return '—';
   const sp = `${rango.setPoint.toFixed(1)} °C`;
   const banda = `${rango.min.toFixed(1)} … ${rango.max.toFixed(1)} °C`;
-  return rango.personalizado ? `${banda} (SP ${sp}, personalizado)` : `${banda} (SP ${sp}, ±10 %)`;
+  return rango.personalizado ? `${banda} (SP ${sp}, personalizado)` : `${banda} (SP ${sp}, ±4 °C)`;
 }
 
 function enBandaSetpoint(

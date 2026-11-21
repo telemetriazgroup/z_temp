@@ -53,7 +53,8 @@ export function celdaVistaHistorial(
   row: DatoOficialHistorial,
   key: string,
   zonaHoraria?: string | null,
-  unidad: TemperaturaUnidad = 'C'
+  unidad: TemperaturaUnidad = 'C',
+  codigo?: string | null
 ): string {
   if (key === 'fecha_registro') {
     const raw = fechaRegistroRaw(row);
@@ -61,7 +62,7 @@ export function celdaVistaHistorial(
     return formatDateTimeInTz(raw, resolveDisplayTimeZone(zonaHoraria).iana);
   }
   const def = getHistorialFieldDef(key);
-  const sanitized = sanitizeTableValue(row, key);
+  const sanitized = sanitizeTableValue(row, key, codigo);
   return formatSanitizedTableCell(sanitized, def, (c) =>
     formatTemperatura(c, unidad)
   );

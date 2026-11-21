@@ -1,7 +1,8 @@
-/** Tolerancia por defecto: ±10 % del |setpoint| (mín. 0,5 °C si setpoint = 0). */
-export function toleranciaSetpointDefault(setPoint) {
-  if (setPoint === 0 || Number.isNaN(setPoint)) return 0.5;
-  return Math.abs(setPoint) * 0.1;
+/** Tolerancia por defecto de alertas: ±4 °C respecto al setpoint. */
+export const TOLERANCIA_SETPOINT_C = 4;
+
+export function toleranciaSetpointDefault(_setPoint) {
+  return TOLERANCIA_SETPOINT_C;
 }
 
 /**

@@ -116,7 +116,12 @@ function deviceRowKey(d: DispositivoUltimoEstado): string {
   return d.codigo != null ? `${d.codigo}-${d.imei}` : d.imei;
 }
 
-function apiStatusOf(device: DispositivoUltimoEstado): 'ONLINE' | 'WAIT' | 'OFFLINE' {
+function apiStatusOf(
+  device: DispositivoUltimoEstado
+): 'ONLINE' | 'WAIT' | 'OFFLINE' | 'HISTORIAL' {
+  if (device.ausente_api === true || device.estado_conexion === 'historial') {
+    return 'HISTORIAL';
+  }
   const mapped =
     API_STATUS_MAP[device.estado_conexion] ??
     (device.estado_conexion?.toUpperCase() as 'ONLINE' | 'WAIT' | 'OFFLINE');
@@ -141,7 +146,7 @@ function formatDate(dateString: string | null): string {
 }
 
 function getStatusColor(
-  status: 'ONLINE' | 'WAIT' | 'OFFLINE'
+  status: 'ONLINE' | 'WAIT' | 'OFFLINE' | 'HISTORIAL'
 ): string {
   switch (status) {
     case 'ONLINE':
@@ -150,6 +155,8 @@ function getStatusColor(
       return 'bg-yellow-600';
     case 'OFFLINE':
       return 'bg-red-600';
+    case 'HISTORIAL':
+      return 'bg-slate-600';
     default:
       return 'bg-gray-600';
   }
@@ -164,6 +171,7 @@ const STATUS_FILTER_OPTIONS = [
   { id: 'ONLINE' as const, label: 'Online' },
   { id: 'WAIT' as const, label: 'Wait' },
   { id: 'OFFLINE' as const, label: 'Offline' },
+  { id: 'HISTORIAL' as const, label: 'Historial' },
 ] as const;
 
 const RANGO_FILTER_OPTIONS = [
@@ -561,6 +569,20 @@ export default function Listado() {
     return counts;
   }, [visibleDispositivos]);
 
+  const abrirHistorial3h = (
+    device: ListDevice
+  ) => {
+    const historico = device.status === 'HISTORIAL';
+    setHistorial3h({
+      imei: device.raw.imei,
+      codigo: device.raw.codigo as DispositivoOrigenCodigo,
+      nombre: device.nombreAsignado,
+      zonaHoraria: data?.data?.resumen?.zona_horaria ?? null,
+      ancla: historico ? device.raw.ultima_actualizacion : null,
+      guardado: historico ? (device.raw.historico_3h?.datos ?? null) : null,
+    });
+  };
+
   const filteredDevices = visibleDispositivos
     .filter((device) => {
       if (codigoFilter !== 'ALL' && device.codigo !== codigoFilter) {
@@ -612,6 +634,12 @@ export default function Listado() {
         nameLockedByProfile: Boolean(user?.deviceNames?.[d.imei]),
       };
     });
+
+  const orderedDevices = [
+    ...filteredDevices.filter((d) => d.status !== 'HISTORIAL'),
+    ...filteredDevices.filter((d) => d.status === 'HISTORIAL'),
+  ];
+  const firstHistorialIndex = orderedDevices.findIndex((d) => d.status === 'HISTORIAL');
 
   const saveLocalName = () => {
     if (nameEdit == null) return;
@@ -841,9 +869,19 @@ export default function Listado() {
 
       {/* Móvil: cartas */}
       <div className="md:hidden space-y-3">
-        {filteredDevices.map((device, index) => (
+        {orderedDevices.map((device, index) => (
+          <React.Fragment key={device.rowKey}>
+          {index === firstHistorialIndex && (
+            <div className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-900/40">
+              <div className="text-sm font-medium">Historial</div>
+              <p className="text-xs text-muted-foreground">
+                No vinieron en la API de este mes. Siguen con su última conexión, las 3 h
+                guardadas de esa conexión y la búsqueda de historial, hasta que vuelvan a
+                conectarse.
+              </p>
+            </div>
+          )}
           <div
-            key={device.rowKey}
             className="rounded-lg border bg-card p-3 shadow-sm cursor-pointer active:bg-muted/40"
             onClick={() => goDetalle(device.raw)}
           >
@@ -871,6 +909,9 @@ export default function Listado() {
                   >
                     {device.nombreAsignado}
                   </span>
+                  {device.status === 'HISTORIAL' && (
+                    <Badge className="bg-slate-600 shrink-0">Historial</Badge>
+                  )}
                   <DeviceInfoPopover device={device} />
                   <Button
                     type="button"
@@ -943,15 +984,14 @@ export default function Listado() {
                     variant="ghost"
                     size="icon"
                     className="h-7 w-7"
-                    title="Ver últimas 3 h"
+                    title={
+                      device.status === 'HISTORIAL'
+                        ? 'Ver las 3 h guardadas de la última conexión'
+                        : 'Ver últimas 3 h'
+                    }
                     onClick={(e) => {
                       e.stopPropagation();
-                      setHistorial3h({
-                        imei: device.raw.imei,
-                        codigo: device.raw.codigo as DispositivoOrigenCodigo,
-                        nombre: device.nombreAsignado,
-                        zonaHoraria: data?.data?.resumen?.zona_horaria ?? null,
-                      });
+                      abrirHistorial3h(device);
                     }}
                   >
                     <History className="h-4 w-4" />
@@ -990,6 +1030,7 @@ export default function Listado() {
               </div>
             </div>
           </div>
+          </React.Fragment>
         ))}
       </div>
 
@@ -1015,9 +1056,21 @@ export default function Listado() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredDevices.map((device, index) => (
+              {orderedDevices.map((device, index) => (
+                <React.Fragment key={device.rowKey}>
+                {index === firstHistorialIndex && (
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={esSuperUser ? 11 : 10} className="bg-slate-50 dark:bg-slate-900/40">
+                      <div className="text-sm font-medium">Historial</div>
+                      <p className="text-xs text-muted-foreground">
+                        No vinieron en la API de este mes. Siguen con su última conexión, las 3 h
+                        guardadas de esa conexión y la búsqueda de historial, hasta que vuelvan a
+                        conectarse.
+                      </p>
+                    </TableCell>
+                  </TableRow>
+                )}
                 <TableRow
-                  key={device.rowKey}
                   className="cursor-pointer hover:bg-muted/50"
                   onClick={() => goDetalle(device.raw)}
                 >
@@ -1049,6 +1102,9 @@ export default function Listado() {
                       >
                         {device.nombreAsignado}
                       </span>
+                      {device.status === 'HISTORIAL' && (
+                        <Badge className="bg-slate-600 shrink-0">Historial</Badge>
+                      )}
                       <DeviceInfoPopover device={device} />
                       <Button
                         type="button"
@@ -1104,15 +1160,14 @@ export default function Listado() {
                         variant="ghost"
                         size="icon"
                         className="h-8 w-8"
-                        title="Ver últimas 3 h acumuladas"
+                        title={
+                          device.status === 'HISTORIAL'
+                            ? 'Ver las 3 h guardadas de la última conexión'
+                            : 'Ver últimas 3 h acumuladas'
+                        }
                         onClick={(e) => {
                           e.stopPropagation();
-                          setHistorial3h({
-                            imei: device.raw.imei,
-                            codigo: device.raw.codigo as DispositivoOrigenCodigo,
-                            nombre: device.nombreAsignado,
-                            zonaHoraria: data?.data?.resumen?.zona_horaria ?? null,
-                          });
+                          abrirHistorial3h(device);
                         }}
                       >
                         <History className="h-4 w-4" />
@@ -1152,6 +1207,7 @@ export default function Listado() {
                     </TableCell>
                   )}
                 </TableRow>
+                </React.Fragment>
               ))}
             </TableBody>
           </Table>

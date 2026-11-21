@@ -1,4 +1,5 @@
 import { query } from '../db.js';
+import { fetchHistorialUltimasHoras } from '../historicalTelemetry.js';
 import {
   deviceRowKey,
   mergeStarcoolOrigenes,
@@ -23,7 +24,7 @@ function mapRow(row) {
     minutos_desde_ultimo_dato:
       minutos ?? payload.minutos_desde_ultimo_dato ?? null,
     estado_conexion: ausente
-      ? 'offline'
+      ? 'historial'
       : payload.estado_conexion ?? 'offline',
     ausente_api: ausente,
     ausente_desde: row.ausente_desde
@@ -106,6 +107,69 @@ export async function markSourceDevicesAbsent(codigo, presentRowKeys, seenAt) {
     [codigo, presentRowKeys, seenAt]
   );
   return r.rowCount ?? 0;
+}
+
+const MS_3H = 3 * 60 * 60 * 1000;
+let archivando3h = false;
+
+/**
+ * Copia las 3 h anteriores a la última conexión de equipos que ya no vienen
+ * en la API. Si el mes siguiente el origen no los lista, esa ventana queda
+ * en el payload y no depende de volver a consultarlos en vivo.
+ */
+export async function archivarHistorico3hAusentes({ limit = 8 } = {}) {
+  const r = await query(
+    `SELECT row_key, imei, codigo, payload
+     FROM dashboard_device_current
+     WHERE ausente_api = true
+       AND (
+         payload->'historico_3h' IS NULL
+         OR COALESCE(payload->'historico_3h'->>'ancla', '')
+            IS DISTINCT FROM COALESCE(payload->>'ultima_actualizacion', '')
+       )
+     ORDER BY ausente_desde NULLS LAST
+     LIMIT $1`,
+    [limit]
+  );
+  let saved = 0;
+  for (const row of r.rows) {
+    const payload = row.payload != null && typeof row.payload === 'object' ? row.payload : {};
+    const ancla = payload.ultima_actualizacion ?? null;
+    const ms = ultimaActualizacionMs(ancla);
+    if (!row.codigo || Number.isNaN(ms)) continue;
+    try {
+      const hasta = new Date(ms);
+      const data = await fetchHistorialUltimasHoras(row.codigo, row.imei, 3, hasta);
+      const datos = Array.isArray(data?.datos) ? data.datos : [];
+      const historico = {
+        ancla,
+        desde: new Date(ms - MS_3H).toISOString(),
+        hasta: hasta.toISOString(),
+        datos,
+        saved_at: new Date().toISOString(),
+      };
+      await query(
+        `UPDATE dashboard_device_current
+         SET payload = jsonb_set(COALESCE(payload, '{}'::jsonb), '{historico_3h}', $2::jsonb, true)
+         WHERE row_key = $1`,
+        [row.row_key, JSON.stringify(historico)]
+      );
+      saved++;
+    } catch (e) {
+      console.warn('[fleet] historico 3h', row.row_key, e.message);
+    }
+  }
+  return saved;
+}
+
+export function archivarHistorico3hAusentesEnBackground() {
+  if (archivando3h) return;
+  archivando3h = true;
+  archivarHistorico3hAusentes()
+    .catch((e) => console.warn('[fleet] historico 3h:', e.message))
+    .finally(() => {
+      archivando3h = false;
+    });
 }
 
 export async function saveSyncState(row) {

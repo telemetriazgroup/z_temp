@@ -8,6 +8,7 @@ export function resumenFromDispositivos(
   let online = 0;
   let wait = 0;
   let offline = 0;
+  let historial = 0;
   let en_defrost = 0;
   let power_on = 0;
   let power_off = 0;
@@ -15,6 +16,7 @@ export function resumenFromDispositivos(
   for (const d of list) {
     if (d.estado_conexion === 'online') online++;
     else if (d.estado_conexion === 'wait') wait++;
+    else if (d.estado_conexion === 'historial' || d.ausente_api === true) historial++;
     else offline++;
     if (d.en_defrost === true) en_defrost++;
     if (d.power_state_texto === 'on') power_on++;
@@ -26,6 +28,7 @@ export function resumenFromDispositivos(
     online,
     wait,
     offline,
+    historial,
     en_defrost,
     power_on,
     power_off,

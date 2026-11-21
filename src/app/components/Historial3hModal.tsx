@@ -56,6 +56,10 @@ export type Historial3hTarget = {
   codigo: DispositivoOrigenCodigo | string;
   nombre?: string;
   zonaHoraria?: string | null;
+  /** Última conexión guardada. La ventana de 3 h se ancla ahí, no en «ahora». */
+  ancla?: string | null;
+  /** Copia ya persistida de esas 3 h, por si la API ya no devuelve el equipo. */
+  guardado?: DatoOficialHistorial[] | null;
 };
 
 interface Props {
@@ -71,6 +75,7 @@ export function Historial3hModal({ open, onOpenChange, target }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [datos, setDatos] = useState<DatoOficialHistorial[]>([]);
   const [cargadoAt, setCargadoAt] = useState<Date | null>(null);
+  const [desdeGuardado, setDesdeGuardado] = useState(false);
   const [vistaPrefs, setVistaPrefs] = useState<HistorialVistaPrefs>(
     defaultHistorialVistaPrefs()
   );
@@ -115,8 +120,11 @@ export function Historial3hModal({ open, onOpenChange, target }: Props) {
     }
     setLoading(true);
     setError(null);
+    setDesdeGuardado(false);
+    const anclaMs = target.ancla ? new Date(target.ancla).getTime() : NaN;
+    const fechaFinal = Number.isNaN(anclaMs) ? new Date() : new Date(anclaMs);
+    const guardado = Array.isArray(target.guardado) ? target.guardado : [];
     try {
-      const fechaFinal = new Date();
       const fechaInicial = new Date(
         fechaFinal.getTime() - VENTANA_HORAS * 60 * 60 * 1000
       );
@@ -130,8 +138,17 @@ export function Historial3hModal({ open, onOpenChange, target }: Props) {
         VENTANA_HORAS,
         fechaFinal
       );
-      setDatos(filtrados);
-      setCargadoAt(fechaFinal);
+      if (filtrados.length > 0) {
+        setDatos(filtrados);
+        setCargadoAt(fechaFinal);
+      } else if (guardado.length > 0) {
+        setDatos(guardado);
+        setCargadoAt(fechaFinal);
+        setDesdeGuardado(true);
+      } else {
+        setDatos([]);
+        setCargadoAt(fechaFinal);
+      }
       if (user?.username) {
         void postAuditEvent(user.username, {
           action: 'telemetry.view',
@@ -146,8 +163,15 @@ export function Historial3hModal({ open, onOpenChange, target }: Props) {
         });
       }
     } catch (e) {
-      setDatos([]);
-      setError(e instanceof Error ? e.message : 'Error al cargar historial');
+      if (guardado.length > 0) {
+        setDatos(guardado);
+        setCargadoAt(fechaFinal);
+        setDesdeGuardado(true);
+        setError(null);
+      } else {
+        setDatos([]);
+        setError(e instanceof Error ? e.message : 'Error al cargar historial');
+      }
     } finally {
       setLoading(false);
     }
@@ -212,8 +236,11 @@ export function Historial3hModal({ open, onOpenChange, target }: Props) {
             </DialogTitle>
             <DialogDescription>
               {target?.codigo ?? '—'} · IMEI {target?.imei ?? '—'} · zona{' '}
-              {displayTz.label}. Serie completa en gráfica; tabla muestreada ~cada
-              30 min.
+              {displayTz.label}.
+              {target?.ancla
+                ? ' Ventana de 3 h anterior a la última conexión guardada.'
+                : ' Serie completa en gráfica; tabla muestreada ~cada 30 min.'}
+              {desdeGuardado ? ' Mostrando la copia guardada en el sistema.' : ''}
             </DialogDescription>
           </DialogHeader>
           <div className="flex justify-end">
@@ -307,7 +334,8 @@ export function Historial3hModal({ open, onOpenChange, target }: Props) {
                               row,
                               'fecha_registro',
                               target?.zonaHoraria,
-                              tempUnidad
+                              tempUnidad,
+                              target?.codigo
                             )}
                           </TableCell>
                           {tableKeysResolved.map((key) => {
@@ -315,7 +343,8 @@ export function Historial3hModal({ open, onOpenChange, target }: Props) {
                               row,
                               key,
                               target?.zonaHoraria,
-                              tempUnidad
+                              tempUnidad,
+                              target?.codigo
                             );
                             const def = fieldDefForTableKey(key);
                             const tendencia =

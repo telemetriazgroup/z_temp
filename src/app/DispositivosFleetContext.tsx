@@ -242,14 +242,14 @@ export function useDispositivosFleet(): DispositivosFleetContextValue {
   return ctx;
 }
 
-export type FleetStatusFilter = 'ALL' | 'ONLINE' | 'WAIT' | 'OFFLINE';
+export type FleetStatusFilter = 'ALL' | 'ONLINE' | 'WAIT' | 'OFFLINE' | 'HISTORIAL';
 export type FleetRangoFilter = 'ALL' | 'en' | 'fuera' | 'apagado';
 
 export function parseFleetStatusParam(
   value: string | null
 ): FleetStatusFilter {
   const v = (value ?? '').toUpperCase();
-  if (v === 'ONLINE' || v === 'WAIT' || v === 'OFFLINE') return v;
+  if (v === 'ONLINE' || v === 'WAIT' || v === 'OFFLINE' || v === 'HISTORIAL') return v;
   return 'ALL';
 }
 

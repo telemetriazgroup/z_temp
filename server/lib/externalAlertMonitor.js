@@ -175,7 +175,7 @@ export async function buildExternalAlertMonitor(options = {}) {
               useRangoPersonalizado: false,
               margenInferior: null,
               margenSuperior: null,
-              nota: 'Sin overrides; usa umbrales del grupo/estándar y banda ±10% setpoint',
+              nota: 'Sin overrides; usa umbrales del grupo/estándar y banda ±4 °C del setpoint',
             },
         rangoProgramado: rangoProgramado
           ? {

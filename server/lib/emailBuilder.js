@@ -418,3 +418,48 @@ ${liOps}
 
   return { subject, text, html, attachments: [] };
 }
+
+/**
+ * El enlace completo dejó de entregar datos. Va a asistencia técnica, no al cliente.
+ */
+export function buildApiSinConexionEmail(params) {
+  const { codigo, horas, equipos, since, error } = params;
+  const fechaAlerta = formatDateSubjectTz(new Date());
+  const horasTxt =
+    horas != null && !Number.isNaN(horas) ? `~${roundHoras(horas)} h` : 'más de 3 h';
+  const subject = `API ${codigo} SIN CONEXIÓN — asistencia técnica ${fechaAlerta}`;
+  const intro =
+    `La API ${codigo} no se está conectando y requiere asistencia técnica del equipo informático. ` +
+    'Se presume un error de comunicaciones con la API, no una falla de los equipos. ' +
+    'Este aviso no se envía a los clientes.';
+  const detalle = [
+    `• Enlace / API: ${codigo}`,
+    `• Equipos de ese enlace fuera de línea: ${equipos}`,
+    `• Tiempo sin comunicación del enlace: ${horasTxt}`,
+    `• Última comunicación conocida: ${fmtDateShort(since)} (GMT-5)`,
+  ];
+  if (error) detalle.push(`• Error de la sonda: ${error}`);
+  detalle.push('• Próximo aviso: cada hora, mientras el enlace siga sin datos.');
+
+  const text = [
+    'Equipo informático',
+    '',
+    intro,
+    '',
+    'Detalle :',
+    ...detalle,
+    '',
+    'Atentamente,',
+    'ZTRACK-ZGROUP',
+    'Sistema de Monitoreo y Alertas',
+  ].join('\n');
+
+  const html = `<!DOCTYPE html><html lang="es"><body style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5">
+<p>Equipo informático</p>
+<p>${intro}</p>
+<p><strong>Detalle :</strong></p>
+<ul>${detalle.map((l) => `<li>${l.replace(/^• /, '')}</li>`).join('')}</ul>
+<p>Atentamente,<br><strong>ZTRACK-ZGROUP</strong></p></body></html>`;
+
+  return { subject, text, html, attachments: [] };
+}

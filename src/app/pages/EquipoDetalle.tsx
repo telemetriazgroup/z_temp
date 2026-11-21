@@ -4,6 +4,7 @@ import { dispositivoTieneHistorialOficial } from '../api/datosOficiales';
 import { HistorialOficialDetalle } from '../components/HistorialOficialDetalle';
 import { AnalisisTelemetriaPanel } from '../components/AnalisisTelemetriaPanel';
 import type {
+  DatoOficialHistorial,
   DispositivoUltimoEstado,
   UltimoDatoDispositivo,
 } from '../types';
@@ -24,6 +25,7 @@ import {
   formatearNumero,
   telemetriaComparablePayload,
 } from '../lib/telemetriaDetalle';
+import { powerStateEfectivo } from '../lib/powerEfectivo';
 import {
   formatDateTimeInTz,
   resolveDisplayTimeZone,
@@ -82,7 +84,11 @@ interface DetalleItem {
   value: string;
 }
 
-function buildDetalleItems(d: UltimoDatoDispositivo): DetalleItem[] {
+function buildDetalleItems(
+  d: UltimoDatoDispositivo,
+  codigo?: string | null,
+  muestra?: DatoOficialHistorial | null
+): DetalleItem[] {
   const co2 = nivelCo2O2Valido(d.co2_reading);
   const o2 = nivelCo2O2Valido(d.o2_reading);
 
@@ -222,7 +228,20 @@ function buildDetalleItems(d: UltimoDatoDispositivo): DetalleItem[] {
       label: 'Estado',
       Icon: Power,
       iconClass: 'bg-lime-100 text-lime-800 dark:bg-lime-950 dark:text-lime-300',
-      value: textoEstadoPowerState(d.power_state),
+      value: textoEstadoPowerState(
+        powerStateEfectivo(
+          {
+            power_state: muestra?.power_state ?? d.power_state,
+            consumption_ph_1: muestra?.consumption_ph_1,
+            consumption_ph_2: muestra?.consumption_ph_2,
+            consumption_ph_3: muestra?.consumption_ph_3,
+            set_point: muestra?.set_point ?? d.set_point,
+            temp_supply_1: muestra?.temp_supply_1 ?? d.temp_supply_1,
+            return_air: muestra?.return_air ?? d.return_air,
+          },
+          codigo
+        )
+      ),
     },
     {
       id: 'capacity_load',
@@ -248,11 +267,15 @@ const PRINCIPAL_IDS_ORDER = [
   'capacity_load',
 ] as const;
 
-function partitionDetalleItems(d: UltimoDatoDispositivo): {
+function partitionDetalleItems(
+  d: UltimoDatoDispositivo,
+  codigo?: string | null,
+  muestra?: DatoOficialHistorial | null
+): {
   principal: DetalleItem[];
   extra: DetalleItem[];
 } {
-  const all = buildDetalleItems(d);
+  const all = buildDetalleItems(d, codigo, muestra);
   const orderIdx = new Map<string, number>(
     PRINCIPAL_IDS_ORDER.map((id, i) => [id, i])
   );
@@ -289,6 +312,10 @@ export default function EquipoDetalle() {
     upsertDispositivo,
   } = useDispositivosFleet();
   const localNames = useMemo(() => readDeviceLocalNames(), []);
+  const [muestraOficial, setMuestraOficial] = useState<DatoOficialHistorial | null>(null);
+  const onMuestraReciente = useCallback((row: DatoOficialHistorial | null) => {
+    setMuestraOficial(row);
+  }, []);
 
   const passedDevice = useMemo(
     () => matchPassedDevice(location.state, imei, codigoParam),
@@ -449,8 +476,12 @@ export default function EquipoDetalle() {
 
   const { principal: detallePrincipal, extra: detalleExtra } = useMemo(() => {
     if (dispositivo == null) return { principal: [], extra: [] };
-    return partitionDetalleItems(dispositivo.ultimo_dato);
-  }, [dispositivo]);
+    return partitionDetalleItems(
+      dispositivo.ultimo_dato,
+      dispositivo.codigo,
+      muestraOficial
+    );
+  }, [dispositivo, muestraOficial]);
 
   const esLayoutReeferControl =
     dispositivo != null &&
@@ -734,6 +765,7 @@ export default function EquipoDetalle() {
             nombreContenedor={tituloPrincipal}
             focusRango={historialFocus}
             zonaHoraria={dispositivo.zona_horaria}
+            onMuestraReciente={onMuestraReciente}
           />
           {puedeMostrarAnalisis && (
             <AnalisisTelemetriaPanel

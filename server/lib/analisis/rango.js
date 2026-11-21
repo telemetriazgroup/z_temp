@@ -5,6 +5,7 @@ import {
 } from '../rangoTemperatura.js';
 import { resolveRangoOptsForDevice } from '../deviceAlertConfigRepository.js';
 import { timestampRegistroHistorial } from '../historicalTelemetry.js';
+import { powerStateEfectivo } from '../powerEfectivo.js';
 
 /** Apagados menores a esto se consideran falso apagado (no entran al análisis). */
 export const MIN_APAGADO_MS = 8 * 60 * 1000;
@@ -138,9 +139,9 @@ export function rangoOptsFromSnapshot(snapshot) {
  * Equipo apagado (`power_state=0`) → sin evaluación de banda (null); el
  * apagado se trata aparte y recorta el fuera si se solapan.
  */
-export function rowEnRangoParaAnalisis(row, rangoOpts = null) {
+export function rowEnRangoParaAnalisis(row, rangoOpts = null, codigo = null) {
   if (row == null) return null;
-  if (row.power_state === 0) return null;
+  if (powerStateEfectivo(row, codigo ?? row.codigo) === 0) return null;
 
   const ret = row.return_air;
   if (ret == null || Number.isNaN(Number(ret))) return null;
@@ -255,8 +256,8 @@ export function suministroCercaDeSetPoint(
 }
 
 /** Apagado efectivo para análisis mensual (excluye falsos por suministro cerca del SP). */
-export function filaApagadoRealParaAnalisis(row) {
-  if (row?.power_state !== 0) return false;
+export function filaApagadoRealParaAnalisis(row, codigo = null) {
+  if (powerStateEfectivo(row, codigo ?? row.codigo) !== 0) return false;
   if (suministroCercaDeSetPoint(row)) return false;
   return true;
 }
@@ -265,13 +266,14 @@ export function filaApagadoRealParaAnalisis(row) {
  * Intervalos apagado para análisis: ignora power_state=0 si suministro ≈ set point (±2 °C).
  * También construye intervalos de falso apagado por suministro cerca del SP (trazabilidad admin).
  */
-export function computeApagadoIntervalsAnalisis(datos, referencia = new Date()) {
+export function computeApagadoIntervalsAnalisis(datos, referencia = new Date(), codigo = null) {
   const sorted = [...(datos ?? [])]
     .map((row) => ({
       ts: timestampRegistroHistorial(row),
-      apagado: filaApagadoRealParaAnalisis(row),
+      apagado: filaApagadoRealParaAnalisis(row, codigo),
       falsoPorSuministro:
-        row?.power_state === 0 && suministroCercaDeSetPoint(row),
+        powerStateEfectivo(row, codigo ?? row.codigo) === 0 &&
+        suministroCercaDeSetPoint(row),
     }))
     .filter((x) => !Number.isNaN(x.ts))
     .sort((a, b) => a.ts - b.ts);

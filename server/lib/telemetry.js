@@ -22,6 +22,10 @@ export function ultimaActualizacionMs(value) {
 }
 
 function preferirEntreStarcool(a, b) {
+  const aVivo = a.ausente_api !== true && a.estado_conexion !== 'historial';
+  const bVivo = b.ausente_api !== true && b.estado_conexion !== 'historial';
+  if (aVivo !== bVivo) return aVivo ? a : b;
+
   const ta = ultimaActualizacionMs(a.ultima_actualizacion);
   const tb = ultimaActualizacionMs(b.ultima_actualizacion);
   const aOk = !Number.isNaN(ta);
