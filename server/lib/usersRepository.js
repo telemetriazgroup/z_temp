@@ -244,6 +244,7 @@ function validateUserShape(user, { requirePassword = false } = {}) {
     dni: optStr(user.dni),
     correo: optStr(user.correo),
     telefono: optStr(user.telefono),
+    whatsappNumero: optStr(user.whatsappNumero),
     sexo: normalizeSexo(user.sexo),
     empresaId: optStr(user.empresaId),
   };
@@ -554,6 +555,7 @@ export function updateOwnProfile(id, patch, actingUsername) {
     'dni',
     'correo',
     'telefono',
+    'whatsappNumero',
     'sexo',
     'avatarUrl',
   ];

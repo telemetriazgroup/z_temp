@@ -133,6 +133,8 @@ export interface GrupoCorreo {
   emails: string[];
   devices: GrupoCorreoDevice[];
   enabled: boolean;
+  /** También avisar por WhatsApp a los usuarios de estos correos, si su número ya está aprobado. */
+  whatsappActivo?: boolean;
   /** Username del admin/superadmin propietario (cuotas admin). */
   ownerUsername?: string;
   createdAt: string;

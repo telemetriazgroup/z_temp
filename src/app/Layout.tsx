@@ -38,6 +38,7 @@ import {
   History,
   Shield,
   Mail,
+  MessageCircle,
   Inbox,
   UserCircle,
   ChevronDown,
@@ -180,6 +181,13 @@ export default function Layout() {
     }
   }, [user, location.pathname, navigate]);
 
+  useEffect(() => {
+    if (!user || userIsSuperAdmin(user)) return;
+    if (location.pathname === '/whatsapp') {
+      navigate('/', { replace: true });
+    }
+  }, [user, location.pathname, navigate]);
+
   /** Admin: sin Monitoreo, Config. alarmas ni Ubícanos (solo superadmin). */
   useEffect(() => {
     if (!user || !userIsAdmin(user) || userIsSuperAdmin(user)) return;
@@ -257,6 +265,15 @@ export default function Layout() {
               path: '/configuracion-correo' as const,
               label: t('nav.correo'),
               icon: Mail,
+            },
+          ]
+        : []),
+      ...(userIsSuperAdmin(user)
+        ? [
+            {
+              path: '/whatsapp' as const,
+              label: t('nav.whatsapp'),
+              icon: MessageCircle,
             },
           ]
         : []),

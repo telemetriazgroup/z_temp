@@ -1,0 +1,202 @@
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { iniciarOutbox, setWaSender } from './outbox.js';
+import { recibirMensaje } from './conversacion.js';
+import { registrarMensaje } from './repository.js';
+import { jidDeTelefono, normalizarTelefono, telefonoDeJid } from './telefono.js';
+
+const sessionsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../wa-sessions');
+
+const estado = {
+  fase: 'detenido',
+  qr: null,
+  qrDataUrl: null,
+  telefono: null,
+  error: null,
+  actualizadoEn: null,
+};
+
+const pasos = [];
+
+function registrarPaso(id, titulo, detalle, status = 'ok') {
+  const hora = new Date().toLocaleString('es-PE', { timeZone: 'America/Lima' });
+  const entry = { id, titulo, detalle, status, hora };
+  const idx = pasos.findIndex((p) => p.id === id);
+  if (idx >= 0) pasos[idx] = entry;
+  else pasos.push(entry);
+}
+
+let client = null;
+let iniciando = false;
+
+function chromiumPath() {
+  const candidates = [
+    process.env.PUPPETEER_EXECUTABLE_PATH,
+    process.env.CHROME_PATH,
+    '/usr/bin/chromium-browser',
+    '/usr/bin/chromium',
+  ].filter(Boolean);
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+function tocar(parcial) {
+  Object.assign(estado, parcial, { actualizadoEn: new Date().toISOString() });
+}
+
+export function estadoWa() {
+  const wid = client?.info?.wid?.user || null;
+  if (wid) {
+    estado.fase = 'conectado';
+    estado.telefono = wid;
+    estado.qr = null;
+    estado.qrDataUrl = null;
+    estado.error = null;
+  }
+  const { qr: _qr, ...publico } = estado;
+  return {
+    ...publico,
+    telefono: wid || estado.telefono,
+    chromium: Boolean(chromiumPath()),
+    listo: Boolean(wid),
+    pasos: pasos.map((p) => ({ ...p })),
+  };
+}
+
+export async function enviarMensajePrueba({ telefono, texto } = {}) {
+  const wid = client?.info?.wid?.user;
+  if (!wid) {
+    const error = new Error('WhatsApp no está listo. Espera el estado conectado antes de probar el envío.');
+    error.status = 409;
+    throw error;
+  }
+  const destino = normalizarTelefono(telefono || wid);
+  const jid = jidDeTelefono(destino);
+  if (!jid) {
+    const error = new Error('Teléfono de prueba inválido');
+    error.status = 400;
+    throw error;
+  }
+  const hora = new Date().toLocaleString('es-PE', { timeZone: 'America/Lima' });
+  const body =
+    String(texto || '').trim() ||
+    `Prueba ZTRACK ${hora}. Si lees esto, el envío de WhatsApp funciona.`;
+  const msg = await client.sendMessage(jid, body);
+  await registrarMensaje({
+    telefono: destino,
+    direccion: 'out',
+    texto: body,
+    tipo: 'prueba_envio',
+  }).catch(() => {});
+  return {
+    telefono: destino,
+    texto: body,
+    messageId: msg?.id?._serialized || null,
+  };
+}
+
+async function qrADataUrl(qr) {
+  const QRCode = (await import('qrcode')).default;
+  return QRCode.toDataURL(qr, { margin: 1, width: 280 });
+}
+
+export async function startWaClient() {
+  if (iniciando || client) return estadoWa();
+  const exe = chromiumPath();
+  registrarPaso('init', 'Estado de vinculación', 'Proceso de WhatsApp listo', 'ok');
+  if (!exe) {
+    registrarPaso('chromium', 'Chromium', 'No está instalado en este contenedor', 'error');
+    tocar({
+      fase: 'sin_chromium',
+      error: 'Chromium no está en este contenedor. La configuración se guarda; el envío requiere la imagen con navegador.',
+    });
+    return estadoWa();
+  }
+  registrarPaso('chromium', 'Chromium', exe, 'ok');
+  iniciando = true;
+  tocar({ fase: 'iniciando', error: null });
+  try {
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    registrarPaso('sesion', 'Carpeta de sesión', sessionsDir, fs.existsSync(sessionsDir) ? 'ok' : 'warn');
+    const { default: pkg } = await import('whatsapp-web.js');
+    const { Client, LocalAuth } = pkg;
+    registrarPaso('cliente', 'Cliente WhatsApp', 'whatsapp-web.js listo', 'pending');
+    const c = new Client({
+      authStrategy: new LocalAuth({ dataPath: sessionsDir }),
+      puppeteer: {
+        executablePath: exe,
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+      },
+    });
+    c.on('qr', async (qr) => {
+      if (c.info?.wid?.user) return;
+      let qrDataUrl = null;
+      try {
+        qrDataUrl = await qrADataUrl(qr);
+      } catch {
+        qrDataUrl = null;
+      }
+      tocar({ fase: 'qr', qr, qrDataUrl, error: null });
+      registrarPaso('qr', 'Código QR', 'Listo para escanear', 'pending');
+    });
+    c.on('authenticated', () => {
+      tocar({ fase: 'autenticado', qr: null, qrDataUrl: null });
+      registrarPaso('auth', 'Autenticado', 'Credenciales de WhatsApp Web guardadas', 'ok');
+    });
+    c.on('ready', () => {
+      const wid = c.info?.wid?.user || null;
+      tocar({ fase: 'conectado', telefono: wid, qr: null, qrDataUrl: null, error: null });
+      registrarPaso('cliente', 'Cliente WhatsApp', 'whatsapp-web.js', 'ok');
+      registrarPaso('conectado', 'WhatsApp conectado', `Sesión activa ${wid || ''}`.trim(), 'ok');
+      const errorIdx = pasos.findIndex((p) => p.id === 'error');
+      if (errorIdx >= 0) pasos.splice(errorIdx, 1);
+    });
+    c.on('auth_failure', (msg) => {
+      tocar({ fase: 'error', error: String(msg || 'auth_failure') });
+      registrarPaso('auth', 'Autenticación', String(msg || 'auth_failure'), 'error');
+    });
+    c.on('disconnected', (reason) => {
+      tocar({ fase: 'desconectado', error: String(reason || 'desconectado'), qr: null });
+      client = null;
+    });
+    c.on('message', (msg) => {
+      const from = String(msg.from || '');
+      if (from.endsWith('@g.us') || msg.fromMe) return;
+      const texto = String(msg.body || '').trim();
+      if (!texto) return;
+      recibirMensaje({
+        jid: from.endsWith('@c.us') ? from : `${telefonoDeJid(from)}@c.us`,
+        telefono: telefonoDeJid(from),
+        texto,
+      }).catch((e) => console.warn('[wa] mensaje', e.message));
+    });
+    setWaSender((jid, text) => c.sendMessage(jid, text));
+    iniciarOutbox();
+    client = c;
+    await c.initialize();
+  } catch (e) {
+    tocar({ fase: 'error', error: e.message });
+    registrarPaso('error', 'Error', e.message, 'error');
+    client = null;
+  } finally {
+    iniciando = false;
+  }
+  return estadoWa();
+}
+
+export async function reiniciarWaClient() {
+  if (client) {
+    try {
+      await client.destroy();
+    } catch {
+      /* el siguiente inicio levanta otra sesión */
+    }
+    client = null;
+  }
+  tocar({ fase: 'detenido', qr: null, qrDataUrl: null });
+  return startWaClient();
+}

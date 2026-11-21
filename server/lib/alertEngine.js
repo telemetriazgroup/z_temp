@@ -21,7 +21,8 @@ import {
 } from './emailBuilder.js';
 import { buildTrazabilidadEmailPack } from './emailTraceability.js';
 import { deviceRowKey } from './telemetry.js';
-import { loadCurrentDispositivos } from './dashboard/fleetStore.js';
+import { loadCurrentDispositivos, loadSourceDispositivos } from './dashboard/fleetStore.js';
+import { encolarAlertaEquipo } from './wa/alertas.js';
 import { getSmtpConfig } from './smtpRepository.js';
 import { getApiAsistenciaEmails } from './apiAsistenciaRepository.js';
 import { detectarEnlacesCaidos, horasSinComunicacion } from './enlaceCaido.js';
@@ -481,6 +482,32 @@ function pushEval(evaluaciones, eval_) {
   evaluaciones.push(eval_);
 }
 
+function espejoWhatsapp({ assignment, dispositivo, titulo, detalle, grupo }) {
+  const nombre =
+    dispositivo?.descripcion ||
+    dispositivo?.nombre ||
+    assignment?.nombre ||
+    dispositivo?.imei;
+  const texto = [
+    `Alerta ZTRACK · ${titulo}`,
+    nombre ? String(nombre) : null,
+    `${dispositivo?.codigo || '—'} · IMEI ${dispositivo?.imei || '—'}`,
+    detalle || null,
+    'Escribe ESTADO para ver tus equipos.',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  void encolarAlertaEquipo({
+    rowKey: assignment?.rowKey,
+    imei: dispositivo?.imei,
+    nombre: nombre ? String(nombre) : '',
+    codigo: dispositivo?.codigo,
+    texto,
+    grupoWhatsapp: grupo?.whatsappActivo === true,
+    emails: grupo?.emails ?? [],
+  }).catch((e) => console.warn('[wa] espejo', e.message));
+}
+
 async function sendMail(smtp, to, content) {
   const transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
@@ -607,6 +634,13 @@ async function sendRecuperacionEnRangoMail({
     });
     result.emailsSent++;
     result.resumen.correoEnviado++;
+    espejoWhatsapp({
+      assignment,
+      dispositivo,
+      titulo: 'Volvió a rango',
+      detalle: content.subject,
+      grupo,
+    });
     return { sent: true, envioId, destinatarios: to };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -687,8 +721,15 @@ async function avisarEnlacesCaidos({ state, now, smtp, enlaces, result }) {
   }
 
   for (const enlace of enlaces) {
-    if (!apiEnlaceDue(state, enlace.codigo, now)) continue;
     const status = sonda.get(enlace.codigo);
+    const apiEntregaDatos =
+      status?.ok === true &&
+      ((status.online_count ?? 0) > 0 || (status.wait_count ?? 0) > 0);
+    if (apiEntregaDatos) {
+      delete state.apiEnlace[enlace.codigo];
+      continue;
+    }
+    if (!apiEnlaceDue(state, enlace.codigo, now)) continue;
     const content = buildApiSinConexionEmail({
       codigo: enlace.codigo,
       horas: enlace.horas,
@@ -811,7 +852,11 @@ export async function runAlertCycle(options = {}) {
   const now = new Date();
   const hoy = todayKey(now);
   const cacheApagadoFases = new Map();
-  const enlacesCaidos = detectarEnlacesCaidos(dispositivos, now, OFFLINE_ALERT_HOURS);
+  const enlacesCaidos = detectarEnlacesCaidos(
+    await loadSourceDispositivos(),
+    now,
+    OFFLINE_ALERT_HOURS
+  );
   const enlaceCaidoPorCodigo = new Map(enlacesCaidos.map((e) => [e.codigo, e]));
   await avisarEnlacesCaidos({ state, now, smtp, enlaces: enlacesCaidos, result });
 
@@ -1004,6 +1049,13 @@ export async function runAlertCycle(options = {}) {
             result.resumen.correoEnviado++;
             envioIds.push(envioId);
             acciones.push(`usuario 1× → ${userEmails.join(', ')}`);
+            espejoWhatsapp({
+              assignment,
+              dispositivo,
+              titulo: 'Fuera de línea',
+              detalle: contentUser.subject,
+              grupo,
+            });
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             result.errors.push(`${dispositivoReeferId} FUERA LÍNEA usuario: ${msg}`);
@@ -1159,6 +1211,13 @@ export async function runAlertCycle(options = {}) {
         try {
           const messageId = await sendMail(smtp, grupo.emails, content);
           markUmbralEnviado(episode, umbralHoras, umbrales);
+          espejoWhatsapp({
+            assignment,
+            dispositivo,
+            titulo: 'Apagado',
+            detalle: content.subject,
+            grupo,
+          });
           addEnvio({
             id: envioId,
             alertKind: 'apagado',
@@ -1525,6 +1584,13 @@ export async function runAlertCycle(options = {}) {
         try {
           const messageId = await sendMail(smtp, grupo.emails, content);
           markUmbralEnviado(episode, umbralHoras, umbrales);
+          espejoWhatsapp({
+            assignment,
+            dispositivo,
+            titulo: 'Fuera de rango',
+            detalle: content.subject,
+            grupo,
+          });
 
           addEnvio({
             id: envioId,

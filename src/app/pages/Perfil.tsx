@@ -8,6 +8,7 @@ import {
   type TemperaturaUnidad,
 } from '../lib/temperatureUnit';
 import type { Empresa, UserSexo } from '../types';
+import { WhatsAppCuenta } from '../components/WhatsAppCuenta';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -406,6 +407,8 @@ export default function Perfil() {
           </div>
         </CardContent>
       </Card>
+
+      <WhatsAppCuenta />
 
       <Card>
         <CardHeader className="pb-3">

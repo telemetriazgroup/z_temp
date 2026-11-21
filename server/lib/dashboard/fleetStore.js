@@ -34,13 +34,26 @@ function mapRow(row) {
   };
 }
 
-/** Flota guardada. STARCOOL y STARCOOL2 del mismo IMEI quedan en un solo equipo. */
-export async function loadCurrentDispositivos() {
+async function selectCurrentRows() {
   const r = await query(
     `SELECT row_key, imei, codigo, payload, ausente_api, ausente_desde, last_api_at
      FROM dashboard_device_current`
   );
-  return mergeStarcoolOrigenes(r.rows.map(mapRow));
+  return r.rows.map(mapRow);
+}
+
+/**
+ * Flota por origen, sin fusionar STARCOOL con STARCOOL2.
+ * El aviso de «API sin conexión» tiene que ver el enlace real: si se fusionan,
+ * un origen puede quedar solo con equipos viejos aunque la API esté respondiendo.
+ */
+export async function loadSourceDispositivos() {
+  return selectCurrentRows();
+}
+
+/** Flota guardada. STARCOOL y STARCOOL2 del mismo IMEI quedan en un solo equipo. */
+export async function loadCurrentDispositivos() {
+  return mergeStarcoolOrigenes(await selectCurrentRows());
 }
 
 export async function countCurrentDevices() {

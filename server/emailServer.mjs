@@ -560,11 +560,15 @@ app.get('/reefer/api/correo/users/by-username/:username', (req, res) => {
   }
 });
 
-app.post('/reefer/api/correo/users', (req, res) => {
+app.post('/reefer/api/correo/users', async (req, res) => {
   try {
     const actor = requireUserManager(req, res);
     if (!actor) return;
     const created = addUser(req.body ?? {}, { actor });
+    if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'whatsappNumero')) {
+      const { sincronizarNumeroUsuario } = await import('./lib/wa/cuenta.js');
+      await sincronizarNumeroUsuario(created, { aprobar: req.body?.aprobarWhatsapp === true });
+    }
     try {
       appendAuditEvent({
         actorUsername: actor.username,
@@ -602,11 +606,15 @@ app.get('/reefer/api/correo/users/:id', (req, res) => {
   }
 });
 
-app.put('/reefer/api/correo/users/:id', (req, res) => {
+app.put('/reefer/api/correo/users/:id', async (req, res) => {
   try {
     const actor = requireUserManager(req, res);
     if (!actor) return;
     const updated = updateUser(req.params.id, req.body ?? {}, { actor });
+    if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'whatsappNumero')) {
+      const { sincronizarNumeroUsuario } = await import('./lib/wa/cuenta.js');
+      await sincronizarNumeroUsuario(updated, { aprobar: req.body?.aprobarWhatsapp === true });
+    }
     try {
       appendAuditEvent({
         actorUsername: actor.username,
@@ -627,13 +635,17 @@ app.put('/reefer/api/correo/users/:id', (req, res) => {
   }
 });
 
-app.put('/reefer/api/correo/users/:id/profile', (req, res) => {
+app.put('/reefer/api/correo/users/:id/profile', async (req, res) => {
   try {
     const acting = getUser(req);
     if (!acting || acting === 'sistema') {
       return res.status(401).json({ ok: false, error: 'Usuario no autenticado' });
     }
     const updated = updateOwnProfile(req.params.id, req.body ?? {}, acting);
+    if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'whatsappNumero')) {
+      const { sincronizarNumeroUsuario } = await import('./lib/wa/cuenta.js');
+      await sincronizarNumeroUsuario(updated);
+    }
     try {
       appendAuditEvent({
         actorUsername: acting,
@@ -1474,6 +1486,12 @@ app.post('/reefer/api/correo/send', async (req, res) => {
   }
 });
 
+const { createWaRouter } = await import('./lib/wa/routes.js');
+app.use(
+  '/reefer/api/correo/whatsapp',
+  createWaRouter({ requireSuperUser, actorOf: resolveActor })
+);
+
 app.listen(PORT, '0.0.0.0', () => {
   ensureUserRegistry();
   console.log(`ZTRACK correo API :${PORT} · ciclo cada ${POLL_MS / 1000}s`);
@@ -1487,6 +1505,14 @@ app.listen(PORT, '0.0.0.0', () => {
       );
       const { startSenalJobRunner } = await import('./lib/senal/jobRunner.js');
       startSenalJobRunner();
+      const { ensureWaSchema } = await import('./lib/wa/schema.js');
+      ensureWaSchema()
+        .then(async () => {
+          const { startWaClient } = await import('./lib/wa/client.js');
+          return startWaClient();
+        })
+        .then((wa) => console.log('[wa] sesión', wa?.fase ?? 'ok'))
+        .catch((e) => console.warn('[wa] inicio diferido:', e.message));
       setTimeout(() => {
         captureDashboardSnapshotSafe({ trigger: 'boot' })
           .then(async (r) => {

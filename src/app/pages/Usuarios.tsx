@@ -63,6 +63,8 @@ const emptyForm = {
   dni: '',
   correo: '',
   telefono: '',
+  whatsappNumero: '',
+  aprobarWhatsapp: false,
   sexo: '' as '' | UserSexo,
   empresaId: '' as string,
   zonaHoraria: 'GMT-5',
@@ -79,6 +81,9 @@ function personalPayload(form: typeof emptyForm) {
     dni: form.dni.trim() || undefined,
     correo: form.correo.trim() || undefined,
     telefono: form.telefono.trim() || undefined,
+    whatsappNumero: form.whatsappNumero.trim()
+      ? `51${form.whatsappNumero.replace(/\D/g, '').replace(/^51/, '')}`
+      : '',
     sexo: form.sexo || undefined,
     empresaId: form.empresaId && form.empresaId !== '__none__' ? form.empresaId : '',
     zonaHoraria: form.zonaHoraria,
@@ -162,6 +167,8 @@ export default function Usuarios() {
       dni: u.dni ?? '',
       correo: u.correo ?? '',
       telefono: u.telefono ?? '',
+      whatsappNumero: (u.whatsappNumero ?? '').replace(/^51/, ''),
+      aprobarWhatsapp: false,
       sexo: (u.sexo as UserSexo) ?? '',
       empresaId: u.empresaId ?? '',
       zonaHoraria: u.zonaHoraria ?? 'GMT-5',
@@ -201,6 +208,7 @@ export default function Usuarios() {
         superUser: category === 'superadmin',
         puedeControlTemperatura: form.puedeControlTemperatura === true,
         puedeAnalisisTelemetria: form.puedeAnalisisTelemetria === true,
+        aprobarWhatsapp: form.aprobarWhatsapp === true,
         ...personal,
       };
 
@@ -509,6 +517,32 @@ export default function Usuarios() {
                   value={form.telefono}
                   onChange={(e) => setForm((f) => ({ ...f, telefono: e.target.value }))}
                 />
+              </div>
+              <div className="grid gap-2 sm:col-span-2">
+                <Label>WhatsApp de alertas</Label>
+                <div className="flex max-w-sm">
+                  <span className="inline-flex items-center rounded-l-md border border-r-0 px-3 text-sm">+51</span>
+                  <Input
+                    className="rounded-l-none"
+                    inputMode="numeric"
+                    placeholder="987654321"
+                    value={form.whatsappNumero}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        whatsappNumero: e.target.value.replace(/\D/g, '').slice(0, 9),
+                      }))
+                    }
+                  />
+                </div>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={form.aprobarWhatsapp === true}
+                    onChange={(e) => setForm((f) => ({ ...f, aprobarWhatsapp: e.target.checked }))}
+                  />
+                  Aprobar este número sin esperar la prueba del cliente
+                </label>
               </div>
             </div>
             <div className="grid gap-2 sm:grid-cols-2">

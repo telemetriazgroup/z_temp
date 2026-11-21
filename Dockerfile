@@ -35,8 +35,11 @@ FROM node:22-alpine
 
 ENV TZ=America/Lima
 ENV MPLBACKEND=Agg
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 RUN apk add --no-cache nginx tzdata font-dejavu \
-      python3 py3-pandas py3-numpy py3-matplotlib py3-pillow py3-reportlab
+      python3 py3-pandas py3-numpy py3-matplotlib py3-pillow py3-reportlab \
+      chromium nss freetype harfbuzz ca-certificates ttf-freefont
 
 COPY nginx.conf /etc/nginx/http.d/default.conf
 COPY docker-entrypoint.sh /docker-entrypoint.sh

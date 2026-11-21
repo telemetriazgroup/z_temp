@@ -130,6 +130,8 @@ export interface User {
   dni?: string;
   correo?: string;
   telefono?: string;
+  /** Número de alertas WhatsApp, con prefijo de país. Por defecto 51. */
+  whatsappNumero?: string;
   sexo?: UserSexo;
   /** Empresa asignada (módulo empresa). */
   empresaId?: string;

@@ -202,6 +202,7 @@ function emptyGrupo(ownerUsername?: string): Omit<GrupoCorreo, 'createdAt' | 'up
     emails: [],
     devices: [],
     enabled: true,
+    whatsappActivo: false,
     ownerUsername,
   };
 }
@@ -789,6 +790,7 @@ export default function ConfiguracionCorreo() {
       emails: [...g.emails],
       devices: g.devices.map((d) => ({ ...d, umbralesHoras: [...normalizeUmbrales(d.umbralesHoras)] })),
       enabled: g.enabled,
+      whatsappActivo: g.whatsappActivo === true,
       ownerUsername: g.ownerUsername ?? actingUser ?? undefined,
     });
     setEditingCreatedAt(g.createdAt);
@@ -2330,6 +2332,18 @@ export default function ConfiguracionCorreo() {
                   Pegue varios correos separados por coma, o agréguelos de uno en uno. Luego puede
                   editarlos o quitarlos.
                 </p>
+                <label className="flex items-start gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={editing.whatsappActivo === true}
+                    onChange={(e) => setEditing({ ...editing, whatsappActivo: e.target.checked })}
+                  />
+                  <span>
+                    Activar alertas por WhatsApp para los equipos de este grupo. El usuario tiene que
+                    haber completado la prueba de vinculación, o un admin debe haber aprobado su número.
+                  </span>
+                </label>
                 {editing.emails.length > 0 && (
                   <ul className="space-y-1">
                     {editing.emails.map((correo, index) => (

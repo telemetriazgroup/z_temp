@@ -33,7 +33,7 @@ export function detectarEnlacesCaidos(dispositivos, now = new Date(), horasMin =
   for (const [codigo, lista] of byCodigo) {
     if (lista.length === 0) continue;
     let freshest = Infinity;
-    let oldestMs = null;
+    let freshestMs = null;
     let todosCallados = true;
     for (const d of lista) {
       const horas = horasSinComunicacion(d, now);
@@ -43,14 +43,14 @@ export function detectarEnlacesCaidos(dispositivos, now = new Date(), horasMin =
       }
       if (horas < freshest) freshest = horas;
       const ua = parseTelemetryTimestamp(d.ultima_actualizacion);
-      if (!Number.isNaN(ua) && (oldestMs == null || ua < oldestMs)) oldestMs = ua;
+      if (!Number.isNaN(ua) && (freshestMs == null || ua > freshestMs)) freshestMs = ua;
     }
     if (!todosCallados) continue;
     caidos.push({
       codigo,
       equipos: lista.length,
       horas: Math.round(freshest * 10) / 10,
-      since: oldestMs != null ? new Date(oldestMs).toISOString() : null,
+      since: freshestMs != null ? new Date(freshestMs).toISOString() : null,
     });
   }
   return caidos;
