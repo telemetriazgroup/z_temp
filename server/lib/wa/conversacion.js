@@ -4,6 +4,7 @@ import {
   registrarEvento,
   registrarMensaje,
   registrarRespuestaPrueba,
+  confirmarAlertasPorRespuesta,
 } from './repository.js';
 import { encolarTexto, marcarInbound, pendientePorJid } from './outbox.js';
 import { jidDeTelefono, telefonoDeJid } from './telefono.js';
@@ -23,6 +24,15 @@ import {
   textoUltimos20,
 } from './consultaEquipo.js';
 import { textoAnalisis } from './analisisChat.js';
+import {
+  cambiosUltimaHora,
+  esContactoSuperadmin,
+  fueraDeRangoMasDe2h,
+  resumenFlota,
+  textoFueraDeRango,
+  textoMenuGeneral,
+} from './generalFlota.js';
+import { problemasDeContacto, textoSeguimiento } from './seguimiento.js';
 
 const CONTACTO_ACTIVACION_NOMBRE = process.env.CONTACTO_ACTIVACION_NOMBRE || 'Luis Marcelo';
 const CONTACTO_ACTIVACION_TEL = process.env.CONTACTO_ACTIVACION_TEL || '908947464';
@@ -54,8 +64,10 @@ function intencionDe(texto) {
   if (!t) return 'vacio';
   if (/^(ok|listo|visto|dale|gracias)\b/.test(t)) return 'ok';
   if (/^(limpiar|sin filtro|quitar filtro)$/.test(t)) return 'limpiar';
-  if (/^(anterior|atras|volver)$/.test(t)) return 'anterior';
-  if (/^(ver mas|vermás|siguiente)$/.test(t)) return 'ver_mas';
+  if (/^(anterior|atras|volver|pagina anterior|pag anterior)$/.test(t)) return 'anterior';
+  if (/^(ver mas|vermás|siguiente|pagina siguiente|pag siguiente)$/.test(t)) return 'ver_mas';
+  if (/^(general|flota)$/.test(t)) return 'general';
+  if (/^(resumen|seguimiento)$/.test(t)) return 'resumen';
   if (/^(todos|todas|menu|inicio)$/.test(t)) return 'todos';
   if (/^(hola|ola|holi|hey|hi|hello|buenas|buen dia|buenos dias|buenas tardes|buenas noches|que tal|saludos)[!. ]*$/.test(t)) {
     return 'saludo';
@@ -147,18 +159,59 @@ function textoPaso(contacto) {
 }
 
 function paginar(items, page = 0) {
-  const p = Math.max(0, parseInt(page, 10) || 0);
+  const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE) || 1);
+  const p = Math.min(Math.max(0, parseInt(page, 10) || 0), totalPages - 1);
   const start = p * PAGE_SIZE;
   const slice = items.slice(start, start + PAGE_SIZE);
   const hasMore = start + PAGE_SIZE < items.length;
-  const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE) || 1);
   return { page: p, slice, hasMore, hasPrev: p > 0, total: items.length, totalPages };
 }
 
-function lineasOpciones(slice, { conVerMas = false } = {}) {
+function lineasOpciones(slice, { hasMore = false, hasPrev = false, page = 0, totalPages = 1 } = {}) {
   const lineas = slice.map((it, i) => `${i + 1} - ${it.label}`);
-  if (conVerMas) lineas.push(`${slice.length + 1} - Ver más`);
+  if (hasMore) lineas.push('9 - Página siguiente');
+  if (hasPrev) lineas.push('0 - Página anterior');
+  if (totalPages > 1) {
+    lineas.push('', `Página ${page + 1} de ${totalPages}.`);
+    if (hasMore) lineas.push('*9* o *siguiente* — pasa a la página siguiente');
+    if (hasPrev) lineas.push('*0* o *anterior* — vuelve a la página anterior');
+  }
   return lineas.join('\n');
+}
+
+const OPCIONES_GENERAL = [
+  { tipo: 'ver_equipos' },
+  { tipo: 'fuera_2h' },
+  { tipo: 'general' },
+];
+
+async function enviarGeneral(jid, contacto) {
+  const { cuentas, total, primerosOnline } = await resumenFlota();
+  const cambios = await cambiosUltimaHora();
+  responder(
+    jid,
+    contacto,
+    textoMenuGeneral({ cuentas, total, primerosOnline, cambios })
+  );
+  setCtx(jid, { vista: 'general', page: 0, filtro: null, grupoId: null, opciones: OPCIONES_GENERAL, equipo: null });
+}
+
+async function enviarResumen(jid, contacto, { page = 0 } = {}) {
+  const { totalEquipos, items } = await problemasDeContacto(contacto);
+  const cuentas = {
+    fuera: items.filter((i) => i.clase === 'fuera').length,
+    espera: items.filter((i) => i.clase === 'espera').length,
+    apagado: items.filter((i) => i.clase === 'apagado').length,
+  };
+  const { slice, hasMore, hasPrev, totalPages, page: p } = paginar(items, page);
+  const opciones = slice.map((it) => ({ tipo: 'dispositivo', equipo: it.equipo, label: it.label }));
+  if (hasMore) opciones.push({ tipo: 'ver_mas', resumen: true });
+  responder(
+    jid,
+    contacto,
+    textoSeguimiento(slice, { totalEquipos, cuentas, hasMore, hasPrev, page: p, totalPages })
+  );
+  setCtx(jid, { vista: 'resumen', page: p, filtro: null, grupoId: null, opciones, equipo: null });
 }
 
 async function armarItemsMenu(contacto, { filtro = null, grupoId = null } = {}) {
@@ -182,6 +235,14 @@ async function armarItemsMenu(contacto, { filtro = null, grupoId = null } = {}) 
       equipo: e,
       grupoId: g?.id,
       grupoNombre: g?.nombre,
+    }));
+  }
+
+  if (esContactoSuperadmin(contacto)) {
+    return planos.map((e) => ({
+      tipo: 'dispositivo',
+      label: labelLista(e),
+      equipo: e,
     }));
   }
 
@@ -211,6 +272,7 @@ async function enviarMenu(jid, contacto, {
   prefijo = '',
 } = {}) {
   const items = await armarItemsMenu(contacto, { filtro, grupoId });
+  const pedido = Math.max(0, parseInt(page, 10) || 0);
   const { slice, hasMore, hasPrev, total, totalPages, page: p } = paginar(items, page);
 
   if (!total && !filtro && grupoId == null) {
@@ -245,16 +307,15 @@ async function enviarMenu(jid, contacto, {
   else if (grupoId != null) {
     const gName = items[0]?.grupoNombre || opciones[0]?.grupoNombre || 'Grupo';
     intro = `Equipos de *${gName}* (${total}):`;
-  } else intro = `Equipos de tu cuenta (${total}):`;
+  } else if (esContactoSuperadmin(contacto)) intro = `Toda la flota (${total}):`;
+  else intro = `Equipos de tu cuenta (${total}):`;
 
-  let texto = `${prefijo}${intro}\n\n${lineasOpciones(slice, { conVerMas: hasMore })}`;
-  if (total > PAGE_SIZE) {
-    texto += `\n_Pág. ${p + 1}/${totalPages}_`;
-    if (hasPrev) texto += '\n*anterior* = página previa';
-  }
-  texto +=
-    `\n\nElige *número*, escribe *nombre* / *ZGRU* / *IMEI* para filtrar` +
-    (grupoId != null || filtro ? ' · *todos* · *limpiar*' : ' · *ver más*');
+  const avisoFin = pedido > p ? 'Ya estás en la última página.\n\n' : '';
+  let texto = `${prefijo}${avisoFin}${intro}\n\n${lineasOpciones(slice, { hasMore, hasPrev, page: p, totalPages })}`;
+  texto += `\n\nElige el *número* del equipo, o escribe el *nombre*, el *ZGRU* o el *IMEI*.`;
+  if (grupoId != null || filtro) texto += '\n*todos* vuelve al inicio. *limpiar* quita el filtro.';
+  if (!hasPrev) texto += '\n*0* o *resumen* — fuera de rango, en espera y apagados, con el tiempo.';
+  if (esContactoSuperadmin(contacto)) texto += '\n*general* vuelve al resumen de la flota.';
 
   encolarTexto(jid, texto, {
     contactoId: contacto.id,
@@ -286,6 +347,7 @@ function textoGuia(nombre) {
     `${quien}Soy el monitor *ZTRACK*. Vigilo la telemetría de los equipos de tu cuenta y te aviso si uno queda *fuera de rango* o *apagado*.\n\n` +
     `Cómo hablar conmigo:\n` +
     `• *menu* o *todos* — lista de equipos y grupos asignados\n` +
+    `• *resumen* — cuáles están fuera de rango, en espera o apagados, y desde hace cuánto\n` +
     `• Escribe el *nombre* o el *ZGRU* para filtrar\n` +
     `• Elige el *número* del equipo`
   );
@@ -370,7 +432,25 @@ async function manejarNavegacion(jid, contacto, texto, intencion) {
     .replace(/\s+/g, ' ');
 
   if (intencion === 'saludo' || intencion === 'guia') {
-    responder(jid, contacto, textoGuia(nombrePila(contacto.nombre)));
+    let guia = textoGuia(nombrePila(contacto.nombre));
+    if (esContactoSuperadmin(contacto)) {
+      guia += '\n• *general* — resumen de toda la flota: en línea, wait, offline y fuera de rango';
+    }
+    responder(jid, contacto, guia);
+    return true;
+  }
+
+  if (intencion === 'general') {
+    if (!esContactoSuperadmin(contacto)) {
+      responder(jid, contacto, 'El resumen *general* es de la cuenta superadmin. Escribe *menu* para ver tus equipos.');
+      return true;
+    }
+    await enviarGeneral(jid, contacto);
+    return true;
+  }
+
+  if (intencion === 'resumen') {
+    await enviarResumen(jid, contacto, { page: 0 });
     return true;
   }
 
@@ -384,17 +464,40 @@ async function manejarNavegacion(jid, contacto, texto, intencion) {
     return true;
   }
   if (intencion === 'ver_mas') {
+    if (ctx.vista === 'resumen') {
+      await enviarResumen(jid, contacto, { page: (ctx.page || 0) + 1 });
+      return true;
+    }
+    if (ctx.vista === 'general') {
+      responder(jid, contacto, 'Escribe *1* para ver los equipos. *9* o *siguiente* avanzan dentro de esa lista.');
+      return true;
+    }
+    if (ctx.vista === 'menu_equipo') {
+      responder(jid, contacto, 'Escribe el número de la opción o *volver* para la lista.');
+      return true;
+    }
     await enviarMenu(jid, contacto, {
       page: (ctx.page || 0) + 1,
       filtro: ctx.filtro || null,
       grupoId: ctx.grupoId ?? null,
+      lista: true,
     });
     return true;
   }
   if (intencion === 'anterior') {
+    if (ctx.vista === 'resumen') {
+      const page = ctx.page || 0;
+      if (page > 0) await enviarResumen(jid, contacto, { page: page - 1 });
+      else await enviarMenu(jid, contacto, { page: 0 });
+      return true;
+    }
     if (ctx.vista === 'menu_equipo' || ctx.vista === 'dispositivo') {
-      if (ctx.grupoId) await enviarMenu(jid, contacto, { page: 0, grupoId: ctx.grupoId });
-      else await enviarMenu(jid, contacto, { page: 0, filtro: ctx.filtro || null });
+      await enviarMenu(jid, contacto, {
+        page: 0,
+        filtro: ctx.filtro || null,
+        grupoId: ctx.grupoId ?? null,
+        lista: true,
+      });
       return true;
     }
     const page = ctx.page || 0;
@@ -403,13 +506,33 @@ async function manejarNavegacion(jid, contacto, texto, intencion) {
         page: page - 1,
         filtro: ctx.filtro || null,
         grupoId: ctx.grupoId ?? null,
+        lista: true,
       });
     } else if (ctx.vista === 'grupo') {
       await enviarMenu(jid, contacto, { page: 0 });
     } else if (ctx.filtro) {
-      await enviarMenu(jid, contacto, { page: 0 });
+      await enviarMenu(jid, contacto, { page: 0, lista: true });
     } else {
       await enviarMenu(jid, contacto, { page: 0 });
+    }
+    return true;
+  }
+
+  if (n === '0' && (ctx.vista === 'raiz' || ctx.vista === 'filtro' || ctx.vista === 'grupo' || ctx.vista === 'resumen')) {
+    const page = ctx.page || 0;
+    if (ctx.vista === 'resumen' && page > 0) {
+      await enviarResumen(jid, contacto, { page: page - 1 });
+    } else if (page > 0) {
+      await enviarMenu(jid, contacto, {
+        page: page - 1,
+        filtro: ctx.filtro || null,
+        grupoId: ctx.grupoId ?? null,
+        lista: true,
+      });
+    } else if (ctx.vista === 'resumen') {
+      await enviarMenu(jid, contacto, { page: 0 });
+    } else {
+      await enviarResumen(jid, contacto, { page: 0 });
     }
     return true;
   }
@@ -425,11 +548,30 @@ async function manejarNavegacion(jid, contacto, texto, intencion) {
       });
       return true;
     }
+    if (op.tipo === 'ver_equipos') {
+      await enviarMenu(jid, contacto, { page: 0, lista: true });
+      return true;
+    }
+    if (op.tipo === 'fuera_2h') {
+      const lista = await fueraDeRangoMasDe2h();
+      responder(jid, contacto, textoFueraDeRango(lista));
+      setCtx(jid, { vista: 'general', page: 0, filtro: null, grupoId: null, opciones: OPCIONES_GENERAL });
+      return true;
+    }
+    if (op.tipo === 'general') {
+      await enviarGeneral(jid, contacto);
+      return true;
+    }
     if (op.tipo === 'ver_mas') {
+      if (ctx.vista === 'resumen' || op.resumen) {
+        await enviarResumen(jid, contacto, { page: (ctx.page || 0) + 1 });
+        return true;
+      }
       await enviarMenu(jid, contacto, {
         page: (ctx.page || 0) + 1,
         filtro: ctx.filtro || null,
         grupoId: ctx.grupoId ?? null,
+        lista: true,
       });
       return true;
     }
@@ -520,7 +662,7 @@ async function manejarNavegacion(jid, contacto, texto, intencion) {
 export async function recibirMensaje({ jid, telefono, texto }) {
   marcarInbound(jid);
   const tel = telefono || telefonoDeJid(jid);
-  const contacto = await obtenerContactoPorTelefono(tel);
+  let contacto = await obtenerContactoPorTelefono(tel);
   await registrarMensaje({
     contactoId: contacto?.id,
     telefono: tel,
@@ -532,6 +674,17 @@ export async function recibirMensaje({ jid, telefono, texto }) {
   if (!contacto || !contacto.activo) return { ignorado: true };
 
   const intencion = intencionDe(texto);
+
+  if (contacto.consultaLibre && !contacto.alertasHabilitadas && !contacto.pruebaIniciadaEn) {
+    contacto = await confirmarAlertasPorRespuesta(contacto.id);
+    const quien = nombrePila(contacto.nombre);
+    encolarTexto(
+      jid,
+      `${quien ? `${quien}, ` : ''}listo. Este número ya puede consultar los equipos que te habilitó el superadmin, sin cuenta web y sin la prueba de vinculación.\n` +
+        `Las alertas automáticas siguen desde ahora, de a una cada minuto.`,
+      { contactoId: contacto.id, telefono: contacto.telefono, tipo: 'estado' }
+    );
+  }
 
   if (contacto.pruebaIniciadaEn && !contacto.alertasHabilitadas) {
     const actualizado = await registrarRespuestaPrueba(contacto.id);

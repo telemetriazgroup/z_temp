@@ -1,21 +1,19 @@
 import assert from 'node:assert/strict';
-import { TIEMPOS_WA, proximoEnvio } from './tiempos.js';
+import { TIEMPOS_WA, proximoEnvio, proximoEnvioAlertaNumero } from './tiempos.js';
 
 const ahora = 1_000_000;
 
-const alerta = proximoEnvio({
-  ahora,
-  esAlerta: true,
-  slotAlerta: ahora + 5_000,
-});
-assert.equal(alerta, ahora + 5_000, 'una alerta espera su propio cupo');
+const alerta = proximoEnvioAlertaNumero({ ahora, ultimoDeEsteNumero: 0 });
+assert.equal(alerta, ahora, 'la primera alerta de un número sale ahora');
 
-const segunda = proximoEnvio({
+const segunda = proximoEnvioAlertaNumero({
   ahora: alerta,
-  esAlerta: true,
-  slotAlerta: alerta + TIEMPOS_WA.gapAlertaMs,
+  ultimoDeEsteNumero: alerta,
 });
-assert.equal(segunda - alerta, TIEMPOS_WA.gapAlertaMs, 'el segundo destinatario de alerta sale 60 s después');
+assert.equal(segunda - alerta, TIEMPOS_WA.gapAlertaMs, 'el mismo número espera 60 s entre alertas');
+
+const otro = proximoEnvioAlertaNumero({ ahora: alerta, ultimoDeEsteNumero: 0 });
+assert.equal(otro, alerta, 'otro número no espera la cola del primero');
 
 const respuesta = proximoEnvio({
   ahora,

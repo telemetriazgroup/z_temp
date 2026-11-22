@@ -4,6 +4,7 @@ import {
   aprobarManual,
   contactosAprobadosPorUsernames,
   contactosParaAlerta,
+  contactosPorTelefonos,
   idsSilenciados,
   vincularNumeroDeUsuario,
 } from './repository.js';
@@ -29,7 +30,13 @@ function esCliente(user) {
  *
  * En ambos casos el número tiene que estar aprobado y no silenciado.
  */
-export async function destinatariosDeAlerta({ rowKey, imei, grupoWhatsapp = false, emails = [] }) {
+export async function destinatariosDeAlerta({
+  rowKey,
+  imei,
+  grupoWhatsapp = false,
+  emails = [],
+  whatsappNumeros = [],
+}) {
   const vistos = new Map();
   const sumar = (lista) => {
     for (const c of lista) {
@@ -53,6 +60,7 @@ export async function destinatariosDeAlerta({ rowKey, imei, grupoWhatsapp = fals
       const correo = String(user.correo || '').trim().toLowerCase();
       if (correo && correos.has(correo)) usernames.push(user.username);
     }
+    sumar(await contactosPorTelefonos(whatsappNumeros));
   }
   sumar(await contactosAprobadosPorUsernames(usernames));
 

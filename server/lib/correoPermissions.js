@@ -4,6 +4,7 @@ import {
   canManageUsers,
 } from './usersRepository.js';
 import { resolveUserEffectiveImeis } from './gruposEquiposRepository.js';
+import { normalizarTelefono } from './wa/telefono.js';
 
 export const ADMIN_MAX_CORREO_GRUPOS = 2;
 export const ADMIN_MAX_CORREO_EMAILS_POR_GRUPO = 3;
@@ -30,6 +31,24 @@ export function actorMayAccessImei(actor, imei) {
   return allowed.includes(String(imei));
 }
 
+export function normalizarWhatsappNumeros(lista) {
+  if (!Array.isArray(lista) || lista.length === 0) return [];
+  const vistos = new Set();
+  const out = [];
+  for (const item of lista) {
+    const nombre = String(item?.nombre ?? '').trim();
+    const telefono = normalizarTelefono(item?.telefono);
+    if (!nombre) throw new Error('Cada número de WhatsApp necesita un nombre');
+    if (telefono.length < 11) {
+      throw new Error('El número de WhatsApp debe incluir el prefijo 51 y 9 dígitos');
+    }
+    if (vistos.has(telefono)) continue;
+    vistos.add(telefono);
+    out.push({ nombre, telefono });
+  }
+  return out;
+}
+
 /**
  * @returns {{ ok: true, grupo: object } | { ok: false, error: string }}
  */
@@ -49,12 +68,20 @@ export function validateAndNormalizeGrupoSave(actor, grupo, allGrupos) {
   const isNew = !existing;
 
   if (isSuperAdminUser(actor)) {
+    let whatsappNumeros = [];
+    try {
+      whatsappNumeros = normalizarWhatsappNumeros(grupo.whatsappNumeros);
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
     return {
       ok: true,
       grupo: {
         ...grupo,
         emails,
         devices,
+        whatsappActivo: grupo.whatsappActivo === true,
+        whatsappNumeros,
         ownerUsername:
           existing?.ownerUsername ??
           grupo.ownerUsername ??
@@ -97,6 +124,8 @@ export function validateAndNormalizeGrupoSave(actor, grupo, allGrupos) {
       ...grupo,
       emails,
       devices,
+      whatsappActivo: existing?.whatsappActivo === true,
+      whatsappNumeros: Array.isArray(existing?.whatsappNumeros) ? existing.whatsappNumeros : [],
       ownerUsername: actor.username,
     },
   };

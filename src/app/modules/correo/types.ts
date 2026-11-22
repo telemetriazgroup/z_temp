@@ -135,6 +135,8 @@ export interface GrupoCorreo {
   enabled: boolean;
   /** También avisar por WhatsApp a los usuarios de estos correos, si su número ya está aprobado. */
   whatsappActivo?: boolean;
+  /** Números extra que el superadmin suma a las alertas. No asignan el equipo en la web. */
+  whatsappNumeros?: { nombre: string; telefono: string }[];
   /** Username del admin/superadmin propietario (cuotas admin). */
   ownerUsername?: string;
   createdAt: string;

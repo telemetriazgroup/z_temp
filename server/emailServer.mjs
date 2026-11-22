@@ -38,6 +38,7 @@ import {
   grupoOwnedBy,
   actorMayAccessImei,
 } from './lib/correoPermissions.js';
+import { asegurarContactoAlerta } from './lib/wa/repository.js';
 import { mergeDeviceNames, getDeviceNameByImei, getDeviceNamesView, setDeviceName, getDeviceNameHistory } from './lib/deviceNamesRepository.js';
 import {
   getHistorialVistaPrefs,
@@ -1087,7 +1088,7 @@ app.put('/reefer/api/correo/grupos', (req, res) => {
   res.json({ ok: true, count: grupos.length });
 });
 
-app.post('/reefer/api/correo/grupos', (req, res) => {
+app.post('/reefer/api/correo/grupos', async (req, res) => {
   const actor = requireUserManager(req, res);
   if (!actor) return;
   const all = getGrupos();
@@ -1096,6 +1097,15 @@ app.post('/reefer/api/correo/grupos', (req, res) => {
     return res.status(400).json({ ok: false, error: checked.error });
   }
   const grupo = checked.grupo;
+  try {
+    if (isSuperAdminUser(actor) && grupo.whatsappActivo === true) {
+      for (const n of grupo.whatsappNumeros ?? []) {
+        await asegurarContactoAlerta(n);
+      }
+    }
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: e instanceof Error ? e.message : String(e) });
+  }
   const idx = all.findIndex((g) => g.id === grupo.id);
   const now = new Date().toISOString();
   const entry = {

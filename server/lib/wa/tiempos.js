@@ -21,10 +21,17 @@ export const gapActivoMs = TIEMPOS_WA.gapChatMs;
 /**
  * Cada respuesta al mismo número espera el intervalo configurado desde ahora
  * o desde el envío ya programado, el que sea más tarde.
- * La alerta solo mira su propio cupo de 1 por minuto.
+ * Cada número recibe como máximo una alerta por minuto.
+ * Otro número no espera esa cola.
  */
 export function proximoEnvio({ ahora, esAlerta, ultimoJid = 0, slotAlerta = 0, gapMs = gapChatMs() }) {
   if (esAlerta) return Math.max(ahora, slotAlerta);
   const ancla = Math.max(ahora, ultimoJid || 0);
   return ancla + gapMs;
+}
+
+/** La siguiente alerta al mismo número sale un minuto después de la ya programada. */
+export function proximoEnvioAlertaNumero({ ahora, ultimoDeEsteNumero = 0 }) {
+  if (!ultimoDeEsteNumero) return ahora;
+  return Math.max(ahora, ultimoDeEsteNumero + TIEMPOS_WA.gapAlertaMs);
 }

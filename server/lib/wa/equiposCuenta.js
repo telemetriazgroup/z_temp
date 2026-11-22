@@ -4,7 +4,7 @@
  *
  * Las alertas push se deciden aparte (cuenta + grupo de correo) en cuenta.js.
  */
-import { getUserByUsername } from '../usersRepository.js';
+import { getUserByUsername, isSuperAdminUser } from '../usersRepository.js';
 import {
   getGrupoEquipoById,
   listGruposEquipos,
@@ -12,6 +12,8 @@ import {
 } from '../gruposEquiposRepository.js';
 import { loadCurrentDispositivos } from '../dashboard/fleetStore.js';
 import { getDeviceNameByImei, getDeviceNameByRowKey } from '../deviceNamesRepository.js';
+import { readJson } from '../store.js';
+import { normalizarTelefono } from './telefono.js';
 import { listarAsignaciones } from './repository.js';
 
 function nombreLimpio(value) {
@@ -35,6 +37,33 @@ export function partirNombre(raw, imei) {
 
 function etiqueta(e) {
   return String(e?.nombre || 'Sin asignar').trim();
+}
+
+/** Equipos de grupos de correo cuyo WhatsApp incluye este número. No abre la web. */
+export function equiposAlertaWhatsappDeTelefono(telefono) {
+  const n = normalizarTelefono(telefono);
+  if (!n) return [];
+  const grupos = readJson('grupos.json', []);
+  const out = [];
+  for (const g of grupos) {
+    if (!g || g.enabled === false || g.whatsappActivo !== true) continue;
+    const nums = Array.isArray(g.whatsappNumeros) ? g.whatsappNumeros : [];
+    const esta = nums.some((x) => normalizarTelefono(x?.telefono) === n);
+    if (!esta) continue;
+    for (const d of g.devices || []) {
+      if (!d || d.enabled === false || !d.imei) continue;
+      out.push({
+        imei: String(d.imei),
+        rowKey: d.rowKey || null,
+        codigo: d.codigo || null,
+        nombre: nombreLimpio(d.nombrePlataforma) || nombreLimpio(d.descripcionEquipo),
+        grupoId: g.id,
+        grupoNombre: g.nombre,
+        origen: 'alerta_whatsapp',
+      });
+    }
+  }
+  return out;
 }
 
 /**
@@ -65,8 +94,18 @@ export async function equiposEfectivosDeContacto(contacto) {
     const names = user.deviceNames && typeof user.deviceNames === 'object' ? user.deviceNames : {};
     const groupIds = Array.isArray(user.groupIds) ? user.groupIds.map(String) : [];
 
-    if (imeis === null) {
-      // Acceso total: no volcamos toda la flota al chat; solo wa_asignacion + grupos si hay
+    if (imeis === null && isSuperAdminUser(user)) {
+      const flota = await loadCurrentDispositivos().catch(() => []);
+      for (const d of flota) {
+        add({
+          imei: d.imei,
+          codigo: d.codigo,
+          rowKey: d.codigo && d.imei ? `${d.codigo}-${d.imei}` : null,
+          origen: 'flota',
+        });
+      }
+    } else if (imeis === null) {
+      // Admin con flota completa: el chat no vuelca cientos de equipos.
     } else {
       for (const gid of groupIds) {
         const g = getGrupoEquipoById(gid);
@@ -92,7 +131,14 @@ export async function equiposEfectivosDeContacto(contacto) {
     }
   }
 
-  // 2) Asignaciones explícitas WA (compat / override de nombre)
+  // 2) Números que el superadmin agregó a un grupo de alertas.
+  //    Si el equipo ya está en la cuenta, no se duplica y la web no cambia.
+  for (const extra of equiposAlertaWhatsappDeTelefono(contacto?.telefono)) {
+    if (porImei.has(String(extra.imei))) continue;
+    add(extra);
+  }
+
+  // 3) Asignaciones explícitas WA (compat / override de nombre)
   const manual = await listarAsignaciones(contacto.id).catch(() => []);
   for (const e of manual) {
     add({
@@ -101,7 +147,7 @@ export async function equiposEfectivosDeContacto(contacto) {
     });
   }
 
-  // 3) Enriquecer con flota actual (nombre, codigo, estado)
+  // 4) Enriquecer con flota actual (nombre, codigo, estado)
   const flota = await loadCurrentDispositivos().catch(() => []);
   const byImei = new Map(flota.map((d) => [String(d.imei), d]));
   for (const e of porImei.values()) {

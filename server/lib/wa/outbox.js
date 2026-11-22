@@ -1,6 +1,6 @@
 import { registrarMensaje } from './repository.js';
 import { gapChatMs } from './ajustes.js';
-import { TIEMPOS_WA, proximoEnvio } from './tiempos.js';
+import { TIEMPOS_WA, proximoEnvio, proximoEnvioAlertaNumero } from './tiempos.js';
 
 const cola = [];
 let seq = 1;
@@ -9,8 +9,8 @@ let timerChat = null;
 let timerAlerta = null;
 let enviandoChat = false;
 let enviandoAlerta = false;
-let slotAlerta = 0;
 const programadoJid = new Map();
+const programadoAlertaJid = new Map();
 const ultimoEnvioJid = new Map();
 
 export function setWaSender(fn) {
@@ -33,14 +33,15 @@ export function encolarTexto(jid, text, { esAlerta = false, contactoId = null, t
   if (!jid || !text) return null;
   const ahora = Date.now();
   const gap = gapChatMs();
-  const enviarEn = proximoEnvio({
-    ahora,
-    esAlerta,
-    ultimoJid: esAlerta ? 0 : programadoJid.get(jid) || 0,
-    slotAlerta,
-    gapMs: gap,
-  });
-  if (esAlerta) slotAlerta = enviarEn + TIEMPOS_WA.gapAlertaMs;
+  const enviarEn = esAlerta
+    ? proximoEnvioAlertaNumero({ ahora, ultimoDeEsteNumero: programadoAlertaJid.get(jid) || 0 })
+    : proximoEnvio({
+        ahora,
+        esAlerta: false,
+        ultimoJid: programadoJid.get(jid) || 0,
+        gapMs: gap,
+      });
+  if (esAlerta) programadoAlertaJid.set(jid, enviarEn);
   else programadoJid.set(jid, enviarEn);
   const job = {
     id: seq++,

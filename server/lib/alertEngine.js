@@ -568,6 +568,7 @@ function espejoWhatsapp({ assignment, dispositivo, titulo, detalle, grupo }) {
     texto,
     grupoWhatsapp: grupo?.whatsappActivo === true,
     emails: grupo?.emails ?? [],
+    whatsappNumeros: grupo?.whatsappActivo === true ? grupo?.whatsappNumeros ?? [] : [],
   }).catch((e) => console.warn('[wa] espejo', e.message));
 }
 

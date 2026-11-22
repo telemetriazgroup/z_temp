@@ -38,6 +38,8 @@ CREATE INDEX IF NOT EXISTS idx_wa_mensaje_tel_time ON wa_mensaje (telefono, crea
 
 ALTER TABLE wa_contacto ADD COLUMN IF NOT EXISTS username TEXT;
 ALTER TABLE wa_contacto ADD COLUMN IF NOT EXISTS alertas_pausadas BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE wa_contacto ADD COLUMN IF NOT EXISTS consulta_libre BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE wa_contacto ADD COLUMN IF NOT EXISTS primera_alerta_en TIMESTAMPTZ;
 CREATE UNIQUE INDEX IF NOT EXISTS wa_contacto_username_uidx ON wa_contacto (username) WHERE username IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS wa_silencio (

@@ -203,6 +203,7 @@ function emptyGrupo(ownerUsername?: string): Omit<GrupoCorreo, 'createdAt' | 'up
     devices: [],
     enabled: true,
     whatsappActivo: false,
+    whatsappNumeros: [],
     ownerUsername,
   };
 }
@@ -246,6 +247,8 @@ export default function ConfiguracionCorreo() {
   );
   const [editingCreatedAt, setEditingCreatedAt] = useState<string | undefined>(undefined);
   const [emailInput, setEmailInput] = useState('');
+  const [waNombre, setWaNombre] = useState('');
+  const [waNumero, setWaNumero] = useState('');
   const [emailEditIndex, setEmailEditIndex] = useState<number | null>(null);
   const [emailEditValue, setEmailEditValue] = useState('');
   const [ciclos, setCiclos] = useState<CorreoCicloAnalisis[]>([]);
@@ -791,6 +794,7 @@ export default function ConfiguracionCorreo() {
       devices: g.devices.map((d) => ({ ...d, umbralesHoras: [...normalizeUmbrales(d.umbralesHoras)] })),
       enabled: g.enabled,
       whatsappActivo: g.whatsappActivo === true,
+      whatsappNumeros: Array.isArray(g.whatsappNumeros) ? g.whatsappNumeros.map((n) => ({ ...n })) : [],
       ownerUsername: g.ownerUsername ?? actingUser ?? undefined,
     });
     setEditingCreatedAt(g.createdAt);
@@ -1440,6 +1444,9 @@ export default function ConfiguracionCorreo() {
                       </CardTitle>
                       <CardDescription>
                         Cliente: {g.cliente} · {g.emails.join(', ')}
+                        {g.whatsappActivo && (g.whatsappNumeros?.length ?? 0) > 0
+                          ? ` · WhatsApp: ${g.whatsappNumeros!.map((n) => n.nombre).join(', ')}`
+                          : ''}
                       </CardDescription>
                     </div>
                     <div className="flex gap-1 flex-wrap">
@@ -2344,6 +2351,88 @@ export default function ConfiguracionCorreo() {
                     haber completado la prueba de vinculación, o un admin debe haber aprobado su número.
                   </span>
                 </label>
+                {isSuper && editing.whatsappActivo === true && (
+                  <div className="space-y-2 rounded-md border p-3">
+                    <Label>Números de WhatsApp de este grupo</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Reciben las alertas de estos equipos y pueden consultarlos por WhatsApp. Si el
+                      número ya tiene cuenta, no se duplica el equipo. En la web solo ve los equipos
+                      que tiene asignados.
+                    </p>
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <Input
+                        value={waNombre}
+                        onChange={(e) => setWaNombre(e.target.value)}
+                        placeholder="Nombre"
+                      />
+                      <Input
+                        value={waNumero}
+                        onChange={(e) => setWaNumero(e.target.value)}
+                        placeholder="987654321"
+                      />
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={() => {
+                          const nombre = waNombre.trim();
+                          const telefono = waNumero.replace(/\D/g, '');
+                          if (!nombre) {
+                            toast.error('Escriba el nombre de quien recibe el WhatsApp');
+                            return;
+                          }
+                          if (!(telefono.length === 9 && telefono.startsWith('9')) && !(telefono.length === 11 && telefono.startsWith('51'))) {
+                            toast.error('El número debe ser de 9 dígitos, empezando por 9');
+                            return;
+                          }
+                          const normal = telefono.length === 9 ? `51${telefono}` : telefono;
+                          const actuales = editing.whatsappNumeros ?? [];
+                          if (actuales.some((n) => n.telefono === normal)) {
+                            toast.message('Ese número ya está en el grupo');
+                            return;
+                          }
+                          setEditing({
+                            ...editing,
+                            whatsappNumeros: [...actuales, { nombre, telefono: normal }],
+                          });
+                          setWaNombre('');
+                          setWaNumero('');
+                        }}
+                      >
+                        <Plus className="h-4 w-4 mr-1" />
+                        Agregar
+                      </Button>
+                    </div>
+                    {(editing.whatsappNumeros?.length ?? 0) > 0 && (
+                      <ul className="space-y-1">
+                        {editing.whatsappNumeros!.map((n) => (
+                          <li
+                            key={n.telefono}
+                            className="flex items-center gap-2 rounded-md border px-2 py-1"
+                          >
+                            <span className="text-sm flex-1 truncate">
+                              {n.nombre} · {n.telefono}
+                            </span>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() =>
+                                setEditing({
+                                  ...editing,
+                                  whatsappNumeros: (editing.whatsappNumeros ?? []).filter(
+                                    (x) => x.telefono !== n.telefono
+                                  ),
+                                })
+                              }
+                            >
+                              <Trash2 className="h-4 w-4 text-red-600" />
+                            </Button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
                 {editing.emails.length > 0 && (
                   <ul className="space-y-1">
                     {editing.emails.map((correo, index) => (

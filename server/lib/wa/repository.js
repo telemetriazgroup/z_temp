@@ -17,6 +17,8 @@ function mapContacto(row) {
     creadoEn: row.creado_en,
     username: row.username ?? null,
     alertasPausadas: row.alertas_pausadas === true,
+    consultaLibre: row.consulta_libre === true,
+    primeraAlertaEn: row.primera_alerta_en ?? null,
   };
 }
 
@@ -325,6 +327,78 @@ export async function setSilencio(contactoId, rowKey, silenciado) {
     ]);
   }
   return listarSilencio(contactoId);
+}
+
+export async function contactosPorTelefonos(telefonos) {
+  const lista = [
+    ...new Set((telefonos ?? []).map((t) => normalizarTelefono(t?.telefono ?? t)).filter((t) => t.length >= 11)),
+  ];
+  if (!lista.length) return [];
+  const r = await query(
+    `SELECT * FROM wa_contacto
+     WHERE telefono = ANY($1::text[])
+       AND activo = true
+       AND alertas_habilitadas = true
+       AND alertas_pausadas = false`,
+    [lista]
+  );
+  return r.rows.map(mapContacto);
+}
+
+/** Número agregado por el superadmin a un grupo de alertas. No toca la cuenta web. */
+export async function asegurarContactoAlerta({ nombre, telefono }) {
+  const n = normalizarTelefono(telefono);
+  const quien = String(nombre ?? '').trim();
+  if (!quien) throw new Error('Cada número de WhatsApp necesita un nombre');
+  if (n.length < 11) throw new Error('El número de WhatsApp debe incluir el prefijo 51 y 9 dígitos');
+  let c = await obtenerContactoPorTelefono(n);
+  if (!c) {
+    c = await guardarContacto({ nombre: quien, telefono: n, activo: true });
+  } else if (!c.username && c.nombre !== quien) {
+    c = await guardarContacto({ id: c.id, nombre: quien, telefono: n, activo: c.activo !== false });
+  } else if (c.activo === false) {
+    const r = await query(`UPDATE wa_contacto SET activo = true WHERE id = $1 RETURNING *`, [c.id]);
+    c = mapContacto(r.rows[0]);
+  }
+  const r = await query(
+    `UPDATE wa_contacto SET consulta_libre = true WHERE id = $1 RETURNING *`,
+    [c.id]
+  );
+  return mapContacto(r.rows[0]);
+}
+
+/** La respuesta del número habilita las alertas siguientes. No exige la prueba de 3 mensajes. */
+export async function confirmarAlertasPorRespuesta(id) {
+  const r = await query(
+    `UPDATE wa_contacto SET
+       alertas_habilitadas = true,
+       aprobado_en = COALESCE(aprobado_en, now()),
+       prueba_respuestas = GREATEST(prueba_respuestas, 1)
+     WHERE id = $1 RETURNING *`,
+    [id]
+  );
+  return mapContacto(r.rows[0]);
+}
+
+/**
+ * Reserva la única alerta que sale antes de que el número conteste.
+ * Si ya se envió, o si ya está confirmado, no devuelve contacto.
+ */
+export async function reclamarPrimeraAlerta(telefono) {
+  const n = normalizarTelefono(telefono);
+  if (!n) return null;
+  const r = await query(
+    `UPDATE wa_contacto SET primera_alerta_en = now()
+     WHERE telefono = $1
+       AND activo = true
+       AND consulta_libre = true
+       AND alertas_habilitadas = false
+       AND alertas_pausadas = false
+       AND primera_alerta_en IS NULL
+     RETURNING *`,
+    [n]
+  );
+  return mapContacto(r.rows[0]);
 }
 
 export async function contactosAprobadosPorUsernames(usernames) {
