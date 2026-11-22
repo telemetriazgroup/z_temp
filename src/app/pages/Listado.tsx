@@ -917,6 +917,7 @@ export default function Listado() {
                   <DeviceInfoPopover device={device} />
                   {(userIsSuperAdmin(user) || user?.deviceAccess?.includes('all')) && (
                     <FlotaEquipoAcciones
+                      esSuper={userIsSuperAdmin(user)}
                       device={{
                         rowKey: device.rowKey,
                         imei: device.imei,
@@ -1120,6 +1121,7 @@ export default function Listado() {
                       <DeviceInfoPopover device={device} />
                       {(userIsSuperAdmin(user) || user?.deviceAccess?.includes('all')) && (
                         <FlotaEquipoAcciones
+                          esSuper={userIsSuperAdmin(user)}
                           device={{
                             rowKey: device.rowKey,
                             imei: device.imei,

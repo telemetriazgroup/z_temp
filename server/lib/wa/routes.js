@@ -26,6 +26,7 @@ import { leerAjustesWa, guardarGapChatSeg } from './ajustes.js';
 import { TIEMPOS_WA } from './tiempos.js';
 import { colaPendiente } from './outbox.js';
 import { esCuentaFlotaCompleta, guardarControl, leerControlDe } from './controlFlota.js';
+import { guardarDecision, vistaDecision } from './decisionFlota.js';
 import {
   TIPOS_INCIDENTE,
   abrirIncidente,
@@ -159,6 +160,32 @@ export function createWaRouter({ actorOf }) {
         alerta1Hora: req.body?.alerta1Hora === true,
         rangoMin: req.body?.rangoMin,
         rangoMax: req.body?.rangoMax,
+      });
+      res.json({ ok: true, data });
+    } catch (e) {
+      res.status(400).json({ ok: false, error: e.message });
+    }
+  });
+
+  r.get('/decision-flota', (req, res) => {
+    const user = actor(req, res);
+    if (!user) return;
+    if (!esSuper(user)) return res.status(403).json({ ok: false, error: 'Solo el superadmin' });
+    const rowKey = String(req.query.rowKey || '').trim();
+    if (!rowKey) return res.status(400).json({ ok: false, error: 'Falta el equipo' });
+    res.json({ ok: true, data: vistaDecision(rowKey) });
+  });
+
+  r.put('/decision-flota', (req, res) => {
+    const user = actor(req, res);
+    if (!user) return;
+    if (!esSuper(user)) return res.status(403).json({ ok: false, error: 'Solo el superadmin' });
+    try {
+      const data = guardarDecision({
+        rowKey: req.body?.rowKey,
+        imei: req.body?.imei,
+        enWhatsapp: req.body?.enWhatsapp !== false,
+        reporteAutomatico: req.body?.reporteAutomatico === true,
       });
       res.json({ ok: true, data });
     } catch (e) {

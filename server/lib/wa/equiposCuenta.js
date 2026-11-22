@@ -15,6 +15,7 @@ import { getDeviceNameByImei, getDeviceNameByRowKey } from '../deviceNamesReposi
 import { readJson } from '../store.js';
 import { normalizarTelefono } from './telefono.js';
 import { listarAsignaciones } from './repository.js';
+import { excluidoDeWhatsapp } from './decisionFlota.js';
 
 function nombreLimpio(value) {
   const s = String(value ?? '').trim();
@@ -172,9 +173,9 @@ export async function equiposEfectivosDeContacto(contacto) {
     if (!e.celular) e.celular = deServidor.celular;
   }
 
-  return [...porImei.values()].sort((a, b) =>
-    etiqueta(a).localeCompare(etiqueta(b), 'es')
-  );
+  return [...porImei.values()]
+    .filter((e) => !excluidoDeWhatsapp(e.rowKey || (e.codigo && e.imei ? `${e.codigo}-${e.imei}` : '')))
+    .sort((a, b) => etiqueta(a).localeCompare(etiqueta(b), 'es'));
 }
 
 /**

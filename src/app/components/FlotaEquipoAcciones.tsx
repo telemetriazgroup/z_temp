@@ -112,7 +112,7 @@ function leerFoto(file: File): Promise<string> {
   });
 }
 
-export function FlotaEquipoAcciones({ device }: { device: Equipo }) {
+export function FlotaEquipoAcciones({ device, esSuper = false }: { device: Equipo; esSuper?: boolean }) {
   const [controlOpen, setControlOpen] = useState(false);
   return (
     <>
@@ -130,13 +130,21 @@ export function FlotaEquipoAcciones({ device }: { device: Equipo }) {
         <Bell className="h-4 w-4" />
       </Button>
       {controlOpen && (
-        <ControlModal device={device} onClose={() => setControlOpen(false)} />
+        <ControlModal device={device} esSuper={esSuper} onClose={() => setControlOpen(false)} />
       )}
     </>
   );
 }
 
-function ControlModal({ device, onClose }: { device: Equipo; onClose: () => void }) {
+function ControlModal({
+  device,
+  esSuper,
+  onClose,
+}: {
+  device: Equipo;
+  esSuper: boolean;
+  onClose: () => void;
+}) {
   const [control, setControl] = useState<Control>({
     activo: false,
     alerta30Minutos: false,
@@ -145,6 +153,11 @@ function ControlModal({ device, onClose }: { device: Equipo; onClose: () => void
     rangoMax: 4,
   });
   const [listo, setListo] = useState(false);
+  const [enWhatsapp, setEnWhatsapp] = useState(true);
+  const [reporteAutomatico, setReporteAutomatico] = useState(false);
+  const [correoTexto, setCorreoTexto] = useState('');
+  const [rangoCorreoMin, setRangoCorreoMin] = useState(4);
+  const [rangoCorreoMax, setRangoCorreoMax] = useState(4);
 
   React.useEffect(() => {
     api<{ data: Record<string, Control> }>('/control-flota')
@@ -154,7 +167,83 @@ function ControlModal({ device, onClose }: { device: Equipo; onClose: () => void
         setListo(true);
       })
       .catch((e) => toast.error(e.message));
-  }, [device.rowKey]);
+    if (!esSuper) return;
+    api<{
+      data: {
+        enWhatsapp: boolean;
+        reporteAutomatico: boolean;
+        correo: {
+          configurado: boolean;
+          enGrupo: boolean;
+          useRangoPersonalizado: boolean;
+          margenInferior: number;
+          margenSuperior: number;
+        };
+      };
+    }>(`/decision-flota?rowKey=${encodeURIComponent(device.rowKey)}`)
+      .then((body) => {
+        setEnWhatsapp(body.data.enWhatsapp);
+        setReporteAutomatico(body.data.reporteAutomatico);
+        const c = body.data.correo;
+        setRangoCorreoMin(c.margenInferior);
+        setRangoCorreoMax(c.margenSuperior);
+        if (c.useRangoPersonalizado) {
+          setCorreoTexto(
+            `Ya tiene rango de correo: ${c.margenInferior} °C bajo el set y ${c.margenSuperior} °C sobre el set. Puedes cambiarlo o dejarlo así.`
+          );
+        } else if (c.enGrupo || c.configurado) {
+          setCorreoTexto(
+            'Ya tiene alerta de correo con el rango estándar ±4. Si aplicas un rango aquí, ese prevalece. Si no, se queda el de correo.'
+          );
+        } else {
+          setCorreoTexto(
+            'No tiene alerta de correo. Sin reporte automático no se abren incidentes ni entra al seguimiento.'
+          );
+        }
+      })
+      .catch((e) => toast.error(e.message));
+  }, [device.rowKey, esSuper]);
+
+  async function guardarDecision() {
+    try {
+      await api('/decision-flota', {
+        method: 'PUT',
+        body: JSON.stringify({
+          rowKey: device.rowKey,
+          imei: device.imei,
+          enWhatsapp,
+          reporteAutomatico,
+        }),
+      });
+      toast.success(
+        enWhatsapp
+          ? 'Este equipo sigue en el menú de WhatsApp.'
+          : 'Este equipo ya no aparece en WhatsApp ni en su búsqueda.'
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'No se pudo guardar');
+    }
+  }
+
+  async function aplicarRangoCorreo() {
+    try {
+      const res = await fetch(`${BASE}/alert-config/${encodeURIComponent(device.rowKey)}`, {
+        method: 'PUT',
+        headers: headers(),
+        body: JSON.stringify({
+          mode: 'standard',
+          useRangoPersonalizado: true,
+          margenInferior: Number(rangoCorreoMin),
+          margenSuperior: Number(rangoCorreoMax),
+        }),
+      });
+      const body = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || body.ok === false) throw new Error(body.error || `Error ${res.status}`);
+      toast.success('Ese rango prevalece sobre el del grupo.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'No se pudo guardar el rango');
+    }
+  }
 
   async function guardar() {
     try {
@@ -180,11 +269,60 @@ function ControlModal({ device, onClose }: { device: Equipo; onClose: () => void
         <DialogHeader>
           <DialogTitle>WhatsApp · {device.nombreAsignado}</DialogTitle>
           <DialogDescription>
-            El rango mínimo y el máximo definen lo normal para este aviso. 4 y 4 es la banda del sistema.
-            El correo no cambia.
+            {esSuper
+              ? 'Puedes sacarlo de WhatsApp y del reporte automático. Si ya tiene rango de correo, lo ves abajo y decides si lo cambias.'
+              : 'El rango mínimo y el máximo definen lo normal para este aviso. 4 y 4 es la banda del sistema. El correo no cambia.'}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
+          {esSuper && (
+            <div className="space-y-3 rounded-md border p-3">
+              <p className="text-sm">{correoTexto || 'Cargando la configuración de correo…'}</p>
+              <label className="flex items-center justify-between gap-3 text-sm">
+                Mostrar en el menú y la búsqueda de WhatsApp
+                <Switch checked={enWhatsapp} onCheckedChange={(v) => setEnWhatsapp(v === true)} />
+              </label>
+              <label className="flex items-center justify-between gap-3 text-sm">
+                Incidentes y alertas automáticas
+                <Switch checked={reporteAutomatico} onCheckedChange={(v) => setReporteAutomatico(v === true)} />
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block text-sm space-y-1">
+                  Rango de alerta, mínimo
+                  <Input
+                    type="number"
+                    min={0}
+                    max={30}
+                    step={0.1}
+                    value={rangoCorreoMin}
+                    onChange={(e) => setRangoCorreoMin(Number(e.target.value))}
+                  />
+                </label>
+                <label className="block text-sm space-y-1">
+                  Rango de alerta, máximo
+                  <Input
+                    type="number"
+                    min={0}
+                    max={30}
+                    step={0.1}
+                    value={rangoCorreoMax}
+                    onChange={(e) => setRangoCorreoMax(Number(e.target.value))}
+                  />
+                </label>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="outline" onClick={() => void guardarDecision()}>
+                  Guardar seguimiento
+                </Button>
+                <Button type="button" variant="outline" onClick={() => void aplicarRangoCorreo()}>
+                  Aplicar este rango
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Si no aplicas un rango, se queda el que ya tiene el correo.
+              </p>
+            </div>
+          )}
           <label className="flex items-center justify-between gap-3 text-sm">
             Alertas de WhatsApp de este equipo
             <Switch

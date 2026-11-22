@@ -84,8 +84,12 @@ export function detalleLinea(e) {
     .join(' · ');
 }
 
+export function resaltarZgru(texto) {
+  return String(texto ?? '').replace(/(ZGRU\w*)/gi, '*$1*');
+}
+
 export function labelLista(e) {
-  return etiqueta(e);
+  return resaltarZgru(etiqueta(e));
 }
 
 export function pieMenu() {

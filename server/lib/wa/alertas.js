@@ -5,7 +5,7 @@ import { jidDeTelefono, normalizarTelefono } from './telefono.js';
 
 const PIE_PRIMERA =
   '\n\nEsta es la *primera alerta*. Respóndeme cualquier mensaje para seguir recibiendo avisos, de a uno cada minuto.' +
-  '\nEscribe *resumen* para ver tus equipos fuera de rango, en espera o apagados, y desde hace cuánto.' +
+  '\nEscribe *resumen* para ver fuera de rango más de 1 h y fuera de línea más de 2 h.' +
   '\n*menu* abre el detalle de cada equipo.';
 
 /**

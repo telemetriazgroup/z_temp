@@ -200,8 +200,7 @@ async function enviarResumen(jid, contacto, { page = 0 } = {}) {
   const { totalEquipos, items } = await problemasDeContacto(contacto);
   const cuentas = {
     fuera: items.filter((i) => i.clase === 'fuera').length,
-    espera: items.filter((i) => i.clase === 'espera').length,
-    apagado: items.filter((i) => i.clase === 'apagado').length,
+    offline: items.filter((i) => i.clase === 'offline').length,
   };
   const { slice, hasMore, hasPrev, totalPages, page: p } = paginar(items, page);
   const opciones = slice.map((it) => ({ tipo: 'dispositivo', equipo: it.equipo, label: it.label }));
@@ -314,7 +313,7 @@ async function enviarMenu(jid, contacto, {
   let texto = `${prefijo}${avisoFin}${intro}\n\n${lineasOpciones(slice, { hasMore, hasPrev, page: p, totalPages })}`;
   texto += `\n\nElige el *número* del equipo, o escribe el *nombre*, el *ZGRU* o el *IMEI*.`;
   if (grupoId != null || filtro) texto += '\n*todos* vuelve al inicio. *limpiar* quita el filtro.';
-  if (!hasPrev) texto += '\n*0* o *resumen* — fuera de rango, en espera y apagados, con el tiempo.';
+  if (!hasPrev) texto += '\n*0* o *resumen* — fuera de rango más de 1 h y fuera de línea más de 2 h.';
   if (esContactoSuperadmin(contacto)) texto += '\n*general* vuelve al resumen de la flota.';
 
   encolarTexto(jid, texto, {
@@ -347,7 +346,7 @@ function textoGuia(nombre) {
     `${quien}Soy el monitor *ZTRACK*. Vigilo la telemetría de los equipos de tu cuenta y te aviso si uno queda *fuera de rango* o *apagado*.\n\n` +
     `Cómo hablar conmigo:\n` +
     `• *menu* o *todos* — lista de equipos y grupos asignados\n` +
-    `• *resumen* — cuáles están fuera de rango, en espera o apagados, y desde hace cuánto\n` +
+    `• *resumen* — fuera de rango más de 1 h y fuera de línea más de 2 h\n` +
     `• Escribe el *nombre* o el *ZGRU* para filtrar\n` +
     `• Elige el *número* del equipo`
   );

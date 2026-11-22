@@ -25,6 +25,7 @@ import { loadCurrentDispositivos, loadSourceDispositivos } from './dashboard/fle
 import { encolarAlertaEquipo } from './wa/alertas.js';
 import { sincronizarControlWhatsapp } from './wa/controlFlota.js';
 import { recordarIncidentes } from './wa/incidentes.js';
+import { permiteReporteAutomatico } from './wa/decisionFlota.js';
 import { getSmtpConfig } from './smtpRepository.js';
 import { getApiAsistenciaEmails } from './apiAsistenciaRepository.js';
 import { detectarEnlacesCaidos, horasSinComunicacion } from './enlaceCaido.js';
@@ -300,6 +301,7 @@ function getIncidentes() {
 }
 
 function addIncidente(entry) {
+  if (entry?.rowKey && !permiteReporteAutomatico(entry.rowKey)) return null;
   const all = getIncidentes();
   all.unshift(entry);
   writeJson('incidentes.json', all.slice(0, 1000));
@@ -1002,6 +1004,17 @@ export async function runAlertCycle(options = {}) {
           criterio: 'Equipo desactivado en el grupo. No se evalúa.',
         });
         result.resumen.equipoOff++;
+        continue;
+      }
+
+      if (!permiteReporteAutomatico(assignment.rowKey)) {
+        pushEval(evaluaciones, {
+          ...base,
+          estado: 'sin_seguimiento',
+          accion: 'ninguna',
+          criterio:
+            'El superadmin dejó este equipo sin seguimiento automático. No se alerta ni se abre incidente.',
+        });
         continue;
       }
 

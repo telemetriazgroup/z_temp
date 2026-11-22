@@ -1,5 +1,6 @@
 import { query } from '../db.js';
 import { equiposEfectivosDeContacto } from './equiposCuenta.js';
+import { resaltarZgru } from './consultaEquipo.js';
 
 function horasTexto(h) {
   if (h == null || Number.isNaN(h)) return 'ahora';
@@ -40,8 +41,9 @@ async function rachas(imeis) {
 }
 
 /**
- * Equipos que este número tiene asignados o en seguimiento y que ahora
- * están fuera de rango, en espera o apagados, con el tiempo de esa condición.
+ * Solo entra al resumen lo que ya pasó el umbral:
+ * fuera de rango más de 1 h, o fuera de línea más de 2 h.
+ * Menos de eso se toma como normal.
  */
 export async function problemasDeContacto(contacto) {
   const equipos = await equiposEfectivosDeContacto(contacto);
@@ -50,57 +52,56 @@ export async function problemasDeContacto(contacto) {
     const d = e._flota || {};
     const power = String(d.power_state_texto || '').toLowerCase();
     const conexion = String(e.estado_conexion || d.estado_conexion || '').toLowerCase();
-    const apagado = power === 'off';
-    const fuera = !apagado && d.en_rango === false;
-    const espera = conexion === 'wait';
-    if (!apagado && !fuera && !espera) continue;
-    const tipo = apagado ? 'apagado' : fuera ? 'fuera' : 'espera';
-    marcas.push({ equipo: e, tipo, espera: espera && !apagado });
+    const fuera = power !== 'off' && d.en_rango === false;
+    const offline = conexion === 'offline';
+    if (!fuera && !offline) continue;
+    marcas.push({ equipo: e, fuera, offline });
   }
   const muestras = await rachas(marcas.map((m) => String(m.equipo.imei)));
-  const items = marcas.map((m) => {
+  const items = [];
+  for (const m of marcas) {
     const rows = muestras.get(String(m.equipo.imei)) || [];
-    let horas = null;
-    if (m.tipo === 'apagado') {
-      horas = horasDeRacha(rows, (row) => row.power === 'off' || row.rango_estado === 'apagado');
-    } else if (m.tipo === 'fuera') {
-      horas = horasDeRacha(rows, (row) => row.rango_estado === 'fuera');
-    } else {
-      horas = horasDeRacha(rows, (row) => row.estado === 'wait');
-    }
-    const estado = m.tipo === 'fuera' ? 'fuera de rango' : m.tipo === 'espera' ? 'en espera' : 'apagado';
-    const extra = m.tipo === 'fuera' && m.espera ? ' · en espera' : '';
-    const nombre = m.equipo.nombre || m.equipo.imei;
-    return {
+    const horasFuera = m.fuera ? horasDeRacha(rows, (row) => row.rango_estado === 'fuera') : null;
+    const horasOff = m.offline ? horasDeRacha(rows, (row) => row.estado === 'offline') : null;
+    const pasaFuera = horasFuera != null && horasFuera > 1;
+    const pasaOff = horasOff != null && horasOff > 2;
+    if (!pasaFuera && !pasaOff) continue;
+    const clase = pasaFuera ? 'fuera' : 'offline';
+    const estado = pasaFuera ? 'fuera de rango' : 'fuera de línea';
+    const horas = pasaFuera ? horasFuera : horasOff;
+    const extra = pasaFuera && pasaOff ? ' · fuera de línea' : '';
+    const nombre = resaltarZgru(m.equipo.nombre || m.equipo.imei);
+    items.push({
       tipo: 'dispositivo',
       equipo: m.equipo,
-      clase: m.tipo,
+      clase,
       label: `${nombre} — ${estado}${extra} · ${horasTexto(horas)}`,
-    };
-  });
-  const peso = { fuera: 0, espera: 1, apagado: 2 };
+    });
+  }
+  const peso = { fuera: 0, offline: 1 };
   items.sort((a, b) => peso[a.clase] - peso[b.clase] || a.label.localeCompare(b.label, 'es'));
   return { totalEquipos: equipos.length, items };
 }
 
 export function textoSeguimiento(items, { totalEquipos, cuentas, hasMore, hasPrev, page, totalPages }) {
   const fuera = cuentas.fuera;
-  const espera = cuentas.espera;
-  const apagado = cuentas.apagado;
+  const offline = cuentas.offline;
   const lineas = [
     '*Resumen de seguimiento*',
     `Sigues *${totalEquipos}* equipo(s).`,
-    `Fuera de rango: *${fuera}* · En espera: *${espera}* · Apagados: *${apagado}*`,
+    `Fuera de rango, más de 1 h: *${fuera}*`,
+    `Fuera de línea, más de 2 h: *${offline}*`,
+    'Menos de eso se toma como normal y no entra aquí.',
   ];
   if (!items.length) {
-    lineas.push('', 'Ninguno está fuera de rango, en espera o apagado.', '', '*menu* abre la lista completa.');
+    lineas.push('', 'Ninguno pasa ese tiempo.', '', '*menu* abre la lista completa.');
     return lineas.join('\n');
   }
   let titulo = '';
   items.forEach((it, i) => {
     if (it.clase !== titulo) {
       titulo = it.clase;
-      const cabeza = it.clase === 'fuera' ? 'Fuera de rango' : it.clase === 'espera' ? 'En espera' : 'Apagados';
+      const cabeza = it.clase === 'fuera' ? 'Fuera de rango, más de 1 h' : 'Fuera de línea, más de 2 h';
       lineas.push('', `*${cabeza}*`);
     }
     lineas.push(`${i + 1} - ${it.label}`);
