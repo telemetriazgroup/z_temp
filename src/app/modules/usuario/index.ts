@@ -28,6 +28,7 @@ export {
   categoryLabel,
   userMayControlTemperatura,
   userMayAnalisisTelemetria,
+  userMayIncidentes,
   actorMayGrantPermission,
   userHasNoFleetAccess,
 } from './userPermissions';

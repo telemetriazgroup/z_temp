@@ -54,6 +54,7 @@ import {
 } from 'lucide-react';
 import type { GrupoCorreo } from './modules/correo/types';
 import { cn } from './components/ui/utils';
+import { RecordatorioIncidentes } from './components/RecordatorioIncidentes';
 
 const SIDEBAR_KEY = 'ztrack_sidebar_expanded';
 
@@ -506,6 +507,7 @@ export default function Layout() {
           </div>
         </header>
 
+        <RecordatorioIncidentes />
         <main className="flex-1 overflow-auto p-6 bg-background">
           {userHasNoFleetAccess(user) &&
           pathRequiresFleet(location.pathname) &&

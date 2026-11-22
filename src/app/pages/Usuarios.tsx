@@ -70,6 +70,7 @@ const emptyForm = {
   zonaHoraria: 'GMT-5',
   puedeControlTemperatura: false,
   puedeAnalisisTelemetria: false,
+  puedeIncidentes: false,
   flotaCompleta: false,
 };
 
@@ -174,6 +175,7 @@ export default function Usuarios() {
       zonaHoraria: u.zonaHoraria ?? 'GMT-5',
       puedeControlTemperatura: u.puedeControlTemperatura === true,
       puedeAnalisisTelemetria: u.puedeAnalisisTelemetria === true,
+      puedeIncidentes: u.puedeIncidentes === true,
       flotaCompleta:
         resolveUserCategory(u) === 'admin' && u.deviceAccess?.includes('all') === true,
     });
@@ -208,6 +210,7 @@ export default function Usuarios() {
         superUser: category === 'superadmin',
         puedeControlTemperatura: form.puedeControlTemperatura === true,
         puedeAnalisisTelemetria: form.puedeAnalisisTelemetria === true,
+        puedeIncidentes: isSuper && category === 'admin' && form.puedeIncidentes === true,
         aprobarWhatsapp: form.aprobarWhatsapp === true,
         ...personal,
       };
@@ -384,6 +387,11 @@ export default function Usuarios() {
                           u.deviceAccess?.includes('all') === true && (
                           <Badge variant="outline" className="text-[10px]" title="Flota completa">
                             Flota completa
+                          </Badge>
+                        )}
+                        {u.puedeIncidentes === true && (
+                          <Badge variant="outline" className="text-[10px]" title="Pestaña de incidentes">
+                            Incidentes
                           </Badge>
                         )}
                         {u.puedeAnalisisTelemetria === true && (
@@ -670,6 +678,26 @@ export default function Usuarios() {
                         Solo el superadmin puede dar toda la flota a esta cuenta de
                         administrador. Si no se marca, los equipos se asignan después
                         en Administración.
+                      </p>
+                    </div>
+                  </div>
+                )}
+                {isSuper && form.category === 'admin' && (
+                  <div className="flex items-start gap-3 rounded-md border p-3">
+                    <Checkbox
+                      id="puede-incidentes"
+                      checked={form.puedeIncidentes}
+                      onCheckedChange={(v) =>
+                        setForm((f) => ({ ...f, puedeIncidentes: v === true }))
+                      }
+                    />
+                    <div className="grid gap-1 leading-none">
+                      <Label htmlFor="puede-incidentes" className="cursor-pointer">
+                        Pestaña de incidentes en cada equipo
+                      </Label>
+                      <p className="text-[11px] text-muted-foreground">
+                        Solo el superadmin decide qué cuentas administradoras abren,
+                        siguen y cierran incidentes al entrar a un equipo.
                       </p>
                     </div>
                   </div>

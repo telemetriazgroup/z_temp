@@ -12,8 +12,17 @@ import {
   equiposEfectivosDeContacto,
   equiposOrganizadosDeContacto,
   filtrarEquipos,
-  etiqueta,
 } from './equiposCuenta.js';
+import {
+  excel12h,
+  graficaHoras,
+  labelLista,
+  textoDetalle,
+  textoMenuEquipo,
+  textoUltimoDato,
+  textoUltimos20,
+} from './consultaEquipo.js';
+import { textoAnalisis } from './analisisChat.js';
 
 const CONTACTO_ACTIVACION_NOMBRE = process.env.CONTACTO_ACTIVACION_NOMBRE || 'Luis Marcelo';
 const CONTACTO_ACTIVACION_TEL = process.env.CONTACTO_ACTIVACION_TEL || '908947464';
@@ -48,8 +57,12 @@ function intencionDe(texto) {
   if (/^(anterior|atras|volver)$/.test(t)) return 'anterior';
   if (/^(ver mas|vermás|siguiente)$/.test(t)) return 'ver_mas';
   if (/^(todos|todas|menu|inicio)$/.test(t)) return 'todos';
+  if (/^(hola|ola|holi|hey|hi|hello|buenas|buen dia|buenos dias|buenas tardes|buenas noches|que tal|saludos)[!. ]*$/.test(t)) {
+    return 'saludo';
+  }
+  if (/^(ayuda|como funciona|que puedes hacer|quien eres|info)$/.test(t)) return 'guia';
   if (/^(buscar|filtro|filtrar|busca)\s+/.test(t)) return 'buscar';
-  if (/estado|equipos|menu|menú|hola|ayuda/.test(t)) return 'estado';
+  if (/^(estado|equipos)$/.test(t)) return 'estado';
   if (/^\d{1,2}$/.test(t)) return 'opcion';
   return 'texto';
 }
@@ -155,7 +168,7 @@ async function armarItemsMenu(contacto, { filtro = null, grupoId = null } = {}) 
     const hits = filtrarEquipos(planos, filtro);
     return hits.map((e) => ({
       tipo: 'dispositivo',
-      label: `${etiqueta(e)}${e.grupoNombre ? ` · ${e.grupoNombre}` : ''} (${e.estado_conexion || '?'})`,
+      label: labelLista(e),
       equipo: e,
     }));
   }
@@ -165,7 +178,7 @@ async function armarItemsMenu(contacto, { filtro = null, grupoId = null } = {}) 
     const list = g?.dispositivos || [];
     return list.map((e) => ({
       tipo: 'dispositivo',
-      label: `${etiqueta(e)} · ${e.imei} (${e.estado_conexion || '?'})`,
+      label: labelLista(e),
       equipo: e,
       grupoId: g?.id,
       grupoNombre: g?.nombre,
@@ -184,7 +197,7 @@ async function armarItemsMenu(contacto, { filtro = null, grupoId = null } = {}) 
   for (const e of individuales) {
     items.push({
       tipo: 'dispositivo',
-      label: `${etiqueta(e)} · ${e.imei} (${e.estado_conexion || '?'})`,
+      label: labelLista(e),
       equipo: e,
     });
   }
@@ -217,7 +230,7 @@ async function enviarMenu(jid, contacto, {
   if (!total && filtro) {
     encolarTexto(
       jid,
-      `No encontré nada con *«${filtro}»*.\nPrueba otro nombre, ZGRU o IMEI · *limpiar* · *todos*`,
+      `No encontré un equipo con *«${filtro}»*.\n\n${textoGuia()}`,
       { contactoId: contacto.id, telefono: contacto.telefono, tipo: 'estado' }
     );
     setCtx(jid, { vista: 'filtro', page: 0, filtro, grupoId, opciones: [] });
@@ -257,31 +270,94 @@ async function enviarMenu(jid, contacto, {
   });
 }
 
-function formatearDetalle(e) {
-  const d = e._flota;
-  const u = d?.ultimo_dato ?? e.ultimo_dato ?? {};
-  const estado = String(e.estado_conexion || d?.estado_conexion || '—').toUpperCase();
+const ACCIONES_EQUIPO = [
+  { tipo: 'accion', id: 'ultimo' },
+  { tipo: 'accion', id: 'detalle' },
+  { tipo: 'accion', id: 'ultimos20' },
+  { tipo: 'accion', id: 'grafica3' },
+  { tipo: 'accion', id: 'grafica12' },
+  { tipo: 'accion', id: 'excel12' },
+  { tipo: 'accion', id: 'analisis' },
+];
+
+function textoGuia(nombre) {
+  const quien = nombre ? `Hola ${nombre}. ` : 'Hola. ';
   return (
-    `*${etiqueta(e)}*\n` +
-    `${e.codigo || '—'} · IMEI ${e.imei} · ${estado}` +
-    (e.grupoNombre ? ` · ${e.grupoNombre}` : '') +
-    `\nSet ${u.set_point ?? '—'} °C · retorno ${u.return_air ?? '—'} · suministro ${u.temp_supply_1 ?? '—'}\n` +
-    `Última conexión: ${e.ultima_actualizacion || d?.ultima_actualizacion || '—'}\n\n` +
-    `Escribe *todos* para el menú, o filtra por otro nombre / ZGRU / IMEI.`
+    `${quien}Soy el monitor *ZTRACK*. Vigilo la telemetría de los equipos de tu cuenta y te aviso si uno queda *fuera de rango* o *apagado*.\n\n` +
+    `Cómo hablar conmigo:\n` +
+    `• *menu* o *todos* — lista de equipos y grupos asignados\n` +
+    `• Escribe el *nombre* o el *ZGRU* para filtrar\n` +
+    `• Elige el *número* del equipo`
   );
 }
 
-async function abrirDetalle(jid, contacto, equipo) {
-  encolarTexto(jid, formatearDetalle(equipo), {
+function responder(jid, contacto, texto, extra = {}) {
+  encolarTexto(jid, texto, {
     contactoId: contacto.id,
     telefono: contacto.telefono,
     tipo: 'estado',
+    ...extra,
   });
+}
+
+async function abrirMenuEquipo(jid, contacto, equipo) {
+  const prev = getCtx(jid);
+  responder(jid, contacto, textoMenuEquipo(equipo));
   setCtx(jid, {
-    vista: 'dispositivo',
-    ultimoImei: equipo.imei,
-    opciones: [],
+    vista: 'menu_equipo',
+    equipo,
+    grupoId: prev.grupoId ?? null,
+    filtro: prev.filtro ?? null,
+    page: prev.page ?? 0,
+    opciones: ACCIONES_EQUIPO,
   });
+}
+
+async function ejecutarAccionEquipo(jid, contacto, equipo, id) {
+  try {
+    if (id === 'ultimo') {
+      responder(jid, contacto, `Busco la última trama de *${equipo.nombre || equipo.imei}*.`);
+      responder(jid, contacto, await textoUltimoDato(equipo, contacto.username));
+      return;
+    }
+    if (id === 'detalle') {
+      responder(jid, contacto, textoDetalle(equipo, contacto.username));
+      return;
+    }
+    if (id === 'ultimos20') {
+      responder(jid, contacto, await textoUltimos20(equipo, contacto.username));
+      return;
+    }
+    if (id === 'grafica3' || id === 'grafica12') {
+      const hecho = await graficaHoras(equipo, id === 'grafica3' ? 3 : 12);
+      responder(jid, contacto, hecho.texto, hecho.media ? { media: hecho.media } : {});
+      return;
+    }
+    if (id === 'excel12') {
+      responder(jid, contacto, `Armo el CSV de 12 h de *${equipo.nombre || equipo.imei}*.`);
+      const hecho = await excel12h(equipo, contacto.username);
+      responder(jid, contacto, hecho.texto, hecho.media ? { media: hecho.media } : {});
+      return;
+    }
+    if (id === 'analisis') {
+      responder(jid, contacto, `Reviso *${equipo.nombre || equipo.imei}*: rango y apagado.`);
+      responder(jid, contacto, await textoAnalisis(equipo, contacto.username));
+    }
+  } catch (e) {
+    console.warn('[wa] consulta', id, e.message);
+    responder(jid, contacto, `No pude armar esa consulta (${e.message}). Prueba otra opción o *volver*.`);
+  }
+}
+
+function accionPorTexto(n) {
+  if (n === '1' || /ultimo dato|ultima trama/.test(n)) return 'ultimo';
+  if (n === '2' || /detalle|informacion detallada/.test(n)) return 'detalle';
+  if (n === '3' || /ultimos?\s*20|\b20\b/.test(n)) return 'ultimos20';
+  if (n === '4' || /grafica\s*3|\b3\s*h\b/.test(n)) return 'grafica3';
+  if (n === '5' || /grafica\s*12|\b12\s*h\b/.test(n)) return 'grafica12';
+  if (n === '6' || /excel|csv|archivo|descargar/.test(n)) return 'excel12';
+  if (n === '7' || /analisis|fuera de rango|apagado/.test(n)) return 'analisis';
+  return null;
 }
 
 async function manejarNavegacion(jid, contacto, texto, intencion) {
@@ -292,6 +368,11 @@ async function manejarNavegacion(jid, contacto, texto, intencion) {
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .replace(/\s+/g, ' ');
+
+  if (intencion === 'saludo' || intencion === 'guia') {
+    responder(jid, contacto, textoGuia(nombrePila(contacto.nombre)));
+    return true;
+  }
 
   if (intencion === 'todos' || n === 'menu' || n === 'inicio') {
     await enviarMenu(jid, contacto, { page: 0 });
@@ -311,7 +392,7 @@ async function manejarNavegacion(jid, contacto, texto, intencion) {
     return true;
   }
   if (intencion === 'anterior') {
-    if (ctx.vista === 'dispositivo') {
+    if (ctx.vista === 'menu_equipo' || ctx.vista === 'dispositivo') {
       if (ctx.grupoId) await enviarMenu(jid, contacto, { page: 0, grupoId: ctx.grupoId });
       else await enviarMenu(jid, contacto, { page: 0, filtro: ctx.filtro || null });
       return true;
@@ -356,10 +437,42 @@ async function manejarNavegacion(jid, contacto, texto, intencion) {
       await enviarMenu(jid, contacto, { page: 0, grupoId: op.id || op.grupo?.id });
       return true;
     }
-    if (op.tipo === 'dispositivo' && op.equipo) {
-      await abrirDetalle(jid, contacto, op.equipo);
+    if (op.tipo === 'accion' && ctx.equipo) {
+      await ejecutarAccionEquipo(jid, contacto, ctx.equipo, op.id);
       return true;
     }
+    if (op.tipo === 'dispositivo' && op.equipo) {
+      await abrirMenuEquipo(jid, contacto, op.equipo);
+      return true;
+    }
+  }
+
+  if (ctx.vista === 'menu_equipo' && ctx.equipo) {
+    const accion = accionPorTexto(n);
+    if (accion) {
+      await ejecutarAccionEquipo(jid, contacto, ctx.equipo, accion);
+      return true;
+    }
+  }
+
+  if (/analis|fuera de rango/.test(n)) {
+    const resto = n
+      .replace(/analis\w*|fuera de rango|el equipo|equipo|\bde\b|\bdel\b|\bla\b|\bel\b/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const planos = await equiposEfectivosDeContacto(contacto);
+    const hits = resto.length >= 2 ? filtrarEquipos(planos, resto) : planos;
+    const equipo = ctx.equipo || (hits.length === 1 ? hits[0] : null);
+    if (equipo) {
+      await ejecutarAccionEquipo(jid, contacto, equipo, 'analisis');
+      return true;
+    }
+    responder(
+      jid,
+      contacto,
+      'Para el análisis dime el nombre del equipo, o escribe *menu*, elige el número y luego *7*.'
+    );
+    return true;
   }
 
   if (intencion === 'buscar') {
@@ -370,7 +483,7 @@ async function manejarNavegacion(jid, contacto, texto, intencion) {
 
   // Texto libre: filtro o match único
   if (intencion === 'texto' || intencion === 'estado') {
-    if (intencion === 'estado' && /^(estado|equipos|hola|ayuda|menu|menú)$/i.test(t.trim())) {
+    if (intencion === 'estado' && /^(estado|equipos)$/i.test(t.trim())) {
       await enviarMenu(jid, contacto, { page: 0, prefijo: '' });
       return true;
     }
@@ -378,7 +491,7 @@ async function manejarNavegacion(jid, contacto, texto, intencion) {
       const planos = await equiposEfectivosDeContacto(contacto);
       const hits = filtrarEquipos(planos, t);
       if (hits.length === 1) {
-        await abrirDetalle(jid, contacto, hits[0]);
+        await abrirMenuEquipo(jid, contacto, hits[0]);
         return true;
       }
       // Nombre de grupo exacto/parcial
@@ -451,6 +564,6 @@ export async function recibirMensaje({ jid, telefono, texto }) {
   const handled = await manejarNavegacion(jid, contacto, texto, intencion);
   if (handled) return { estado: true, contacto };
 
-  await enviarMenu(jid, contacto, { page: 0 });
+  responder(jid, contacto, textoGuia(nombrePila(contacto.nombre)));
   return { estado: true, contacto };
 }

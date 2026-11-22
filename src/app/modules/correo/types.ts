@@ -325,6 +325,7 @@ export interface CorreoIncidente {
   tipoEvento?: CorreoTipoEvento;
   estado: CorreoIncidenteEstado;
   subject?: string;
+  descripcion?: string;
   destinatarios?: string[];
   enviadoAt: string;
   since?: string;

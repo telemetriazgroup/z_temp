@@ -53,3 +53,37 @@ CREATE TABLE IF NOT EXISTS wa_evento (
   detalle TEXT,
   creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS wa_incidente (
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL,
+  row_key TEXT NOT NULL,
+  imei TEXT,
+  codigo TEXT,
+  nombre TEXT,
+  tipo TEXT NOT NULL,
+  descripcion TEXT NOT NULL,
+  estado TEXT NOT NULL DEFAULT 'seguimiento',
+  solucion TEXT,
+  creado_en TIMESTAMPTZ NOT NULL DEFAULT now(),
+  cerrado_en TIMESTAMPTZ,
+  recordatorio_en TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_wa_incidente_row ON wa_incidente (row_key, creado_en DESC);
+
+CREATE TABLE IF NOT EXISTS wa_incidente_nota (
+  id TEXT PRIMARY KEY,
+  incidente_id TEXT NOT NULL REFERENCES wa_incidente(id) ON DELETE CASCADE,
+  username TEXT,
+  texto TEXT NOT NULL,
+  creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS wa_incidente_foto (
+  id TEXT PRIMARY KEY,
+  incidente_id TEXT NOT NULL REFERENCES wa_incidente(id) ON DELETE CASCADE,
+  nota_id TEXT,
+  archivo TEXT NOT NULL,
+  creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
+);

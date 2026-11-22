@@ -140,6 +140,13 @@ export function userMayAnalisisTelemetria(user: User | null | undefined): boolea
   return user.puedeAnalisisTelemetria === true;
 }
 
+/** Pestaña de incidentes del equipo. Superadmin siempre; admin solo si él se lo marcó. */
+export function userMayIncidentes(user: User | null | undefined): boolean {
+  if (user == null) return false;
+  if (userIsSuperAdmin(user)) return true;
+  return resolveUserCategory(user) === 'admin' && user.puedeIncidentes === true;
+}
+
 /** Admin solo puede otorgar un permiso si él mismo lo tiene (o es superadmin). */
 export function actorMayGrantPermission(
   actor: User | null | undefined,

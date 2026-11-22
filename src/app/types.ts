@@ -100,6 +100,11 @@ export interface User {
    */
   puedeAnalisisTelemetria?: boolean;
   /**
+   * Pestaña de incidentes al entrar a un equipo.
+   * Solo el superadmin puede activarla, y solo en cuentas administradoras.
+   */
+  puedeIncidentes?: boolean;
+  /**
    * Fecha de inicio de acceso a datos por IMEI (YYYY-MM-DD o ISO).
    * Si falta, se asume la fecha de asignación. Superadmin sin restricción.
    */

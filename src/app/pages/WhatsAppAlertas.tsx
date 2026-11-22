@@ -1,10 +1,11 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Navigate } from 'react-router';
 import { MessageCircle, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '../AuthContext';
 import { userIsSuperAdmin } from '../modules/usuario';
 import { Button } from '../components/ui/button';
+import { Input } from '../components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 
 const BASE = import.meta.env.VITE_CORREO_API_BASE ?? '/reefer/api/correo';
@@ -73,10 +74,15 @@ export default function WhatsAppAlertas() {
   const [mensajes, setMensajes] = useState<Mensaje[]>([]);
   const [desde, setDesde] = useState('');
   const [hasta, setHasta] = useState('');
+  const [espera, setEspera] = useState('2');
+  const esperaTocada = useRef(false);
 
   const cargarEstado = useCallback(async () => {
-    const estado = await api<{ data: Sesion }>('/estado');
+    const estado = await api<{ data: Sesion; tiempos?: { gapChatSeg?: number } }>('/estado');
     setSesion(estado.data);
+    if (!esperaTocada.current && estado.tiempos?.gapChatSeg != null) {
+      setEspera(String(estado.tiempos.gapChatSeg));
+    }
   }, []);
 
   const cargarChats = useCallback(async () => {
@@ -100,6 +106,22 @@ export default function WhatsAppAlertas() {
     const t = setInterval(() => cargarEstado().catch(() => {}), 4000);
     return () => clearInterval(t);
   }, [user, cargarEstado, cargarChats]);
+
+  async function guardarEspera() {
+    const n = Number(espera);
+    if (!Number.isInteger(n) || n < 1 || n > 10) {
+      toast.error('La espera va de 1 a 10 segundos');
+      return;
+    }
+    try {
+      await api('/ajustes', { method: 'PUT', body: JSON.stringify({ gapChatSeg: n }) });
+      esperaTocada.current = false;
+      toast.success(`El bot espera ${n} s entre respuestas del mismo número`);
+      await cargarEstado();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'No se pudo guardar');
+    }
+  }
 
   async function accion(path: string, ok: string) {
     try {
@@ -165,6 +187,32 @@ export default function WhatsAppAlertas() {
             {sesion?.qrDataUrl && (
               <img src={sesion.qrDataUrl} alt="Código QR de WhatsApp" className="h-56 w-56 rounded border bg-white p-2" />
             )}
+          </section>
+
+          <section className="rounded-lg border p-4 space-y-2">
+            <h2 className="font-semibold">Espera entre respuestas</h2>
+            <p className="text-sm text-muted-foreground">
+              Segundos que el bot espera antes de contestar al mismo número. Mínimo 1, máximo 10. Las alertas
+              siguen en su propio ritmo y no usan este valor.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                type="number"
+                min={1}
+                max={10}
+                step={1}
+                className="w-24"
+                value={espera}
+                onChange={(e) => {
+                  esperaTocada.current = true;
+                  setEspera(e.target.value);
+                }}
+              />
+              <span className="text-sm text-muted-foreground">segundos</span>
+              <Button variant="outline" onClick={() => guardarEspera()}>
+                Guardar
+              </Button>
+            </div>
           </section>
 
           <section className="rounded-lg border p-4">

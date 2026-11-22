@@ -11,22 +11,30 @@ import {
   resolveUserEffectiveImeis,
 } from '../gruposEquiposRepository.js';
 import { loadCurrentDispositivos } from '../dashboard/fleetStore.js';
+import { getDeviceNameByImei, getDeviceNameByRowKey } from '../deviceNamesRepository.js';
 import { listarAsignaciones } from './repository.js';
 
-function nombreDeFlota(d) {
-  if (!d) return null;
-  return (
-    d.nombre_plataforma ||
-    d.nombrePlataforma ||
-    d.nombre ||
-    d.descripcion_equipo ||
-    d.descripcionEquipo ||
-    null
-  );
+function nombreLimpio(value) {
+  const s = String(value ?? '').trim();
+  if (!s || s.toUpperCase() === 'SIN ASIGNAR') return null;
+  return s;
+}
+
+/** Separa el nombre visible del celular de 9 dígitos que suele ir al final. */
+export function partirNombre(raw, imei) {
+  const s = nombreLimpio(raw);
+  if (!s || s === String(imei || '')) return { nombre: null, celular: null };
+  const m = s.match(/^(.*?)(?:[\s.]+)(9\d{8})\s*$/);
+  if (m) {
+    const nombre = m[1].replace(/[.\s]+$/, '').trim();
+    return { nombre: nombre && nombre !== String(imei) ? nombre : null, celular: m[2] };
+  }
+  if (/^9\d{8}$/.test(s)) return { nombre: null, celular: s };
+  return { nombre: s, celular: null };
 }
 
 function etiqueta(e) {
-  return String(e?.nombre || e?.imei || 'equipo').trim();
+  return String(e?.nombre || 'Sin asignar').trim();
 }
 
 /**
@@ -66,7 +74,7 @@ export async function equiposEfectivosDeContacto(contacto) {
         for (const imei of g.imeis || []) {
           add({
             imei,
-            nombre: names[imei] || null,
+            nombre: nombreLimpio(names[imei]),
             grupoId: g.id,
             grupoNombre: g.nombre,
             origen: 'grupo_cuenta',
@@ -77,7 +85,7 @@ export async function equiposEfectivosDeContacto(contacto) {
         if (porImei.has(String(imei))) continue;
         add({
           imei,
-          nombre: names[imei] || null,
+          nombre: nombreLimpio(names[imei]),
           origen: 'device_access',
         });
       }
@@ -101,16 +109,21 @@ export async function equiposEfectivosDeContacto(contacto) {
     if (!d) continue;
     e.codigo = e.codigo || d.codigo || null;
     e.rowKey = e.rowKey || `${d.codigo || 'EQ'}-${d.imei}`;
-    e.nombre = e.nombre || nombreDeFlota(d) || e.imei;
+    const deCuenta = partirNombre(e.nombre, e.imei);
+    const deServidor = partirNombre(getDeviceNameByRowKey(e.rowKey) || getDeviceNameByImei(e.imei), e.imei);
+    e.nombre = deCuenta.nombre || deServidor.nombre;
+    e.celular = deCuenta.celular || deServidor.celular;
     e.estado_conexion = d.estado_conexion;
     e.ultimo_dato = d.ultimo_dato || null;
     e.ultima_actualizacion = d.ultima_actualizacion || null;
     e._flota = d;
   }
 
-  // Nombres pendientes sin flota
   for (const e of porImei.values()) {
-    if (!e.nombre) e.nombre = e.imei;
+    if (e.nombre && e.celular) continue;
+    const deServidor = partirNombre(getDeviceNameByRowKey(e.rowKey) || getDeviceNameByImei(e.imei), e.imei);
+    if (!e.nombre) e.nombre = deServidor.nombre;
+    if (!e.celular) e.celular = deServidor.celular;
   }
 
   return [...porImei.values()].sort((a, b) =>
@@ -194,6 +207,7 @@ export function filtrarEquipos(planos, query) {
     if (digits.length >= 4 && (imei.includes(digits) || nom.replace(/\D/g, '').includes(digits))) {
       return true;
     }
+    if (digits.length >= 4 && String(e.celular || '').includes(digits)) return true;
     const tokens = q.split(/[\s\-_]+/).filter((t) => t.length >= 3);
     if (tokens.length && tokens.every((t) => nom.includes(t) || nomC.includes(t))) return true;
     return tokens.some((t) => nom.includes(t));

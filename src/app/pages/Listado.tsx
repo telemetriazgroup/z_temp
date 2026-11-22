@@ -52,6 +52,7 @@ import {
   userMayAccessDispositivo,
   displayNameForDevice,
   postAuditEvent,
+  userIsSuperAdmin,
 } from '../modules/usuario';
 import { AUDIT_ACTIONS } from '../modules/usuario/auditActions';
 import {
@@ -78,6 +79,7 @@ import {
   Info,
 } from 'lucide-react';
 import { Historial3hModal, type Historial3hTarget } from '../components/Historial3hModal';
+import { FlotaEquipoAcciones } from '../components/FlotaEquipoAcciones';
 import { dispositivoTieneHistorialOficial } from '../api/datosOficiales';
 import {
   useDispositivosFleet,
@@ -913,6 +915,16 @@ export default function Listado() {
                     <Badge className="bg-slate-600 shrink-0">Historial</Badge>
                   )}
                   <DeviceInfoPopover device={device} />
+                  {(userIsSuperAdmin(user) || user?.deviceAccess?.includes('all')) && (
+                    <FlotaEquipoAcciones
+                      device={{
+                        rowKey: device.rowKey,
+                        imei: device.imei,
+                        codigo: String(device.codigo),
+                        nombreAsignado: device.nombreAsignado,
+                      }}
+                    />
+                  )}
                   <Button
                     type="button"
                     variant="ghost"
@@ -1106,6 +1118,16 @@ export default function Listado() {
                         <Badge className="bg-slate-600 shrink-0">Historial</Badge>
                       )}
                       <DeviceInfoPopover device={device} />
+                      {(userIsSuperAdmin(user) || user?.deviceAccess?.includes('all')) && (
+                        <FlotaEquipoAcciones
+                          device={{
+                            rowKey: device.rowKey,
+                            imei: device.imei,
+                            codigo: String(device.codigo),
+                            nombreAsignado: device.nombreAsignado,
+                          }}
+                        />
+                      )}
                       <Button
                         type="button"
                         variant="ghost"

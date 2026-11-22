@@ -17,6 +17,7 @@ import {
   postAuditEvent,
   userMayControlTemperatura,
   userMayAnalisisTelemetria,
+  userMayIncidentes,
 } from '../modules/usuario';
 import { AUDIT_ACTIONS } from '../modules/usuario/auditActions';
 import {
@@ -38,6 +39,8 @@ import {
 } from '../modules/alarma';
 import { DeviceAlarmasPanel } from '../components/DeviceAlarmasPanel';
 import { EquipoDetalleIffLayout } from '../components/EquipoDetalleIffLayout';
+import { IncidentePanel } from '../components/FlotaEquipoAcciones';
+import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { esEquipoConControlTemperatura } from '../modules/control';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
@@ -330,6 +333,7 @@ export default function EquipoDetalle() {
   const [error, setError] = useState<string | null>(null);
   const [refreshMensaje, setRefreshMensaje] = useState<string | null>(null);
   const [verMasAbierto, setVerMasAbierto] = useState(false);
+  const [pestana, setPestana] = useState<'equipo' | 'incidentes'>('equipo');
   const [historialFocus, setHistorialFocus] = useState<{
     token: number;
     desdeIso: string;
@@ -488,6 +492,7 @@ export default function EquipoDetalle() {
     esEquipoConControlTemperatura(dispositivo.imei, dispositivo.codigo);
   const puedeMostrarControl = userMayControlTemperatura(user);
   const puedeMostrarAnalisis = userMayAnalisisTelemetria(user);
+  const puedeIncidentes = userMayIncidentes(user);
 
   if (!imei) {
     return (
@@ -585,6 +590,16 @@ export default function EquipoDetalle() {
         </Button>
       </div>
 
+      {puedeIncidentes && (
+        <Tabs value={pestana} onValueChange={(v) => setPestana(v as 'equipo' | 'incidentes')}>
+          <TabsList>
+            <TabsTrigger value="equipo">Equipo</TabsTrigger>
+            <TabsTrigger value="incidentes">Incidentes</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      )}
+
+      <div className={puedeIncidentes && pestana === 'incidentes' ? 'hidden' : 'contents'}>
       {!esLayoutReeferControl && (
       <div className="rounded-xl border bg-card p-6 shadow-sm">
         <div className="flex flex-col lg:flex-row lg:items-start gap-6">
@@ -779,6 +794,17 @@ export default function EquipoDetalle() {
         </>
       )}
         </>
+      )}
+      </div>
+      {puedeIncidentes && pestana === 'incidentes' && (
+        <IncidentePanel
+          device={{
+            rowKey: deviceRowKey(dispositivo),
+            imei: dispositivo.imei,
+            codigo: String(dispositivo.codigo ?? ''),
+            nombreAsignado: tituloPrincipal,
+          }}
+        />
       )}
     </div>
   );

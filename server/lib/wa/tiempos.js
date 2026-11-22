@@ -1,11 +1,13 @@
+import { gapChatMs } from './ajustes.js';
+
 /**
  * Dos ritmos distintos.
- * El chat (prueba, ESTADO, respuestas) espera 4 s y no entra en la cola de alertas.
- * Las alertas siguen a 1 por minuto, en su propio hilo, para no frenar la conversación.
+ * El chat espera el valor que fija el superadmin (2 s al iniciar, entre 1 y 10).
+ * Las alertas siguen a 1 por minuto, en su propio hilo.
  */
 export const TIEMPOS_WA = {
   gapAlertaMs: Number(process.env.OUTBOX_GAP_ALERTA_MS ?? 60_000),
-  gapChatMs: Number(process.env.OUTBOX_GAP_CHAT_MS ?? 4_000),
+  gapChatMs: 2_000,
   activoMs: Number(process.env.OUTBOX_ACTIVO_MS ?? 15 * 60_000),
   avisoNoActivoMs: Number(process.env.AVISO_NO_ACTIVO_MS ?? 90_000),
   respuestasRequeridas: Number(process.env.PRUEBA_RESPUESTAS_REQUERIDAS ?? 3),
@@ -17,11 +19,12 @@ export const TIEMPOS_WA = {
 export const gapActivoMs = TIEMPOS_WA.gapChatMs;
 
 /**
- * El chat sale 4 s después del mensaje anterior a ese número.
+ * Cada respuesta al mismo número espera el intervalo configurado desde ahora
+ * o desde el envío ya programado, el que sea más tarde.
  * La alerta solo mira su propio cupo de 1 por minuto.
  */
-export function proximoEnvio({ ahora, esAlerta, ultimoJid = 0, slotAlerta = 0 }) {
+export function proximoEnvio({ ahora, esAlerta, ultimoJid = 0, slotAlerta = 0, gapMs = gapChatMs() }) {
   if (esAlerta) return Math.max(ahora, slotAlerta);
-  const previo = ultimoJid > 0 ? ultimoJid + TIEMPOS_WA.gapChatMs : ahora + TIEMPOS_WA.gapChatMs;
-  return Math.max(ahora, previo);
+  const ancla = Math.max(ahora, ultimoJid || 0);
+  return ancla + gapMs;
 }

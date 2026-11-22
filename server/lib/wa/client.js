@@ -193,7 +193,7 @@ export async function startWaClient() {
     if (perfilAjeno()) quitarCandadosPerfil();
     registrarPaso('sesion', 'Carpeta de sesión', sessionsDir, fs.existsSync(sessionsDir) ? 'ok' : 'warn');
     const { default: pkg } = await import('whatsapp-web.js');
-    const { Client, LocalAuth } = pkg;
+    const { Client, LocalAuth, MessageMedia } = pkg;
     registrarPaso('cliente', 'Cliente WhatsApp', 'whatsapp-web.js listo', 'pending');
     const c = new Client({
       authStrategy: new LocalAuth({ dataPath: sessionsDir }),
@@ -249,7 +249,17 @@ export async function startWaClient() {
         })
         .catch((e) => console.warn('[wa] mensaje', e.message));
     });
-    setWaSender((jid, text) => c.sendMessage(jid, text));
+    setWaSender(async (jid, body) => {
+      if (body && typeof body === 'object' && body.media?.base64) {
+        const media = new MessageMedia(body.media.mimetype, body.media.base64, body.media.filename);
+        const documento = body.media.documento === true || !String(body.media.mimetype).startsWith('image/');
+        return c.sendMessage(jid, media, {
+          caption: body.text ? String(body.text).slice(0, 900) : undefined,
+          sendMediaAsDocument: documento,
+        });
+      }
+      return c.sendMessage(jid, typeof body === 'string' ? body : String(body?.text ?? ''));
+    });
     iniciarOutbox();
     client = c;
     await c.initialize();

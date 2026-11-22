@@ -230,6 +230,7 @@ function validateUserShape(user, { requirePassword = false } = {}) {
     /** Desactivado por defecto; solo true si se asigna explícitamente. */
     puedeControlTemperatura: user.puedeControlTemperatura === true,
     puedeAnalisisTelemetria: user.puedeAnalisisTelemetria === true,
+    puedeIncidentes: category === 'admin' && user.puedeIncidentes === true,
     deviceAccessFrom: normalizeDeviceAccessFromField(user.deviceAccessFrom),
     deviceAccessHistory: Array.isArray(user.deviceAccessHistory)
       ? user.deviceAccessHistory.slice(-200)
@@ -398,6 +399,9 @@ export function addUser(input, opts = {}) {
         'No puede habilitar análisis de telemetría: el superadmin no le otorgó ese permiso.'
       );
     }
+    if (nextInput.puedeIncidentes === true) {
+      throw new Error('Solo el superadmin puede habilitar la pestaña de incidentes.');
+    }
   } else if (isSuperAdminUser(actor)) {
     if (nextInput.createdBy == null) {
       nextInput.createdBy = actor.username;
@@ -454,6 +458,9 @@ export function updateUser(id, patch, opts = {}) {
       throw new Error(
         'No puede habilitar análisis de telemetría: el superadmin no le otorgó ese permiso.'
       );
+    }
+    if (patch.puedeIncidentes === true) {
+      throw new Error('Solo el superadmin puede habilitar la pestaña de incidentes.');
     }
     assertActorMayAssignFleet(
       actor,

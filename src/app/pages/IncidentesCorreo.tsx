@@ -396,6 +396,9 @@ export default function IncidentesCorreo() {
                     {detalle.diaCalendario})
                   </p>
                 )}
+                {detalle.descripcion != null && detalle.descripcion !== '' && (
+                  <p>{detalle.descripcion}</p>
+                )}
                 {detalle.umbralHoras != null && (
                   <p>
                     <strong>Umbral:</strong> más de {formatUmbralAlerta(detalle.umbralHoras)}

@@ -23,6 +23,8 @@ import { buildTrazabilidadEmailPack } from './emailTraceability.js';
 import { deviceRowKey } from './telemetry.js';
 import { loadCurrentDispositivos, loadSourceDispositivos } from './dashboard/fleetStore.js';
 import { encolarAlertaEquipo } from './wa/alertas.js';
+import { sincronizarControlWhatsapp } from './wa/controlFlota.js';
+import { recordarIncidentes } from './wa/incidentes.js';
 import { getSmtpConfig } from './smtpRepository.js';
 import { getApiAsistenciaEmails } from './apiAsistenciaRepository.js';
 import { detectarEnlacesCaidos, horasSinComunicacion } from './enlaceCaido.js';
@@ -342,11 +344,72 @@ function markUmbralEnviado(episode, umbralHoras, umbrales) {
   episode.sentUmbrales.sort((a, b) => a - b);
 }
 
-/** Siguiente umbral alcanzado y aún no notificado (el menor pendiente, p. ej. 2 h antes que 5 h). */
-function pickUmbralPendiente(umbrales, horasTranscurridas, sentUmbrales) {
-  const eligible = umbrales.filter((u) => horasTranscurridas >= u && !sentUmbrales.includes(u));
-  if (eligible.length === 0) return null;
-  return Math.min(...eligible);
+const ESPERA_UMBRAL_ACTUAL_MS = 10 * 60 * 1000;
+
+/**
+ * Si se vencieron varios umbrales sin avisar, los anteriores al penúltimo caducan:
+ * no se reenvían. Se avisa la hora previa ahora y la actual 10 minutos después.
+ */
+export function planUmbralAviso(umbrales, horasTranscurridas, sentUmbrales, now, episode) {
+  const sent = new Set(Array.isArray(sentUmbrales) ? sentUmbrales : []);
+  const pendientes = [...umbrales]
+    .filter((u) => horasTranscurridas >= u && !sent.has(u))
+    .sort((a, b) => a - b);
+  const hold = episode?.umbralActualNoAntes
+    ? new Date(episode.umbralActualNoAntes).getTime()
+    : 0;
+  if (pendientes.length === 0) {
+    return { enviar: null, caducar: [], esperaHasta: null, diferirActual: false, actual: null };
+  }
+  if (pendientes.length === 1) {
+    const actual = pendientes[0];
+    if (Number.isFinite(hold) && hold > now.getTime()) {
+      return {
+        enviar: null,
+        caducar: [],
+        esperaHasta: episode.umbralActualNoAntes,
+        diferirActual: false,
+        actual,
+      };
+    }
+    return { enviar: actual, caducar: [], esperaHasta: null, diferirActual: false, actual };
+  }
+  const actual = pendientes[pendientes.length - 1];
+  const anterior = pendientes[pendientes.length - 2];
+  return {
+    enviar: anterior,
+    caducar: pendientes.filter((u) => u < anterior),
+    esperaHasta: null,
+    diferirActual: true,
+    actual,
+  };
+}
+
+function caducarUmbrales(episode, caducar) {
+  if (!caducar?.length) return;
+  if (!Array.isArray(episode.sentUmbrales)) episode.sentUmbrales = [];
+  for (const u of caducar) {
+    if (!episode.sentUmbrales.includes(u)) episode.sentUmbrales.push(u);
+  }
+  episode.sentUmbrales.sort((a, b) => a - b);
+}
+
+function cerrarEsperaUmbral(episode, plan, now) {
+  if (plan?.diferirActual) {
+    episode.umbralActualNoAntes = new Date(now.getTime() + ESPERA_UMBRAL_ACTUAL_MS).toISOString();
+    return;
+  }
+  delete episode.umbralActualNoAntes;
+}
+
+function textoCaducados(plan) {
+  if (!plan?.caducar?.length) return '';
+  return ` Umbrales ya caducados, sin reenviar: ${plan.caducar.map(formatUmbralHoras).join(', ')}.`;
+}
+
+function textoEsperaUmbral(plan) {
+  if (!plan?.esperaHasta || plan.actual == null) return '';
+  return ` El aviso de ${formatUmbralHoras(plan.actual)} espera 10 min tras regularizar el anterior (${formatRef(plan.esperaHasta)}).`;
 }
 
 function proximoUmbralPendiente(umbrales, horasTranscurridas, sentUmbrales) {
@@ -610,11 +673,16 @@ async function sendRecuperacionEnRangoMail({
       messageId,
       success: true,
     });
+    const horasDetectadas = Math.round(Number(recovered.durationHours) * 10) / 10;
+    const avisos = umbralesEnviados.map((u) => formatUmbralHoras(u)).join(', ');
+    const descripcionFuera =
+      `Fuera de rango detectado. Duración ${horasDetectadas} h, desde ${formatRef(recovered.since)} hasta ${formatRef(recovered.endedAt)}. ` +
+      `Rango de horas avisado: ${avisos || '—'}.`;
     addIncidente({
       id: uid('inc'),
-      tipo: 'correo_enviado',
+      tipo: 'episodio_cerrado',
       envioId,
-      alertKind: 'en_rango',
+      alertKind: 'fuera_rango',
       grupoId: grupo.id,
       grupoNombre: grupo.nombre,
       rowKey: assignment.rowKey,
@@ -623,11 +691,15 @@ async function sendRecuperacionEnRangoMail({
       descripcionEquipo: dispositivoReeferId,
       nombrePlataforma,
       horasAcumuladas: recovered.durationHours,
+      durationHours: recovered.durationHours,
       referenciaDesde: recovered.since,
+      since: recovered.since,
+      endedAt: recovered.endedAt,
       recuperadoAt: recovered.endedAt,
       umbralesEnviados,
-      estado: 'cerrado',
-      subject: content.subject,
+      estado: 'pendiente',
+      subject: `Fuera de rango detectado · ${horasDetectadas} h`,
+      descripcion: descripcionFuera,
       destinatarios: [...to],
       enviadoAt: new Date().toISOString(),
       comentarios: [],
@@ -810,6 +882,8 @@ export async function runAlertCycle(options = {}) {
       errores: 0,
     },
   };
+
+  recordarIncidentes().catch((e) => console.warn('[wa] recordatorio incidente', e.message));
 
   const smtp = getSmtpConfig();
   if (!smtp?.user || !smtp?.appPassword) {
@@ -1148,8 +1222,10 @@ export async function runAlertCycle(options = {}) {
         const horasAcumTxt = `${Math.round(horasAcumuladas * 10) / 10} h acum.`;
         const horasDiaTxt = `${Math.round(horasEnDia * 10) / 10} h hoy`;
         ensureDailySentUmbrales(episode, now);
+        const planAviso = planUmbralAviso(umbrales, horasEnDia, episode.sentUmbrales ?? [], now, episode);
+        caducarUmbrales(episode, planAviso.caducar);
         const sentUmbrales = episode.sentUmbrales ?? [];
-        const umbralHoras = pickUmbralPendiente(umbrales, horasEnDia, sentUmbrales);
+        const umbralHoras = planAviso.enviar;
         const nextUmbral = proximoUmbralPendiente(umbrales, horasEnDia, sentUmbrales);
         const { dispositivoReeferId, nombrePlataforma } = resolveLabels(assignment, dispositivo);
         const tipoEvento =
@@ -1158,8 +1234,8 @@ export async function runAlertCycle(options = {}) {
         if (umbralHoras == null || umbralYaEnviado(episode, umbralHoras)) {
           const criterio =
             sentUmbrales.length > 0
-              ? `APAGADO ${horasDiaTxt} (${horasAcumTxt} desde ${formatRef(episode.since)}). Último aviso hoy: ${formatUmbralHoras(sentUmbrales[sentUmbrales.length - 1])}. ${nextUmbral != null ? `Esperando ${formatUmbralHoras(nextUmbral)} en ${hoy}.` : 'Sin más umbrales hoy.'} No se evalúa fuera de rango mientras esté OFF.`
-              : `APAGADO ${horasDiaTxt} (${horasAcumTxt} desde ${formatRef(episode.since)}). ${nextUmbral != null ? `Próximo aviso al alcanzar ${formatUmbralHoras(nextUmbral)} en ${hoy}.` : 'Sin umbrales pendientes hoy.'} Fuera de rango solo con equipo ON.`;
+              ? `APAGADO ${horasDiaTxt} (${horasAcumTxt} desde ${formatRef(episode.since)}). Último aviso hoy: ${formatUmbralHoras(sentUmbrales[sentUmbrales.length - 1])}. ${nextUmbral != null ? `Esperando ${formatUmbralHoras(nextUmbral)} en ${hoy}.` : 'Sin más umbrales hoy.'}${textoEsperaUmbral(planAviso)}${textoCaducados(planAviso)} No se evalúa fuera de rango mientras esté OFF.`
+              : `APAGADO ${horasDiaTxt} (${horasAcumTxt} desde ${formatRef(episode.since)}). ${nextUmbral != null ? `Próximo aviso al alcanzar ${formatUmbralHoras(nextUmbral)} en ${hoy}.` : 'Sin umbrales pendientes hoy.'}${textoEsperaUmbral(planAviso)} Fuera de rango solo con equipo ON.`;
           pushEval(evaluaciones, {
             ...base,
             estado: 'equipo_apagado',
@@ -1206,11 +1282,12 @@ export async function runAlertCycle(options = {}) {
           ...trazEmail,
         });
         const envioId = uid('envio');
-        const criterioEnvio = `APAGADO ${horasDiaTxt} / ${horasAcumTxt} desde ${formatRef(episode.since)} (GMT-5). Se envía alerta APAGADO umbral ${formatUmbralHoras(umbralHoras)} del día ${hoy}. Destino: ${grupo.emails.join(', ')}.`;
+        const criterioEnvio = `APAGADO ${horasDiaTxt} / ${horasAcumTxt} desde ${formatRef(episode.since)} (GMT-5). Se envía alerta APAGADO umbral ${formatUmbralHoras(umbralHoras)} del día ${hoy}.${textoCaducados(planAviso)}${planAviso.diferirActual ? ` El umbral de ${formatUmbralHoras(planAviso.actual)} se envía 10 min después.` : ''} Destino: ${grupo.emails.join(', ')}.`;
 
         try {
           const messageId = await sendMail(smtp, grupo.emails, content);
           markUmbralEnviado(episode, umbralHoras, umbrales);
+          cerrarEsperaUmbral(episode, planAviso, now);
           espejoWhatsapp({
             assignment,
             dispositivo,
@@ -1398,6 +1475,15 @@ export async function runAlertCycle(options = {}) {
           criterio,
         });
         if (estado === 'normal') result.resumen.normal++;
+        void sincronizarControlWhatsapp({
+          rowKey: assignment.rowKey,
+          imei: dispositivo.imei,
+          nombre: dispositivo.descripcion || dispositivo.nombre || assignment?.nombre,
+          codigo: dispositivo.codigo,
+          enRango: true,
+          setPoint: dispositivo.ultimo_dato?.set_point,
+          returnAir: dispositivo.ultimo_dato?.return_air,
+        }).catch((e) => console.warn('[wa] control', e.message));
         continue;
       }
 
@@ -1461,6 +1547,15 @@ export async function runAlertCycle(options = {}) {
               criterio: criterioRef,
             });
             result.resumen.normal++;
+            void sincronizarControlWhatsapp({
+              rowKey: assignment.rowKey,
+              imei: dispositivo.imei,
+              nombre: dispositivo.descripcion || dispositivo.nombre || assignment?.nombre,
+              codigo: dispositivo.codigo,
+              enRango: true,
+              setPoint: dispositivo.ultimo_dato?.set_point,
+              returnAir: dispositivo.ultimo_dato?.return_air,
+            }).catch((e) => console.warn('[wa] control', e.message));
             continue;
           }
         } else {
@@ -1487,10 +1582,21 @@ export async function runAlertCycle(options = {}) {
       const horasEnDia = horasEnDiaCalendario(episode.since, dispositivo, now);
       const horasEnteras = horasEnterasDesdeReferenciaEquipo(dispositivo, episode.since, now);
       const horasAcumuladas = Math.round(horasAcumuladasRaw * 10) / 10;
+      void sincronizarControlWhatsapp({
+        rowKey: assignment.rowKey,
+        imei: dispositivo.imei,
+        nombre: dispositivo.descripcion || dispositivo.nombre || assignment?.nombre,
+        codigo: dispositivo.codigo,
+        enRango: false,
+        setPoint: dispositivo.ultimo_dato?.set_point,
+        returnAir: dispositivo.ultimo_dato?.return_air,
+      }).catch((e) => console.warn('[wa] control', e.message));
       const horasEnDiaReport = Math.round(horasEnDia * 10) / 10;
       ensureDailySentUmbrales(episode, now);
+      const planAviso = planUmbralAviso(umbrales, horasEnDia, episode.sentUmbrales ?? [], now, episode);
+      caducarUmbrales(episode, planAviso.caducar);
       const sentUmbrales = episode.sentUmbrales ?? [];
-      const umbralHoras = pickUmbralPendiente(umbrales, horasEnDia, sentUmbrales);
+      const umbralHoras = planAviso.enviar;
       const nextUmbral = proximoUmbralPendiente(umbrales, horasEnDia, sentUmbrales);
       const horasAcumTxt = `${horasAcumuladas} h acum.`;
       const horasDiaTxt = `${horasEnDiaReport} h hoy`;
@@ -1503,7 +1609,7 @@ export async function runAlertCycle(options = {}) {
         let criterio;
         if (sentUmbrales.length > 0) {
           const ultimo = sentUmbrales[sentUmbrales.length - 1];
-          criterio = `FUERA DE RANGO ${horasDiaTxt} (${horasAcumTxt} desde ${formatRef(episode.since)}). Último aviso hoy: ${formatUmbralHoras(ultimo)}. ${nextUmbral != null ? `Esperando ${formatUmbralHoras(nextUmbral)} en ${hoy} (faltan ~${Math.max(0, nextUmbral - horasEnDia).toFixed(1)} h hoy).` : 'Sin más umbrales hoy.'} ${criterioRef}`;
+          criterio = `FUERA DE RANGO ${horasDiaTxt} (${horasAcumTxt} desde ${formatRef(episode.since)}). Último aviso hoy: ${formatUmbralHoras(ultimo)}. ${nextUmbral != null ? `Esperando ${formatUmbralHoras(nextUmbral)} en ${hoy} (faltan ~${Math.max(0, nextUmbral - horasEnDia).toFixed(1)} h hoy).` : 'Sin más umbrales hoy.'}${textoEsperaUmbral(planAviso)}${textoCaducados(planAviso)} ${criterioRef}`;
         } else if (nextUmbral != null) {
           criterio = `FUERA DE RANGO ${horasDiaTxt} (${horasAcumTxt} desde ${formatRef(episode.since)}). Próximo aviso al alcanzar ${formatUmbralHoras(nextUmbral)} en ${hoy} (faltan ~${Math.max(0, nextUmbral - horasEnDia).toFixed(1)} h hoy). ${criterioRef}`;
         } else {
@@ -1560,7 +1666,7 @@ export async function runAlertCycle(options = {}) {
         });
 
         const envioId = uid('envio');
-        const criterioEnvio = `FUERA DE RANGO ${horasDiaTxt} / ${horasAcumTxt} desde ${formatRef(episode.since)} (GMT-5). Se envía umbral ${formatUmbralHoras(umbralHoras)} del día ${hoy} (tipo ${tipoEvento}). ${consultaHistorial ? 'Referencia por consulta 12 h.' : 'Referencia persistida.'} Destino: ${grupo.emails.join(', ')}.`;
+        const criterioEnvio = `FUERA DE RANGO ${horasDiaTxt} / ${horasAcumTxt} desde ${formatRef(episode.since)} (GMT-5). Se envía umbral ${formatUmbralHoras(umbralHoras)} del día ${hoy} (tipo ${tipoEvento}).${textoCaducados(planAviso)}${planAviso.diferirActual ? ` El umbral de ${formatUmbralHoras(planAviso.actual)} se envía 10 min después.` : ''} ${consultaHistorial ? 'Referencia por consulta 12 h.' : 'Referencia persistida.'} Destino: ${grupo.emails.join(', ')}.`;
 
         if (umbralYaEnviado(episode, umbralHoras)) {
           pushEval(evaluaciones, {
@@ -1584,6 +1690,7 @@ export async function runAlertCycle(options = {}) {
         try {
           const messageId = await sendMail(smtp, grupo.emails, content);
           markUmbralEnviado(episode, umbralHoras, umbrales);
+          cerrarEsperaUmbral(episode, planAviso, now);
           espejoWhatsapp({
             assignment,
             dispositivo,

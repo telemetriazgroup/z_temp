@@ -1,4 +1,5 @@
 import { registrarMensaje } from './repository.js';
+import { gapChatMs } from './ajustes.js';
 import { TIEMPOS_WA, proximoEnvio } from './tiempos.js';
 
 const cola = [];
@@ -10,6 +11,7 @@ let enviandoChat = false;
 let enviandoAlerta = false;
 let slotAlerta = 0;
 const programadoJid = new Map();
+const ultimoEnvioJid = new Map();
 
 export function setWaSender(fn) {
   sender = fn;
@@ -27,14 +29,16 @@ export function pendientePorJid(jid) {
   return cola.some((j) => j.jid === jid && !j.esAlerta);
 }
 
-export function encolarTexto(jid, text, { esAlerta = false, contactoId = null, telefono = null, tipo = null } = {}) {
+export function encolarTexto(jid, text, { esAlerta = false, contactoId = null, telefono = null, tipo = null, media = null } = {}) {
   if (!jid || !text) return null;
   const ahora = Date.now();
+  const gap = gapChatMs();
   const enviarEn = proximoEnvio({
     ahora,
     esAlerta,
     ultimoJid: esAlerta ? 0 : programadoJid.get(jid) || 0,
     slotAlerta,
+    gapMs: gap,
   });
   if (esAlerta) slotAlerta = enviarEn + TIEMPOS_WA.gapAlertaMs;
   else programadoJid.set(jid, enviarEn);
@@ -47,15 +51,19 @@ export function encolarTexto(jid, text, { esAlerta = false, contactoId = null, t
     contactoId,
     telefono,
     tipo,
+    media,
   };
   cola.push(job);
   return job;
 }
 
 async function despachar(job) {
-  await sender(job.jid, job.text);
+  const body = job.media ? { text: job.text, media: job.media } : job.text;
+  await sender(job.jid, body);
   if (!job.esAlerta) {
-    programadoJid.set(job.jid, Math.max(programadoJid.get(job.jid) || 0, Date.now()));
+    const enviado = Date.now();
+    ultimoEnvioJid.set(job.jid, enviado);
+    programadoJid.set(job.jid, Math.max(programadoJid.get(job.jid) || 0, enviado));
   }
   await registrarMensaje({
     contactoId: job.contactoId,
@@ -74,18 +82,34 @@ function tomar(esAlerta, ahora) {
 
 async function drenarChat() {
   if (enviandoChat || enviandoAlerta || !sender) return;
-  const job = tomar(false, Date.now());
-  if (!job) return;
+  const ahora = Date.now();
+  const idx = cola.findIndex((j) => !j.esAlerta && j.enviarEn <= ahora);
+  if (idx < 0) return;
+  const candidato = cola[idx];
+  const ultimo = ultimoEnvioJid.get(candidato.jid) || 0;
+  const gap = gapChatMs();
+  if (ultimo && ahora - ultimo < gap) {
+    candidato.enviarEn = ultimo + gap;
+    return;
+  }
+  const job = cola.splice(idx, 1)[0];
   enviandoChat = true;
   try {
     await despachar(job);
   } catch (e) {
     job.intentos = (job.intentos || 0) + 1;
     if (job.intentos < 3) {
-      job.enviarEn = Date.now() + TIEMPOS_WA.gapChatMs;
+      job.enviarEn = Date.now() + gapChatMs();
       cola.push(job);
     } else {
       console.warn('[wa] no se pudo responder', job.jid, e.message);
+      if (job.media) {
+        encolarTexto(
+          job.jid,
+          `No pude adjuntar el archivo (${e.message}). Vuelve a pedir la opción 5.`,
+          { contactoId: job.contactoId, telefono: job.telefono, tipo: 'estado' }
+        );
+      }
     }
   } finally {
     enviandoChat = false;
@@ -103,7 +127,7 @@ async function drenarAlerta() {
   } catch (e) {
     job.intentos = (job.intentos || 0) + 1;
     if (job.intentos < 3) {
-      job.enviarEn = Date.now() + TIEMPOS_WA.gapChatMs;
+      job.enviarEn = Date.now() + gapChatMs();
       cola.push(job);
     } else {
       console.warn('[wa] no se pudo enviar alerta', job.jid, e.message);
