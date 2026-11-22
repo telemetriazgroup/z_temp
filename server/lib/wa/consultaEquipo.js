@@ -171,13 +171,62 @@ export function textoDetalle(e, username) {
 function puntoDe(row) {
   const t = row.telemetry && typeof row.telemetry === 'object' ? row.telemetry : row;
   return {
-    at: row.captured_at || row.capturedAt || t.capturedAt || row.created_at || row.fecha,
+    at: t.capturedAt || row.created_at || row.fecha || row.captured_at || row.capturedAt,
     set: num(t.set_point),
     sup: num(t.temp_supply_1),
     ret: num(t.return_air),
     eva: num(t.evaporation_coil),
     power: num(t.power_state),
   };
+}
+
+function anclaConexion(e) {
+  const ms = parseTelemetryTimestamp(
+    e?.ultima_actualizacion || e?._flota?.ultima_actualizacion || e?.ultimo_dato?.created_at || e?.ultimo_dato?.fecha
+  );
+  if (!Number.isFinite(ms)) return new Date();
+  return new Date(ms);
+}
+
+function notaConexion(e, ancla) {
+  const edadMin = (Date.now() - ancla.getTime()) / 60000;
+  if (edadMin < 20) return null;
+  const estado = String(e?.estado_conexion || e?._flota?.estado_conexion || 'wait').toUpperCase();
+  return `Sin datos nuevos desde ${fechaCorta(ancla)}. El equipo está en *${estado}*. Esto es la última información real de esa conexión, no la hora de ahora.`;
+}
+
+function dedupeFilas(filas) {
+  const vistas = new Set();
+  const out = [];
+  for (const row of filas) {
+    const t = parseTelemetryTimestamp(row?.created_at ?? row?.fecha);
+    const clave = Number.isFinite(t)
+      ? String(t)
+      : `${row?.set_point}|${row?.return_air}|${row?.temp_supply_1}|${row?.created_at || ''}`;
+    if (vistas.has(clave)) continue;
+    vistas.add(clave);
+    out.push(row);
+  }
+  return out;
+}
+
+function dedupePuntos(puntos) {
+  const out = [];
+  for (const p of puntos) {
+    const prev = out[out.length - 1];
+    if (
+      prev &&
+      prev.set === p.set &&
+      prev.sup === p.sup &&
+      prev.ret === p.ret &&
+      prev.eva === p.eva &&
+      prev.power === p.power
+    ) {
+      continue;
+    }
+    out.push(p);
+  }
+  return out;
 }
 
 async function muestrasLocales(imei, horas, limit) {
@@ -205,23 +254,25 @@ function puntosHistorico3h(equipo) {
 }
 
 export async function textoUltimos20(e, username) {
-  let puntos = await muestrasLocales(e.imei, null, 20);
-  if (!puntos.length) puntos = puntosHistorico3h(e).slice(-20).reverse();
+  const { filas, nota } = await filasHistorial(e, 72);
+  let puntos = dedupePuntos(filas.map((row) => puntoDe(row)).filter((p) => p.at));
+  if (!puntos.length) {
+    puntos = dedupePuntos(await muestrasLocales(e.imei, null, 80));
+  }
+  if (!puntos.length) puntos = dedupePuntos(puntosHistorico3h(e));
   if (!puntos.length) {
     return `*${etiqueta(e)}*\nNo hay muestras guardadas de este equipo.\n\n${PIE_MENU}`;
   }
+  puntos.sort((a, b) => new Date(b.at) - new Date(a.at));
+  puntos = puntos.slice(0, 20);
   const lineas = puntos.map(
     (p) =>
-      `${horaLima(p.at)}\nset ${negrita(fmt(p.set))} · sum ${negrita(fmt(p.sup))} · ret ${negrita(fmt(p.ret))} · eva ${negrita(fmt(p.eva))}`
+      `${fechaCorta(p.at)}\nset ${negrita(fmt(p.set))} · sum ${negrita(fmt(p.sup))} · ret ${negrita(fmt(p.ret))} · eva ${negrita(fmt(p.eva))}`
   );
   const reciente = puntos[0];
-  return `*${etiqueta(e)}* · últimos ${puntos.length}\n${lineaRangoNormal(reciente?.set, bandaNormal(e, username))}\n\n${lineas.join('\n')}\n\n${PIE_MENU}`;
-}
-
-function fuenteGrafica(local, historico, horas) {
-  if (local.length) return { puntos: [...local].reverse(), origen: 'muestras guardadas' };
-  if (horas === 3 && historico.length) return { puntos: historico, origen: 'historial de 3 h guardado' };
-  return { puntos: [], origen: '' };
+  const antiguo = puntos[puntos.length - 1];
+  const aviso = nota ? `${nota}\n` : '';
+  return `*${etiqueta(e)}* · últimos ${puntos.length}\n${aviso}Desde ${fechaCorta(antiguo.at)} hasta ${fechaCorta(reciente.at)}.\n${lineaRangoNormal(reciente?.set, bandaNormal(e, username))}\n\n${lineas.join('\n')}\n\n${PIE_MENU}`;
 }
 
 function escapeXml(s) {
@@ -351,11 +402,29 @@ function adelgazar(puntos, tope = 80) {
 }
 
 export async function graficaHoras(e, horas) {
-  const local = await muestrasLocales(e.imei, horas, null);
-  const { puntos, origen } = fuenteGrafica(local, puntosHistorico3h(e), horas);
+  const { filas, origen, nota } = await filasHistorial(e, horas);
+  let puntos = dedupePuntos(filas.map((row) => puntoDe(row)).filter((p) => p.at));
+  let fuente = origen;
+  if (puntos.length < 2) {
+    const local = dedupePuntos(await muestrasLocales(e.imei, null, 400));
+    const ancla = anclaConexion(e).getTime();
+    const desde = ancla - horas * 3600000;
+    const enVentana = local.filter((p) => {
+      const t = new Date(p.at).getTime();
+      return t >= desde - 60000 && t <= ancla + 60000;
+    });
+    if (enVentana.length >= 2) {
+      puntos = enVentana;
+      fuente = 'muestras guardadas';
+    } else if (horas === 3 && puntosHistorico3h(e).length >= 2) {
+      puntos = dedupePuntos(puntosHistorico3h(e));
+      fuente = 'historial de 3 h guardado';
+    }
+  }
+  const aviso = nota ? `${nota}\n` : '';
   if (puntos.length < 2) {
     return {
-      texto: `*${etiqueta(e)}*\nNo hay muestras locales de las últimas ${horas} h para graficar.\n\n${PIE_MENU}`,
+      texto: `*${etiqueta(e)}*\n${aviso}No hay suficientes datos distintos en las ${horas} h anteriores a su última conexión para graficar.\n\n${PIE_MENU}`,
     };
   }
   const conTiempo = puntos
@@ -367,13 +436,15 @@ export async function graficaHoras(e, horas) {
     return { texto: `*${etiqueta(e)}*\nLas muestras no traen temperaturas.\n\n${PIE_MENU}` };
   }
   const png = await pngDeSvg(svg);
+  const desde = fechaCorta(conTiempo[0].at);
+  const hasta = fechaCorta(conTiempo[conTiempo.length - 1].at);
   return {
     media: {
       mimetype: 'image/png',
       base64: png.toString('base64'),
       filename: `ztrack_${horas}h_${e.imei}.png`,
     },
-    texto: `Gráfica ${horas} h · ${etiqueta(e)} (${origen}, ${conTiempo.length} muestras)\n${PIE_MENU}`,
+    texto: `Gráfica ${horas} h de su conexión · ${etiqueta(e)}\n${aviso}${desde} a ${hasta} (${fuente}, ${conTiempo.length} muestras)\n${PIE_MENU}`,
   };
 }
 
@@ -487,44 +558,54 @@ function filaMasNueva(filas) {
 }
 
 export async function textoUltimoDato(e, username) {
-  const { filas, origen } = await filasHistorial(e, 6);
+  const { filas, origen, nota } = await filasHistorial(e, 6);
   const row = filaMasNueva(filas);
   const local = e._flota?.ultimo_dato ?? e.ultimo_dato ?? null;
   const trama = row || local;
   if (!trama) {
-    return `*${etiqueta(e)}*\nNo hay una trama reciente.\n\n${PIE_MENU}`;
+    return `*${etiqueta(e)}*\n${nota ? `${nota}\n` : ''}No hay una trama de su última conexión.\n\n${PIE_MENU}`;
   }
   const keys = columnasDe(e, username);
   const lineas = [
     `*${etiqueta(e)}* · último dato`,
+    nota,
     detalleLinea(e),
-    `Hora: ${fechaCorta(trama.created_at ?? trama.fecha ?? e.ultima_actualizacion)}`,
+    `Hora de la trama: ${fechaCorta(trama.created_at ?? trama.fecha ?? e.ultima_actualizacion)}`,
     origen && row ? `Fuente: ${origen}` : 'Fuente: última trama del sistema',
+    lineaRangoNormal(trama.set_point, bandaNormal(e, username)),
     '',
-  ];
+  ].filter((linea) => linea != null && linea !== '');
+  let conValor = false;
   for (const k of keys) {
     const valor = valorColumna(trama, k);
     if (!valor) continue;
+    conValor = true;
     lineas.push(`${COLUMNAS[k]?.[0] || k}: ${negrita(valor)}`);
   }
-  if (lineas[lineas.length - 1] === '') {
-    lineas.push('La trama no trae temperaturas.');
-  }
-  lineas.splice(4, 0, lineaRangoNormal(trama.set_point, bandaNormal(e, username)));
+  if (!conValor) lineas.push('La trama no trae temperaturas.');
   lineas.push('', PIE_MENU);
   return lineas.join('\n');
 }
 
 export async function filasHistorial(e, horas) {
+  const ancla = anclaConexion(e);
+  const nota = notaConexion(e, ancla);
   try {
-    const data = await fetchHistorialUltimasHoras(e.codigo, e.imei, horas);
-    const datos = Array.isArray(data?.datos) ? data.datos : [];
-    if (datos.length) return { filas: datos, origen: 'historial oficial' };
+    const data = await fetchHistorialUltimasHoras(e.codigo, e.imei, horas, ancla);
+    const datos = dedupeFilas(Array.isArray(data?.datos) ? data.datos : []);
+    if (datos.length) return { filas: datos, origen: 'historial oficial', ancla, nota };
   } catch (err) {
     console.warn('[wa] historial', e.imei, err.message);
   }
-  const local = [...(await muestrasLocales(e.imei, horas, null))].reverse();
-  const filas = local.map((p) => ({
+  const local = dedupePuntos([...(await muestrasLocales(e.imei, null, 400))].reverse());
+  const hasta = ancla.getTime();
+  const desde = hasta - horas * 3600000;
+  const enVentana = local.filter((p) => {
+    const t = new Date(p.at).getTime();
+    return Number.isFinite(t) && t >= desde - 60000 && t <= hasta + 60000;
+  });
+  const elegidos = enVentana.length ? enVentana : local.slice(-1);
+  const filas = elegidos.map((p) => ({
     created_at: p.at,
     set_point: p.set,
     temp_supply_1: p.sup,
@@ -532,11 +613,11 @@ export async function filasHistorial(e, horas) {
     evaporation_coil: p.eva,
     power_state: p.power,
   }));
-  return { filas, origen: filas.length ? 'muestras guardadas' : 'sin datos' };
+  return { filas, origen: filas.length ? 'muestras guardadas' : 'sin datos', ancla, nota };
 }
 
 export async function excel12h(e, username) {
-  const { filas, origen } = await filasHistorial(e, 12);
+  const { filas, origen, nota } = await filasHistorial(e, 12);
   if (!filas.length) {
     return {
       texto: `*${etiqueta(e)}*\nNo hay datos de las últimas 12 h para el archivo.\n\n${PIE_MENU}`,
@@ -554,7 +635,7 @@ export async function excel12h(e, username) {
     ['Marca', marcaDe(e.codigo) || ''],
     ['IMEI', e.imei],
     ['Celular', e.celular || ''],
-    ['Ventana', 'últimas 12 horas'],
+    ['Ventana', '12 horas anteriores a la última conexión'],
     ['Desde', desde],
     ['Hasta', hasta],
     ['Rango normal', textoBanda(setRef, banda)],
@@ -575,6 +656,6 @@ export async function excel12h(e, username) {
       filename: nombreArchivo(e),
       documento: true,
     },
-    texto: `CSV 12 h · ${etiqueta(e)} · ${desde} a ${hasta} · ${filas.length} registros (${origen}).\n${lineaRangoNormal(setRef, banda)}\n${PIE_MENU}`,
+    texto: `CSV 12 h de su conexión · ${etiqueta(e)}\n${nota ? `${nota}\n` : ''}${desde} a ${hasta} · ${filas.length} registros (${origen}).\n${lineaRangoNormal(setRef, banda)}\n${PIE_MENU}`,
   };
 }

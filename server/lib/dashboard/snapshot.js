@@ -130,7 +130,7 @@ export function computeFleetCounts(dispositivos, configMap = null) {
       power_state: power,
       rango_estado: rango,
       en_defrost: defrost,
-      telemetry: pickTelemetryFromDispositivo(d, captured_at),
+      telemetry: pickTelemetryFromDispositivo(d, d.ultima_actualizacion || captured_at),
     });
   }
 

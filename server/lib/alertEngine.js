@@ -417,8 +417,8 @@ function proximoUmbralPendiente(umbrales, horasTranscurridas, sentUmbrales) {
 }
 
 async function ensureOutOfRangeReference(state, assignment, dispositivo, now, ownerUsername = null) {
-  const cfg = getDeviceAlertConfig(assignment.rowKey, ownerUsername);
-  const rangoOpts = resolveRangoOptsForDevice(assignment.rowKey, ownerUsername);
+  const cfg = getDeviceAlertConfig(assignment.rowKey);
+  const rangoOpts = resolveRangoOptsForDevice(assignment.rowKey);
   let episode = getEpisode(state, assignment.rowKey);
   episode = episode && episodeKind(episode) === 'fuera_rango' ? episode : null;
 
@@ -545,19 +545,36 @@ function pushEval(evaluaciones, eval_) {
   evaluaciones.push(eval_);
 }
 
-function espejoWhatsapp({ assignment, dispositivo, titulo, detalle, grupo }) {
-  const nombre =
-    dispositivo?.descripcion ||
-    dispositivo?.nombre ||
-    assignment?.nombre ||
-    dispositivo?.imei;
-  const texto = [
-    `Alerta ZTRACK · ${titulo}`,
-    nombre ? String(nombre) : null,
-    `${dispositivo?.codigo || '—'} · IMEI ${dispositivo?.imei || '—'}`,
-    detalle || null,
-    'Escribe ESTADO para ver tus equipos.',
-  ]
+const avisosWaRecientes = new Map();
+
+function nombreAlerta(assignment, dispositivo) {
+  const { nombrePlataforma } = resolveLabels(assignment, dispositivo);
+  const imei = String(dispositivo?.imei || assignment?.imei || '');
+  const tecnico = dispositivo?.codigo ? `${dispositivo.codigo} · ${imei}` : imei;
+  if (!nombrePlataforma || nombrePlataforma === imei || nombrePlataforma === tecnico || nombrePlataforma === 'SIN ASIGNAR') {
+    return imei || nombrePlataforma || 'Equipo';
+  }
+  return nombrePlataforma;
+}
+
+function lineaAhora(dispositivo) {
+  const d = dispositivo?.ultimo_dato ?? {};
+  const partes = [
+    d.set_point != null ? `set *${d.set_point}*` : null,
+    d.temp_supply_1 != null ? `suministro *${d.temp_supply_1}*` : null,
+    d.return_air != null ? `retorno *${d.return_air}*` : null,
+    d.evaporation_coil != null ? `evaporador *${d.evaporation_coil}*` : null,
+  ].filter(Boolean);
+  return partes.length ? `Ahora: ${partes.join(' · ')}` : null;
+}
+
+function espejoWhatsapp({ assignment, dispositivo, titulo, detalle, grupo, marca = '' }) {
+  const clave = `${assignment?.rowKey}|${titulo}|${marca}`;
+  const previo = avisosWaRecientes.get(clave) || 0;
+  if (Date.now() - previo < 15 * 60 * 1000) return;
+  avisosWaRecientes.set(clave, Date.now());
+  const nombre = nombreAlerta(assignment, dispositivo);
+  const texto = [`*${nombre}*`, titulo, detalle || null, lineaAhora(dispositivo), 'Escribe *resumen* o *menu* para ver el equipo.']
     .filter(Boolean)
     .join('\n');
   void encolarAlertaEquipo({
@@ -624,6 +641,9 @@ async function sendRecuperacionEnRangoMail({
   if (recovered.recoveryEmailSent === true) {
     return { sent: false, skipReason: 'ya_enviado' };
   }
+  if (state?.recuperacionAvisada?.[assignment.rowKey]?.since === recovered.since) {
+    return { sent: false, skipReason: 'ya_enviado' };
+  }
 
   let to = emailsUsuarioGrupo(grupo);
   if (to.length === 0) {
@@ -645,6 +665,13 @@ async function sendRecuperacionEnRangoMail({
     umbralesEnviados,
   });
   const envioId = uid('envio');
+  if (state) {
+    if (!state.recuperacionAvisada) state.recuperacionAvisada = {};
+    state.recuperacionAvisada[assignment.rowKey] = {
+      since: recovered.since,
+      at: new Date().toISOString(),
+    };
+  }
   try {
     const messageId = await sendMail(smtp, to, content);
     recovered.recoveryEmailSent = true;
@@ -711,7 +738,10 @@ async function sendRecuperacionEnRangoMail({
       assignment,
       dispositivo,
       titulo: 'Volvió a rango',
-      detalle: content.subject,
+      marca: recovered.since,
+      detalle:
+        `Estuvo fuera desde ${formatRef(recovered.since)} hasta ${formatRef(recovered.endedAt)} ` +
+        `(${recovered.durationHours} h). El contador volvió a 0.`,
       grupo,
     });
     return { sent: true, envioId, destinatarios: to };
@@ -719,6 +749,9 @@ async function sendRecuperacionEnRangoMail({
     const msg = e instanceof Error ? e.message : String(e);
     result.errors.push(`${dispositivoReeferId} EN RANGO: ${msg}`);
     result.resumen.errores++;
+    if (state?.recuperacionAvisada?.[assignment.rowKey]?.since === recovered.since) {
+      delete state.recuperacionAvisada[assignment.rowKey];
+    }
     return { sent: false, error: msg };
   }
 }
@@ -1128,7 +1161,8 @@ export async function runAlertCycle(options = {}) {
               assignment,
               dispositivo,
               titulo: 'Fuera de línea',
-              detalle: contentUser.subject,
+              marca: offlineEp.since,
+              detalle: `Sin comunicación desde ${formatRef(offlineEp.since)}. Lleva ${horasOfflineReport} h.`,
               grupo,
             });
           } catch (e) {
@@ -1293,7 +1327,8 @@ export async function runAlertCycle(options = {}) {
             assignment,
             dispositivo,
             titulo: 'Apagado',
-            detalle: content.subject,
+            marca: `${episode.since}|${umbralHoras}`,
+            detalle: `Apagado desde ${formatRef(episode.since)}. Lleva ${horasApagadoReport} h. Aviso de ${formatUmbralHoras(umbralHoras)}.`,
             grupo,
           });
           addEnvio({
@@ -1526,14 +1561,16 @@ export async function runAlertCycle(options = {}) {
             enRangoTemperatura !== true &&
             recoveredDetail.since
           ) {
-            episode = startEpisode(state, assignment.rowKey, recoveredDetail.since, {
+            episode = startEpisode(state, assignment.rowKey, now.toISOString(), {
               kind: 'fuera_rango',
-              sentUmbrales: [...(recoveredDetail.sentUmbrales ?? [])],
+              sentUmbrales: [],
               sentUmbralesDay: todayKey(now),
               fromHistorial: true,
               now,
             });
-            criterioRef = `Historial ambiguo; se mantiene incidente desde ${formatRef(episode.since)} (return_air actual aún fuera).`;
+            criterioRef =
+              `El episodio anterior cerró al volver a rango. Contador en 0 desde ${formatRef(episode.since)}. ` +
+              `El próximo aviso espera de nuevo 2 h, o 30 min / 1 h si el equipo los tiene configurados.`;
           } else {
             pushEval(evaluaciones, {
               ...base,
@@ -1696,7 +1733,10 @@ export async function runAlertCycle(options = {}) {
             assignment,
             dispositivo,
             titulo: 'Fuera de rango',
-            detalle: content.subject,
+            marca: `${episode.since}|${umbralHoras}`,
+            detalle:
+              `Fuera de rango desde ${formatRef(episode.since)}. ` +
+              `Lleva ${horasAcumuladas} h. Aviso de ${formatUmbralHoras(umbralHoras)}.`,
             grupo,
           });
 
@@ -1849,8 +1889,8 @@ function findAssignmentByRowKey(rowKey) {
   return null;
 }
 
-function alertConfigLabel(rowKey, ownerUsername = null) {
-  const cfg = getDeviceAlertConfig(rowKey, ownerUsername);
+function alertConfigLabel(rowKey, _ownerUsername = null) {
+  const cfg = getDeviceAlertConfig(rowKey);
   return cfg?.mode === 'custom' ? 'personalizada' : 'estándar';
 }
 

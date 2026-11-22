@@ -107,9 +107,12 @@ export function deleteDeviceAlertConfig(rowKey) {
   return true;
 }
 
-/** Opciones de rango para evaluación en_rango efectivo. */
-export function resolveRangoOptsForDevice(rowKey, ownerUsername = null) {
-  const cfg = getDeviceAlertConfig(rowKey, ownerUsername);
+/**
+ * Rango del equipo. Si el equipo tiene mínimo y máximo propios, esos mandan
+ * sobre el ±4 del grupo. El aviso sigue yendo a los correos de ese grupo.
+ */
+export function resolveRangoOptsForDevice(rowKey, _ownerUsername = null) {
+  const cfg = getDeviceAlertConfig(rowKey);
   if (!cfg?.useRangoPersonalizado) return null;
   return {
     useRangoPersonalizado: true,
@@ -118,9 +121,9 @@ export function resolveRangoOptsForDevice(rowKey, ownerUsername = null) {
   };
 }
 
-/** Umbrales efectivos: custom del dispositivo o los del grupo; opcional alerta 1 h. */
-export function resolveUmbralesForDevice(rowKey, grupoUmbrales, ownerUsername = null) {
-  const cfg = getDeviceAlertConfig(rowKey, ownerUsername);
+/** Umbrales del equipo si los tiene; si no, los del grupo. El 30 min y la 1 h del equipo se suman. */
+export function resolveUmbralesForDevice(rowKey, grupoUmbrales, _ownerUsername = null) {
+  const cfg = getDeviceAlertConfig(rowKey);
   let base;
   if (cfg?.mode === 'custom' && cfg.umbralesHoras?.length) {
     base = normalizeUmbrales(cfg.umbralesHoras);

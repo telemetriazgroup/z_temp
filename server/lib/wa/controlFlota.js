@@ -1,4 +1,5 @@
 import { readJson, writeJson } from '../store.js';
+import { formatDateTimeTz } from '../timezone.js';
 import { resolveUserEffectiveImeis } from '../gruposEquiposRepository.js';
 import { contactosAprobadosPorUsernames } from './repository.js';
 import { encolarTexto } from './outbox.js';
@@ -165,10 +166,11 @@ export async function sincronizarControlWhatsapp({
     const banda = fueraDeSuRango(pref, setPoint, returnAir, enRango);
     if (!banda.fuera) {
       if (pref.enviados?.length || pref.since) {
-        if (pref.enviados?.length) {
+        if (pref.enviados?.length && pref.since) {
+          const horas = Math.round(((ahora - new Date(pref.since).getTime()) / 3600000) * 10) / 10;
           await avisar(
             pref.username,
-            `ZTRACK · volvió a rango\n${equipo}\n${codigo || '—'} · IMEI ${imei || pref.imei || '—'}\nRango normal: ${banda.texto}.`
+            `*${equipo}*\nVolvió a rango.\nEstuvo fuera desde ${formatDateTimeTz(pref.since)} (${horas} h). El contador volvió a 0.\nRango normal: ${banda.texto}.`
           );
         }
         pref.enviados = [];
@@ -189,7 +191,7 @@ export async function sincronizarControlWhatsapp({
     const cual = nuevos.includes(1) ? '1 hora' : '30 minutos';
     await avisar(
       pref.username,
-      `ZTRACK · fuera de rango\n${equipo}\n${codigo || '—'} · IMEI ${imei || pref.imei || '—'}\nRango normal: ${banda.texto}.\nLleva ${horas} h fuera. Aviso de WhatsApp: ${cual}.`
+      `*${equipo}*\nFuera de rango desde ${formatDateTimeTz(pref.since)}.\nLleva ${horas} h. Aviso de ${cual}.\nRango normal: ${banda.texto}.`
     );
     pref.enviados = [...ya, ...nuevos];
     cambio = true;
