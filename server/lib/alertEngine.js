@@ -11,6 +11,7 @@ import {
   formatDateTimeTz,
   parseTelemetryDate,
   parseTelemetryTimestamp,
+  startOfDayMs,
 } from './timezone.js';
 import {
   buildFueraDeRangoEmail,
@@ -18,6 +19,7 @@ import {
   buildRecuperacionEnRangoEmail,
   buildFueraDeLineaEmail,
   buildApiSinConexionEmail,
+  buildCoberturaHorariaEmail,
 } from './emailBuilder.js';
 import { buildTrazabilidadEmailPack } from './emailTraceability.js';
 import { deviceRowKey } from './telemetry.js';
@@ -31,7 +33,8 @@ import { getApiAsistenciaEmails } from './apiAsistenciaRepository.js';
 import { detectarEnlacesCaidos, horasSinComunicacion } from './enlaceCaido.js';
 import { getLinkStatuses } from './dashboard/linkHealth.js';
 import { getDeviceNameByImei } from './deviceNamesRepository.js';
-import { resolveUmbralesForDevice, getDeviceAlertConfig, getDeviceAlertConfigMap, saveDeviceAlertConfig, resolveRangoOptsForDevice } from './deviceAlertConfigRepository.js';
+import { resolveUmbralesForDevice, getDeviceAlertConfig, getDeviceAlertConfigMap, saveDeviceAlertConfig, resolveRangoOptsForDevice, coberturaFueraLineaDe } from './deviceAlertConfigRepository.js';
+import { enVentanaSinSenal, cuentaCliente, HORAS_CLIENTE_TRAS_COBERTURA } from './coberturaHoraria.js';
 import { isEquipoApagado, isEquipoEncendido, defrostActivoEfectivo } from './powerState.js';
 import {
   fetchHistorialUltimasHoras,
@@ -232,11 +235,52 @@ function startEpisode(state, rowKey, since, meta = {}) {
   return state.episodes[rowKey];
 }
 
-/** Conserva los umbrales ya enviados del episodio. Un umbral no se repite hasta volver a rango. */
-function ensureDailySentUmbrales(episode, now) {
+/**
+ * Los umbrales (2 h, 3 h… 24 h) se cuentan con las horas de hoy.
+ * Al cambiar el día se vuelven a avisar. Una lista vieja que ya tiene
+ * 24 h marcada, con el día de hoy todavía por debajo, también se reinicia:
+ * si no, el evento de más de 24 h se queda en silencio.
+ */
+export function ensureDailySentUmbrales(episode, now, horasEnDia = null) {
   if (!Array.isArray(episode.sentUmbrales)) episode.sentUmbrales = [];
-  episode.sentUmbralesDay = todayKey(now);
+  const hoy = todayKey(now);
+  const maxSent = episode.sentUmbrales.reduce((m, u) => Math.max(m, Number(u) || 0), 0);
+  const horas = Number(horasEnDia);
+  const listaDeOtroDia = episode.cicloDia
+    ? episode.cicloDia !== hoy
+    : Number.isFinite(horas) && maxSent >= horas + 1;
+  if (listaDeOtroDia) {
+    episode.sentUmbrales = [];
+    delete episode.umbralActualNoAntes;
+  }
+  if (episode.cicloDia || Number.isFinite(horas)) episode.cicloDia = hoy;
+  episode.sentUmbralesDay = hoy;
   return episode.sentUmbrales;
+}
+
+/** Horas del evento que caen en el día calendario actual, hasta ahora. */
+export function horasDelEventoHoy(sinceIso, now = new Date()) {
+  const sinceMs = parseTelemetryTimestamp(sinceIso);
+  const nowMs = now instanceof Date ? now.getTime() : parseTelemetryTimestamp(now);
+  if (!Number.isFinite(sinceMs) || !Number.isFinite(nowMs)) return 0;
+  const inicio = Math.max(sinceMs, startOfDayMs(now));
+  if (nowMs <= inicio) return 0;
+  return Math.round(((nowMs - inicio) / 3600000) * 100) / 100;
+}
+
+function umbralAlcanzado(umbrales, horas) {
+  let mejor = null;
+  for (const u of umbrales) {
+    if (horas >= u && (mejor == null || u > mejor)) mejor = u;
+  }
+  return mejor;
+}
+
+function detalleAlertaWhatsapp(estado, since, umbralHoras, horasTotal, detalleCorto) {
+  if (Number(horasTotal) > 24) {
+    return `Hoy lleva más de ${formatUmbralHoras(umbralHoras)} ${estado}. El evento lleva ${horasTotal} h en total, desde ${formatRef(since)}.`;
+  }
+  return detalleCorto;
 }
 
 async function fetchTrazabilidadCorreo(dispositivo, now) {
@@ -896,6 +940,52 @@ async function avisarEnlacesCaidos({ state, now, smtp, enlaces, result }) {
   }
 }
 
+/** Un correo por hora, a quien recibe las fallas de API, con los equipos callados por zona. */
+async function avisarCoberturaCiclica({ state, now, smtp, equipos, result }) {
+  if (!state.coberturaAviso) state.coberturaAviso = {};
+  const vistos = new Set();
+  const unicos = [];
+  for (const equipo of equipos ?? []) {
+    const imei = String(equipo?.imei ?? '');
+    if (!imei || vistos.has(imei)) continue;
+    vistos.add(imei);
+    unicos.push(equipo);
+  }
+  if (unicos.length === 0) {
+    delete state.coberturaAviso.lastSentAt;
+    return;
+  }
+  const last = state.coberturaAviso.lastSentAt;
+  const t = last ? new Date(last).getTime() : NaN;
+  if (Number.isFinite(t) && now.getTime() - t < ZTRACK_OFFLINE_INTERVAL_MS) return;
+
+  const destinatarios = getApiAsistenciaEmails();
+  const content = buildCoberturaHorariaEmail({ equipos: unicos });
+  const envioId = uid('envio');
+  try {
+    const messageId = await sendMail(smtp, destinatarios, content);
+    state.coberturaAviso.lastSentAt = now.toISOString();
+    addEnvio({
+      id: envioId,
+      alertKind: 'cobertura_horaria',
+      destinatarioTipo: 'ops',
+      descripcionEquipo: `${unicos.length} equipos en horario sin señal`,
+      nombrePlataforma: 'Cobertura limitada',
+      destinatarios: [...destinatarios],
+      subject: content.subject,
+      sentAt: now.toISOString(),
+      messageId,
+      success: true,
+    });
+    result.emailsSent++;
+    result.resumen.correoEnviado++;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    result.errors.push(`Cobertura horaria: ${msg}`);
+    result.resumen.errores++;
+  }
+}
+
 export async function runAlertCycle(options = {}) {
   const trigger = options.trigger === 'manual' ? 'manual' : 'automatic';
   const startedAt = new Date().toISOString();
@@ -969,6 +1059,7 @@ export async function runAlertCycle(options = {}) {
   );
   const enlaceCaidoPorCodigo = new Map(enlacesCaidos.map((e) => [e.codigo, e]));
   await avisarEnlacesCaidos({ state, now, smtp, enlaces: enlacesCaidos, result });
+  const coberturaSilencio = [];
 
   for (const grupo of allGrupos) {
     const grupoOwner = grupo.ownerUsername ?? null;
@@ -1088,12 +1179,62 @@ export async function runAlertCycle(options = {}) {
           continue;
         }
 
+        const cobertura = coberturaFueraLineaDe(assignment.rowKey);
+        if (cobertura && enVentanaSinSenal(cobertura.desde, cobertura.hasta, now)) {
+          const { nombrePlataforma } = resolveLabels(assignment, dispositivo);
+          const ya = coberturaSilencio.some((e) => e.imei === dispositivo.imei);
+          if (!ya) {
+            coberturaSilencio.push({
+              nombre: nombrePlataforma,
+              imei: dispositivo.imei,
+              desde: cobertura.desde,
+              hasta: cobertura.hasta,
+              ultima: dispositivo.ultima_actualizacion,
+              horas: Math.round(horasOffline * 10) / 10,
+            });
+          }
+          pushEval(evaluaciones, {
+            ...base,
+            estado: 'cobertura_horaria',
+            accion: 'ninguna',
+            enRango: null,
+            diaCalendario: hoy,
+            horasOffline: Math.round(horasOffline * 10) / 10,
+            telemetria: telem,
+            criterio:
+              `FUERA DE LÍNEA dentro del horario sin señal ${cobertura.desde}–${cobertura.hasta}. ` +
+              'No se avisa al cliente. Queda en el correo cíclico de cobertura.',
+          });
+          continue;
+        }
+
+        const cuentaCobertura = cobertura
+          ? cuentaCliente(dispositivo.ultima_actualizacion, cobertura.desde, cobertura.hasta, now)
+          : null;
+        if (cobertura && (cuentaCobertura == null || cuentaCobertura.horas < HORAS_CLIENTE_TRAS_COBERTURA)) {
+          pushEval(evaluaciones, {
+            ...base,
+            estado: 'cobertura_esperando',
+            accion: 'ninguna',
+            enRango: null,
+            diaCalendario: hoy,
+            horasOffline: cuentaCobertura?.horas ?? 0,
+            telemetria: telem,
+            criterio:
+              `Cobertura de vuelta a las ${cobertura.hasta}. ` +
+              `Lleva ${cuentaCobertura?.horas ?? 0} h desde esa hora. ` +
+              `El correo al cliente sale a las ${HORAS_CLIENTE_TRAS_COBERTURA} h.`,
+          });
+          continue;
+        }
+
         const { dispositivoReeferId, nombrePlataforma } = resolveLabels(
           assignment,
           dispositivo
         );
-        const sinceIso =
-          dispositivo.ultima_actualizacion != null
+        const sinceIso = cuentaCobertura
+          ? new Date(cuentaCobertura.inicioMs).toISOString()
+          : dispositivo.ultima_actualizacion != null
             ? parseTelemetryDate(dispositivo.ultima_actualizacion).toISOString()
             : now.toISOString();
         const sinceSafe = Number.isNaN(Date.parse(sinceIso))
@@ -1106,26 +1247,36 @@ export async function runAlertCycle(options = {}) {
           sinceSafe,
           now
         );
-        const horasOfflineReport = Math.round(horasOffline * 10) / 10;
+        const horasOfflineReport = Math.round((cuentaCobertura?.horas ?? horasOffline) * 10) / 10;
+        const claveCobertura = cuentaCobertura ? todayKey(new Date(cuentaCobertura.inicioMs)) : null;
+        const yaAvisadoUsuario = claveCobertura
+          ? offlineEp.coberturaAvisadaEn === claveCobertura
+          : offlineEp.userNotified === true;
+        const notaCobertura = cobertura
+          ? `La zona vuelve a tener cobertura a las ${cobertura.hasta}. Desde esa hora lleva ${horasOfflineReport} h fuera de línea.`
+          : null;
         const cliente = grupo.cliente?.trim() || 'Cliente';
         const userEmails = emailsUsuarioGrupo(grupo);
         const acciones = [];
         let envioIds = [];
+        let avisoOfflineEsteCiclo = false;
 
-        if (!offlineEp.userNotified && userEmails.length > 0) {
+        if (!yaAvisadoUsuario && userEmails.length > 0) {
           const contentUser = buildFueraDeLineaEmail({
             dispositivo,
             dispositivoReeferId,
             nombrePlataforma,
             cliente,
             variante: 'usuario',
-            referenciaDesde: offlineEp.since,
+            referenciaDesde: sinceSafe,
+            notaCobertura,
           });
           const envioId = uid('envio');
           try {
             const messageId = await sendMail(smtp, userEmails, contentUser);
             offlineEp.userNotified = true;
             offlineEp.userNotifiedAt = now.toISOString();
+            if (claveCobertura) offlineEp.coberturaAvisadaEn = claveCobertura;
             addEnvio({
               id: envioId,
               alertKind: 'fuera_linea',
@@ -1170,27 +1321,52 @@ export async function runAlertCycle(options = {}) {
             result.resumen.correoEnviado++;
             envioIds.push(envioId);
             acciones.push(`usuario 1× → ${userEmails.join(', ')}`);
+            const referenciaWa = claveCobertura ? sinceSafe : offlineEp.since;
+            const horasHoyOff = horasDelEventoHoy(referenciaWa, now);
             espejoWhatsapp({
               assignment,
               dispositivo,
               titulo: 'Fuera de línea',
-              marca: offlineEp.since,
-              detalle: `Sin comunicación desde ${formatRef(offlineEp.since)}. Lleva ${horasOfflineReport} h.`,
+              marca: claveCobertura
+                ? `${referenciaWa}|cobertura`
+                : horasOfflineReport > 24
+                  ? `${offlineEp.since}|${hoy}|${horasHoyOff}`
+                  : offlineEp.since,
+              detalle: detalleAlertaWhatsapp(
+                'fuera de línea',
+                referenciaWa,
+                umbralAlcanzado(umbrales, horasHoyOff) ??
+                  (claveCobertura ? HORAS_CLIENTE_TRAS_COBERTURA : OFFLINE_ALERT_HOURS),
+                horasOfflineReport,
+                `Sin comunicación desde ${formatRef(referenciaWa)}. Lleva ${horasOfflineReport} h.`
+              ),
               grupo,
             });
+            if (horasOfflineReport > 24) {
+              ensureDailySentUmbrales(offlineEp, now, horasHoyOff);
+              const alcanzado = umbralAlcanzado(umbrales, horasHoyOff);
+              if (alcanzado != null) markUmbralEnviado(offlineEp, alcanzado, umbrales);
+            }
+            avisoOfflineEsteCiclo = true;
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             result.errors.push(`${dispositivoReeferId} FUERA LÍNEA usuario: ${msg}`);
             result.resumen.errores++;
             acciones.push(`error usuario: ${msg}`);
           }
-        } else if (offlineEp.userNotified) {
-          acciones.push('usuario ya notificado (sin reenvío)');
+        } else if (yaAvisadoUsuario) {
+          acciones.push(
+            claveCobertura
+              ? `usuario ya avisado tras las ${cobertura.hasta}`
+              : 'usuario ya notificado (sin reenvío)'
+          );
         } else {
           acciones.push('sin correos de usuario (solo ops)');
         }
 
-        if (dueZtrackOffline(state, assignment.rowKey, now) && ZTRACK_OPS_EMAIL) {
+        if (cuentaCobertura) {
+          acciones.push('sin correo operativo individual: la zona va en el resumen de cobertura');
+        } else if (dueZtrackOffline(state, assignment.rowKey, now) && ZTRACK_OPS_EMAIL) {
           const contentOps = buildFueraDeLineaEmail({
             dispositivo,
             dispositivoReeferId,
@@ -1240,6 +1416,33 @@ export async function runAlertCycle(options = {}) {
           acciones.push('ops: esperando intervalo 1 h');
         }
 
+        if (horasOfflineReport > 24 && !avisoOfflineEsteCiclo) {
+          const horasHoyOff = horasDelEventoHoy(offlineEp.since, now);
+          ensureDailySentUmbrales(offlineEp, now, horasHoyOff);
+          const planOff = planUmbralAviso(umbrales, horasHoyOff, offlineEp.sentUmbrales ?? [], now, offlineEp);
+          const umbralOff = planOff.enviar;
+          if (umbralOff != null && !umbralYaEnviado(offlineEp, umbralOff)) {
+            caducarUmbrales(offlineEp, planOff.caducar);
+            espejoWhatsapp({
+              assignment,
+              dispositivo,
+              titulo: 'Fuera de línea',
+              marca: `${offlineEp.since}|${hoy}|${umbralOff}`,
+              detalle: detalleAlertaWhatsapp(
+                'fuera de línea',
+                offlineEp.since,
+                umbralOff,
+                horasOfflineReport,
+                `Sin comunicación desde ${formatRef(offlineEp.since)}. Lleva ${horasOfflineReport} h.`
+              ),
+              grupo,
+            });
+            markUmbralEnviado(offlineEp, umbralOff, umbrales);
+            cerrarEsperaUmbral(offlineEp, planOff, now);
+            acciones.push(`whatsapp ${formatUmbralHoras(umbralOff)} de hoy, ${horasOfflineReport} h en total`);
+          }
+        }
+
         pushEval(evaluaciones, {
           ...base,
           estado:
@@ -1269,7 +1472,7 @@ export async function runAlertCycle(options = {}) {
         const horasEnteras = horasEnterasDesdeReferenciaEquipo(dispositivo, episode.since, now);
         const horasAcumTxt = `${Math.round(horasAcumuladas * 10) / 10} h acum.`;
         const horasDiaTxt = `${Math.round(horasEnDia * 10) / 10} h hoy`;
-        ensureDailySentUmbrales(episode, now);
+        ensureDailySentUmbrales(episode, now, horasEnDia);
         const planAviso = planUmbralAviso(umbrales, horasEnDia, episode.sentUmbrales ?? [], now, episode);
         caducarUmbrales(episode, planAviso.caducar);
         const sentUmbrales = episode.sentUmbrales ?? [];
@@ -1340,8 +1543,14 @@ export async function runAlertCycle(options = {}) {
             assignment,
             dispositivo,
             titulo: 'Apagado',
-            marca: `${episode.since}|${umbralHoras}`,
-            detalle: `Apagado desde ${formatRef(episode.since)}. Lleva ${horasApagadoReport} h. Aviso de ${formatUmbralHoras(umbralHoras)}.`,
+            marca: `${episode.since}|${hoy}|${umbralHoras}`,
+            detalle: detalleAlertaWhatsapp(
+              'apagado',
+              episode.since,
+              umbralHoras,
+              horasApagadoReport,
+              `Apagado desde ${formatRef(episode.since)}. Lleva ${horasApagadoReport} h. Aviso de ${formatUmbralHoras(umbralHoras)}.`
+            ),
             grupo,
           });
           addEnvio({
@@ -1643,7 +1852,7 @@ export async function runAlertCycle(options = {}) {
         returnAir: dispositivo.ultimo_dato?.return_air,
       }).catch((e) => console.warn('[wa] control', e.message));
       const horasEnDiaReport = Math.round(horasEnDia * 10) / 10;
-      ensureDailySentUmbrales(episode, now);
+      ensureDailySentUmbrales(episode, now, horasEnDia);
       const planAviso = planUmbralAviso(umbrales, horasEnDia, episode.sentUmbrales ?? [], now, episode);
       caducarUmbrales(episode, planAviso.caducar);
       const sentUmbrales = episode.sentUmbrales ?? [];
@@ -1746,10 +1955,14 @@ export async function runAlertCycle(options = {}) {
             assignment,
             dispositivo,
             titulo: 'Fuera de rango',
-            marca: `${episode.since}|${umbralHoras}`,
-            detalle:
-              `Fuera de rango desde ${formatRef(episode.since)}. ` +
-              `Lleva ${horasAcumuladas} h. Aviso de ${formatUmbralHoras(umbralHoras)}.`,
+            marca: `${episode.since}|${hoy}|${umbralHoras}`,
+            detalle: detalleAlertaWhatsapp(
+              'fuera de rango',
+              episode.since,
+              umbralHoras,
+              horasAcumuladas,
+              `Fuera de rango desde ${formatRef(episode.since)}. Lleva ${horasAcumuladas} h. Aviso de ${formatUmbralHoras(umbralHoras)}.`
+            ),
             grupo,
           });
 
@@ -1869,6 +2082,8 @@ export async function runAlertCycle(options = {}) {
       }
     }
   }
+
+  await avisarCoberturaCiclica({ state, now, smtp, equipos: coberturaSilencio, result });
 
   saveState(state);
   result.finishedAt = new Date().toISOString();

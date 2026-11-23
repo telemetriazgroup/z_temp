@@ -1,4 +1,5 @@
 import { readJson, writeJson, normalizeUmbrales, UMBRAL_ALERTA_30_MIN } from './store.js';
+import { normalizarHora } from './coberturaHoraria.js';
 
 function readAll() {
   return readJson('deviceAlertConfig.json', {});
@@ -19,6 +20,7 @@ function hasPersistedOverrides(entry) {
   if (entry.alerta1Hora) return true;
   if (entry.alerta30Minutos) return true;
   if (entry.useRangoPersonalizado) return true;
+  if (entry.ignorarFueraLineaHorario) return true;
   return false;
 }
 
@@ -70,6 +72,20 @@ export function saveDeviceAlertConfig(rowKey, patch) {
   entry.alerta1Hora = Boolean(entry.alerta1Hora);
   entry.alerta30Minutos = Boolean(entry.alerta30Minutos);
   entry.useRangoPersonalizado = Boolean(entry.useRangoPersonalizado);
+  entry.ignorarFueraLineaHorario = Boolean(entry.ignorarFueraLineaHorario);
+
+  if (entry.ignorarFueraLineaHorario) {
+    const desde = normalizarHora(entry.coberturaDesde);
+    const hasta = normalizarHora(entry.coberturaHasta);
+    if (!desde || !hasta || desde === hasta) {
+      throw new Error('Indique una hora de inicio y una de fin distintas para la cobertura');
+    }
+    entry.coberturaDesde = desde;
+    entry.coberturaHasta = hasta;
+  } else {
+    delete entry.coberturaDesde;
+    delete entry.coberturaHasta;
+  }
 
   if (entry.useRangoPersonalizado) {
     entry.margenInferior = normalizeMargen(entry.margenInferior ?? prev.margenInferior ?? 0.5);
@@ -119,6 +135,16 @@ export function resolveRangoOptsForDevice(rowKey, _ownerUsername = null) {
     margenInferior: cfg.margenInferior ?? 0.5,
     margenSuperior: cfg.margenSuperior ?? 0.5,
   };
+}
+
+/** Ventana en la que el fuera de línea no se avisa al cliente. null si no está activa. */
+export function coberturaFueraLineaDe(rowKey) {
+  const cfg = getDeviceAlertConfig(rowKey);
+  if (!cfg?.ignorarFueraLineaHorario) return null;
+  const desde = normalizarHora(cfg.coberturaDesde);
+  const hasta = normalizarHora(cfg.coberturaHasta);
+  if (!desde || !hasta || desde === hasta) return null;
+  return { desde, hasta };
 }
 
 /** Umbrales del equipo si los tiene; si no, los del grupo. El 30 min y la 1 h del equipo se suman. */

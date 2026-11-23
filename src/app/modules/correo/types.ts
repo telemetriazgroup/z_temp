@@ -36,6 +36,12 @@ export interface DeviceAlertConfig {
   margenInferior?: number;
   /** Grados sobre el setpoint considerados EN RANGO. */
   margenSuperior?: number;
+  /** No avisar fuera de línea al cliente dentro de este horario de zona. */
+  ignorarFueraLineaHorario?: boolean;
+  /** Inicio del horario sin señal, HH:mm en hora Lima. */
+  coberturaDesde?: string;
+  /** Fin del horario sin señal. Si es menor que el inicio, cruza la medianoche. */
+  coberturaHasta?: string;
   updatedAt?: string;
 }
 

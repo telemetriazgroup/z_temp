@@ -272,6 +272,9 @@ export default function ConfiguracionCorreo() {
   const [useRangoPersonalizado, setUseRangoPersonalizado] = useState(false);
   const [margenInferior, setMargenInferior] = useState('0.5');
   const [margenSuperior, setMargenSuperior] = useState('0.5');
+  const [ignorarCobertura, setIgnorarCobertura] = useState(false);
+  const [coberturaDesde, setCoberturaDesde] = useState('20:00');
+  const [coberturaHasta, setCoberturaHasta] = useState('06:00');
   const [alertSaving, setAlertSaving] = useState(false);
   const [alertEventos, setAlertEventos] = useState<DeviceEventosView | null>(null);
   const [alertEventosLoading, setAlertEventosLoading] = useState(false);
@@ -447,6 +450,9 @@ export default function ConfiguracionCorreo() {
     setUseRangoPersonalizado(Boolean(cfg?.useRangoPersonalizado));
     setMargenInferior(String(cfg?.margenInferior ?? defaultMargen));
     setMargenSuperior(String(cfg?.margenSuperior ?? defaultMargen));
+    setIgnorarCobertura(Boolean(cfg?.ignorarFueraLineaHorario));
+    setCoberturaDesde(cfg?.coberturaDesde || '20:00');
+    setCoberturaHasta(cfg?.coberturaHasta || '06:00');
     if (cfg?.referenciaManual) {
       const d = new Date(cfg.referenciaManual);
       setAlertManualRef(
@@ -484,6 +490,11 @@ export default function ConfiguracionCorreo() {
         setAlertSaving(false);
         return;
       }
+      if (ignorarCobertura && (!coberturaDesde || !coberturaHasta || coberturaDesde === coberturaHasta)) {
+        toast.error('Indique una hora de inicio y una de fin distintas');
+        setAlertSaving(false);
+        return;
+      }
       const payload = {
         mode: alertMode,
         alerta1Hora,
@@ -491,6 +502,9 @@ export default function ConfiguracionCorreo() {
         useRangoPersonalizado,
         margenInferior: useRangoPersonalizado ? margenInf : undefined,
         margenSuperior: useRangoPersonalizado ? margenSup : undefined,
+        ignorarFueraLineaHorario: ignorarCobertura,
+        coberturaDesde: ignorarCobertura ? coberturaDesde : undefined,
+        coberturaHasta: ignorarCobertura ? coberturaHasta : undefined,
         ...(alertMode === 'custom'
           ? {
               umbralesHoras: alertUmbrales,
@@ -1701,6 +1715,13 @@ export default function ConfiguracionCorreo() {
                             {!entry.config?.alerta30Minutos && !entry.config?.alerta1Hora && (
                               <span className="text-muted-foreground">No</span>
                             )}
+                            {entry.config?.ignorarFueraLineaHorario &&
+                              entry.config.coberturaDesde &&
+                              entry.config.coberturaHasta && (
+                                <Badge variant="outline">
+                                  Sin señal {entry.config.coberturaDesde}–{entry.config.coberturaHasta}
+                                </Badge>
+                              )}
                           </div>
                         </TableCell>
                         <TableCell className="text-xs">
@@ -1993,6 +2014,55 @@ export default function ConfiguracionCorreo() {
                 <Label htmlFor="alerta-1h" className="cursor-pointer">
                   Activar alerta a 1 hora fuera de rango / apagado
                 </Label>
+              </div>
+
+              <div className="space-y-3 rounded-md border px-3 py-3">
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={ignorarCobertura}
+                    onCheckedChange={setIgnorarCobertura}
+                    id="cobertura-horaria"
+                  />
+                  <Label htmlFor="cobertura-horaria" className="cursor-pointer">
+                    Ignorar fuera de línea por horario de cobertura
+                  </Label>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  En zonas donde la señal se corta por horas, por ejemplo de 20:00 a 06:00, el cliente
+                  no recibe esa alerta. El conteo empieza a la hora en que vuelve la cobertura y el
+                  correo sale 2 horas después. El administrador que recibe las fallas de API recibe,
+                  cada hora, la lista de estos equipos.
+                </p>
+                {ignorarCobertura && (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-1">
+                      <Label htmlFor="cobertura-desde" className="text-xs">
+                        Sin señal desde
+                      </Label>
+                      <Input
+                        id="cobertura-desde"
+                        type="time"
+                        value={coberturaDesde}
+                        onChange={(e) => setCoberturaDesde(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="cobertura-hasta" className="text-xs">
+                        Vuelve la cobertura
+                      </Label>
+                      <Input
+                        id="cobertura-hasta"
+                        type="time"
+                        value={coberturaHasta}
+                        onChange={(e) => setCoberturaHasta(e.target.value)}
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground sm:col-span-2">
+                      Con {coberturaDesde || '—'} a {coberturaHasta || '—'}, el primer correo al cliente
+                      saldría 2 horas después de {coberturaHasta || 'esa hora'}.
+                    </p>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-3 rounded-md border px-3 py-3">

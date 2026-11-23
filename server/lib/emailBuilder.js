@@ -352,6 +352,7 @@ export function buildFueraDeLineaEmail(params) {
     variante = 'usuario',
     horasOffline,
     referenciaDesde,
+    notaCobertura,
   } = params;
 
   const d = dispositivo.ultimo_dato ?? {};
@@ -382,6 +383,7 @@ export function buildFueraDeLineaEmail(params) {
       `• Última comunicación: ${fmtDateShort(dispositivo.ultima_actualizacion)} (GMT-5)`
     );
   }
+  if (notaCobertura) linesDetalle.push(`• ${notaCobertura}`);
 
   const text = [
     `Señores ${cliente}`,
@@ -412,10 +414,57 @@ export function buildFueraDeLineaEmail(params) {
 <li><strong>Nombre en la plataforma:</strong> ${nombrePlataforma}</li>
 <li><strong>Tipo de Alarma:</strong> ${tipoAlarma}</li>
 ${liOps}
+${notaCobertura ? `<li>${escHtml(notaCobertura)}</li>` : ''}
 </ul>
 <p><strong>Últimos parámetros registrados :</strong><br>${parametrosLinea}</p>
 <p>Atentamente,<br><strong>ZTRACK-ZGROUP</strong></p></body></html>`;
 
+  return { subject, text, html, attachments: [] };
+}
+
+function escHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/**
+ * Equipos callados dentro del horario de zona sin cobertura.
+ * Va a quien recibe las fallas de API, no al cliente.
+ */
+export function buildCoberturaHorariaEmail(params) {
+  const equipos = Array.isArray(params?.equipos) ? params.equipos : [];
+  const fechaAlerta = formatDateSubjectTz(new Date());
+  const subject = `Cobertura limitada — ${equipos.length} equipo(s) fuera de línea en su horario ${fechaAlerta}`;
+  const intro =
+    'Estos equipos están fuera de línea dentro del horario en el que la zona no tiene señal. ' +
+    'No se avisó al cliente: no se trata como falla de telemetría. ' +
+    'Revise si hay que actualizar ese horario o informar que la cobertura no llega a esas horas.';
+  const lineas = equipos.map((e) => {
+    const nombre = e.nombre || e.imei || 'Equipo';
+    return `• ${nombre} · IMEI ${e.imei || '—'} · sin señal ${e.desde} a ${e.hasta} · última comunicación ${fmtDateShort(e.ultima)} (GMT-5) · ~${roundHoras(e.horas)} h sin datos`;
+  });
+  const text = [
+    'Administración',
+    '',
+    intro,
+    '',
+    'Equipos :',
+    ...lineas,
+    '',
+    'El aviso se repite cada hora mientras sigan callados en ese horario.',
+    '',
+    'Atentamente,',
+    'ZTRACK-ZGROUP',
+  ].join('\n');
+  const html = `<!DOCTYPE html><html lang="es"><body style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5">
+<p>Administración</p>
+<p>${escHtml(intro)}</p>
+<p><strong>Equipos :</strong></p>
+<ul>${lineas.map((l) => `<li>${escHtml(l.replace(/^• /, ''))}</li>`).join('')}</ul>
+<p>El aviso se repite cada hora mientras sigan callados en ese horario.</p>
+<p>Atentamente,<br><strong>ZTRACK-ZGROUP</strong></p></body></html>`;
   return { subject, text, html, attachments: [] };
 }
 

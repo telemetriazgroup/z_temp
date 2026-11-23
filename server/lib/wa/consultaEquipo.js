@@ -507,17 +507,37 @@ function columnasDe(e, username) {
   return [...new Set(keys.map(String))];
 }
 
-function valorColumna(row, key) {
+const USDA = new Set(['cargo_1_temp', 'cargo_2_temp', 'cargo_3_temp', 'cargo_4_temp']);
+const CERO_SIN_LECTURA_STARCOOL = new Set([
+  'line_voltage',
+  'consumption_ph_1',
+  'consumption_ph_2',
+  'consumption_ph_3',
+  'relative_humidity',
+]);
+
+function esStarcool(codigo) {
+  const c = String(codigo || '').toUpperCase();
+  return c === 'STARCOOL' || c === 'STARCOOL2';
+}
+
+/** USDA solo es lectura entre −24 y 40 °C. En StarCool, 0 en voltaje, fases y humedad es el valor por defecto, no una medición. */
+export function lecturaVisible(key, value, codigo) {
+  const n = num(value);
+  if (n == null) return value == null || value === '' ? '' : String(value);
+  if (USDA.has(key) && (n > 40 || n < -24)) return 'dato erróneo';
+  if (esStarcool(codigo) && CERO_SIN_LECTURA_STARCOOL.has(key) && n === 0) return 'NA';
+  return fmt(n);
+}
+
+function valorColumna(row, key, codigo) {
   if (key === 'power_state') {
     const n = num(row?.power_state);
     if (n === 1) return 'encendido';
     if (n === 0) return 'apagado';
     return '';
   }
-  const v = row?.[key];
-  if (v == null || v === '') return '';
-  const n = num(v);
-  return n == null ? String(v) : fmt(n);
+  return lecturaVisible(key, row?.[key], codigo);
 }
 
 function nombreArchivo(e) {
@@ -542,11 +562,12 @@ function numCsv(v) {
   return String(n).replace('.', ',');
 }
 
-function valorCsv(row, key) {
+function valorCsv(row, key, codigo) {
   if (key === 'power_state') return valorColumna(row, key);
-  const v = row?.[key];
-  if (v == null || v === '') return '';
-  return num(v) == null ? String(v) : numCsv(v);
+  const visible = lecturaVisible(key, row?.[key], codigo);
+  if (visible === '' || visible === 'NA' || visible === 'dato erróneo') return visible;
+  const n = num(row?.[key]);
+  return n == null ? visible : numCsv(n);
 }
 
 function filaMasNueva(filas) {
@@ -581,7 +602,7 @@ export async function textoUltimoDato(e, username) {
   ].filter((linea) => linea != null && linea !== '');
   let conValor = false;
   for (const k of keys) {
-    const valor = valorColumna(trama, k);
+    const valor = valorColumna(trama, k, e.codigo);
     if (!valor) continue;
     conValor = true;
     lineas.push(`${COLUMNAS[k]?.[0] || k}: ${negrita(valor)}`);
@@ -649,7 +670,7 @@ export async function excel12h(e, username) {
     encabezado,
     ...filas.map((row) => [
       fechaCorta(row.created_at ?? row.fecha),
-      ...keys.map((k) => valorCsv(row, k)),
+      ...keys.map((k) => valorCsv(row, k, e.codigo)),
     ]),
   ];
   const cuerpo = `\uFEFFsep=;\n${filasCsv.map((fila) => fila.map(celdaCsv).join(';')).join('\n')}\n`;

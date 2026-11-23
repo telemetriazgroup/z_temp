@@ -425,6 +425,9 @@ export async function saveDeviceAlertConfigApi(
     useRangoPersonalizado?: boolean;
     margenInferior?: number;
     margenSuperior?: number;
+    ignorarFueraLineaHorario?: boolean;
+    coberturaDesde?: string;
+    coberturaHasta?: string;
   },
   actingUser?: string | null
 ): Promise<DeviceAlertConfig | null> {

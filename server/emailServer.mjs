@@ -1318,6 +1318,9 @@ app.put('/reefer/api/correo/alert-config/:rowKey', (req, res) => {
     useRangoPersonalizado,
     margenInferior,
     margenSuperior,
+    ignorarFueraLineaHorario,
+    coberturaDesde,
+    coberturaHasta,
   } = req.body ?? {};
   try {
     // Admin: solo equipos de sus grupos o de su deviceAccess
@@ -1346,6 +1349,9 @@ app.put('/reefer/api/correo/alert-config/:rowKey', (req, res) => {
       useRangoPersonalizado: Boolean(useRangoPersonalizado),
       margenInferior: margenInferior != null ? Number(margenInferior) : undefined,
       margenSuperior: margenSuperior != null ? Number(margenSuperior) : undefined,
+      ignorarFueraLineaHorario: Boolean(ignorarFueraLineaHorario),
+      coberturaDesde,
+      coberturaHasta,
       ownerUsername: actor.username,
     });
     auditActorEvent(req, {
