@@ -24,11 +24,57 @@ export function defrostActivoEfectivo(dispositivo: DispositivoUltimoEstado): boo
 
 export type EstadoRangoListado = 'apagado' | 'normal' | 'fuera' | 'indeterminado';
 
-/** Tolerancia por defecto de alertas: ±4 °C respecto al setpoint. */
+/** Tolerancia histórica cuando no hay setpoint. Las bandas reales salen de la configuración. */
 export const TOLERANCIA_SETPOINT_C = 4;
 
-export function toleranciaSetpointDefault(_setPoint: number): number {
-  return TOLERANCIA_SETPOINT_C;
+export interface RangoPredeterminado {
+  frioHasta: number;
+  frioMargen: number;
+  medioHasta: number;
+  medioMargen: number;
+  templadoHasta: number;
+  templadoMargen: number;
+  calidoMargen: number;
+}
+
+export const RANGO_PREDETERMINADO_DEFAULT: RangoPredeterminado = {
+  frioHasta: -6,
+  frioMargen: 4,
+  medioHasta: 16,
+  medioMargen: 6,
+  templadoHasta: 21,
+  templadoMargen: 8,
+  calidoMargen: 10,
+};
+
+let rangoPredeterminadoActual: RangoPredeterminado = { ...RANGO_PREDETERMINADO_DEFAULT };
+
+export function aplicarRangoPredeterminado(cfg: Partial<RangoPredeterminado> | null | undefined) {
+  const d = RANGO_PREDETERMINADO_DEFAULT;
+  const next: RangoPredeterminado = {
+    frioHasta: Number.isFinite(Number(cfg?.frioHasta)) ? Number(cfg?.frioHasta) : d.frioHasta,
+    frioMargen: Number.isFinite(Number(cfg?.frioMargen)) ? Number(cfg?.frioMargen) : d.frioMargen,
+    medioHasta: Number.isFinite(Number(cfg?.medioHasta)) ? Number(cfg?.medioHasta) : d.medioHasta,
+    medioMargen: Number.isFinite(Number(cfg?.medioMargen)) ? Number(cfg?.medioMargen) : d.medioMargen,
+    templadoHasta: Number.isFinite(Number(cfg?.templadoHasta)) ? Number(cfg?.templadoHasta) : d.templadoHasta,
+    templadoMargen: Number.isFinite(Number(cfg?.templadoMargen)) ? Number(cfg?.templadoMargen) : d.templadoMargen,
+    calidoMargen: Number.isFinite(Number(cfg?.calidoMargen)) ? Number(cfg?.calidoMargen) : d.calidoMargen,
+  };
+  rangoPredeterminadoActual = next;
+  return next;
+}
+
+export function margenPredeterminado(setPoint: number | null | undefined): number {
+  const cfg = rangoPredeterminadoActual;
+  const sp = Number(setPoint);
+  if (!Number.isFinite(sp) || sp <= cfg.frioHasta) return cfg.frioMargen;
+  if (sp < cfg.medioHasta) return cfg.medioMargen;
+  if (sp < cfg.templadoHasta) return cfg.templadoMargen;
+  return cfg.calidoMargen;
+}
+
+export function toleranciaSetpointDefault(setPoint: number): number {
+  return margenPredeterminado(setPoint);
 }
 
 export function rangoOptsFromConfig(cfg: DeviceAlertConfig | null | undefined) {
@@ -79,7 +125,11 @@ export function formatRangoTemperatura(
   if (rango == null) return '—';
   const sp = `${rango.setPoint.toFixed(1)} °C`;
   const banda = `${rango.min.toFixed(1)} … ${rango.max.toFixed(1)} °C`;
-  return rango.personalizado ? `${banda} (SP ${sp}, personalizado)` : `${banda} (SP ${sp}, ±4 °C)`;
+  const tol =
+    rango.margenInferior === rango.margenSuperior
+      ? `±${rango.margenInferior} °C`
+      : `−${rango.margenInferior}/+${rango.margenSuperior} °C`;
+  return rango.personalizado ? `${banda} (SP ${sp}, personalizado)` : `${banda} (SP ${sp}, ${tol})`;
 }
 
 function enBandaSetpoint(

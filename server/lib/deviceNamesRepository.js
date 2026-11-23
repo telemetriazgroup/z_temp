@@ -118,6 +118,7 @@ export function setDeviceName({ rowKey, imei, codigo, name, usuario = 'sistema' 
   }
 
   writeStore(store);
+  propagarNombreAGrupos(rowKey, imei, normalized);
 
   const nextName = normalized ?? 'SIN ASIGNAR';
   if (prevName !== nextName) {
@@ -165,6 +166,36 @@ export function mergeDeviceNames(entries) {
     }
   }
 
-  if (changed) writeStore(store);
+  if (changed) {
+    writeStore(store);
+    for (const [key, name] of Object.entries(entries)) {
+      const trimmed = normalizeName(name);
+      if (key && trimmed) propagarNombreAGrupos(null, key, trimmed);
+    }
+  }
   return store.byImei;
+}
+
+/** El nombre del listado es el que queda en cada grupo de correo. */
+function propagarNombreAGrupos(rowKey, imei, name) {
+  const grupos = readJson('grupos.json', []);
+  if (!Array.isArray(grupos)) return;
+  let changed = false;
+  for (const grupo of grupos) {
+    for (const device of grupo.devices ?? []) {
+      const mismo =
+        (rowKey && device.rowKey === rowKey) || (imei && device.imei === imei);
+      if (!mismo) continue;
+      if (name) {
+        if (device.nombrePlataforma !== name) {
+          device.nombrePlataforma = name;
+          changed = true;
+        }
+      } else if (device.nombrePlataforma) {
+        delete device.nombrePlataforma;
+        changed = true;
+      }
+    }
+  }
+  if (changed) writeJson('grupos.json', grupos);
 }

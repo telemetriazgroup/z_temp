@@ -51,10 +51,7 @@ export function enrichGrupoDevicesWithNames(
     const d = dispositivos.find((x) => deviceRowKey(x) === dev.rowKey);
     if (d == null) return dev;
     const nombre = nombrePlataformaForDevice(user, d, locals);
-    if (nombre === SIN_ASIGNAR) return dev;
-    return {
-      ...dev,
-      nombrePlataforma: dev.nombrePlataforma?.trim() || nombre,
-    };
+    if (nombre === SIN_ASIGNAR) return { ...dev, nombrePlataforma: undefined };
+    return { ...dev, nombrePlataforma: nombre };
   });
 }

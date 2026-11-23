@@ -371,7 +371,7 @@ function resolveLabels(assignment, dispositivo) {
   const fallbackTecnico = codigo ? `${codigo} · ${imei}` : imei;
 
   const nombreCliente =
-    [nombreAsignado, fromServer].find((v) => v && v !== 'SIN ASIGNAR') ?? fallbackTecnico;
+    [fromServer, nombreAsignado].find((v) => v && v !== 'SIN ASIGNAR') ?? fallbackTecnico;
 
   return {
     dispositivoReeferId: desc || nombreCliente,

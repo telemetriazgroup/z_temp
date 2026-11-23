@@ -397,6 +397,25 @@ export async function fetchDeviceAlertConfigMap(): Promise<Record<string, Device
   return body.data ?? {};
 }
 
+export async function fetchRangoPredeterminado(): Promise<import('./rangoTemperatura').RangoPredeterminado> {
+  const res = await fetch(`${BASE}/rango-predeterminado`, { headers: headers() });
+  const body = await parseRes<{ data: import('./rangoTemperatura').RangoPredeterminado }>(res);
+  return body.data;
+}
+
+export async function saveRangoPredeterminadoApi(
+  cfg: import('./rangoTemperatura').RangoPredeterminado,
+  actingUser?: string | null
+): Promise<import('./rangoTemperatura').RangoPredeterminado> {
+  const res = await fetch(`${BASE}/rango-predeterminado`, {
+    method: 'PUT',
+    headers: headers(actingUser),
+    body: JSON.stringify(cfg),
+  });
+  const body = await parseRes<{ data: import('./rangoTemperatura').RangoPredeterminado }>(res);
+  return body.data;
+}
+
 export async function fetchDeviceAlertState(
   actingUser?: string | null
 ): Promise<DeviceAlertStateView> {

@@ -64,6 +64,8 @@ import {
   saveDeviceAlertConfigApi,
   updateDeviceReferencia,
   fetchDeviceEventos,
+  fetchRangoPredeterminado,
+  saveRangoPredeterminadoApi,
 } from '../modules/correo/correoServerApi';
 import {
   buildDeviceNamesForServer,
@@ -75,6 +77,9 @@ import {
   formatRangoTemperatura,
   toleranciaSetpointDefault,
   evaluarEstadoRangoListado,
+  aplicarRangoPredeterminado,
+  RANGO_PREDETERMINADO_DEFAULT,
+  type RangoPredeterminado,
 } from '../modules/correo/rangoTemperatura';
 import {
   formatUmbralAlerta,
@@ -251,6 +256,12 @@ export default function ConfiguracionCorreo() {
   const [waNumero, setWaNumero] = useState('');
   const [emailEditIndex, setEmailEditIndex] = useState<number | null>(null);
   const [emailEditValue, setEmailEditValue] = useState('');
+  const [waEditIndex, setWaEditIndex] = useState<number | null>(null);
+  const [waEditNombre, setWaEditNombre] = useState('');
+  const [waEditNumero, setWaEditNumero] = useState('');
+  const [busquedaGrupo, setBusquedaGrupo] = useState('');
+  const [rangoPred, setRangoPred] = useState<RangoPredeterminado>({ ...RANGO_PREDETERMINADO_DEFAULT });
+  const [rangoPredSaving, setRangoPredSaving] = useState(false);
   const [ciclos, setCiclos] = useState<CorreoCicloAnalisis[]>([]);
   const [cicloDetalle, setCicloDetalle] = useState<CorreoCicloAnalisis | null>(null);
   const [limpiarOpen, setLimpiarOpen] = useState(false);
@@ -341,6 +352,8 @@ export default function ConfiguracionCorreo() {
         setDriveInfo(drive);
         setDriveFolderUrl(drive?.folderUrl ?? '');
       }
+      const bandas = await fetchRangoPredeterminado().catch(() => null);
+      if (bandas) setRangoPred(aplicarRangoPredeterminado(bandas));
       setServerStatus(await fetchCorreoStatus());
       const st = await fetchDeviceAlertState(actingUser);
       setAlertState(st.entries);
@@ -782,6 +795,8 @@ export default function ConfiguracionCorreo() {
     setIsEditingExisting(false);
     setEmailInput('');
     setEmailEditIndex(null);
+    setWaEditIndex(null);
+    setBusquedaGrupo('');
   };
 
   const openNewGrupo = () => {
@@ -795,6 +810,8 @@ export default function ConfiguracionCorreo() {
     setIsEditingExisting(false);
     setEmailInput('');
     setEmailEditIndex(null);
+    setWaEditIndex(null);
+    setBusquedaGrupo('');
     setDialogOpen(true);
     if (dispositivos.length === 0 && !loading) void loadDevices();
   };
@@ -815,6 +832,8 @@ export default function ConfiguracionCorreo() {
     setIsEditingExisting(true);
     setEmailInput('');
     setEmailEditIndex(null);
+    setWaEditIndex(null);
+    setBusquedaGrupo('');
     setDialogOpen(true);
     if (dispositivos.length === 0 && !loading) void loadDevices();
   };
@@ -868,6 +887,61 @@ export default function ConfiguracionCorreo() {
       emails: editing.emails.map((e, i) => (i === emailEditIndex ? value : e)),
     });
     setEmailEditIndex(null);
+  };
+
+  const telefonoWhatsappValido = (telefono: string) =>
+    (telefono.length === 9 && telefono.startsWith('9')) ||
+    (telefono.length === 11 && telefono.startsWith('51'));
+
+  const guardarEdicionWhatsapp = () => {
+    if (editing == null || waEditIndex == null) return;
+    const nombre = waEditNombre.trim();
+    const crudo = waEditNumero.replace(/\D/g, '');
+    if (!nombre) {
+      toast.error('Escriba el nombre de quien recibe el WhatsApp');
+      return;
+    }
+    if (!telefonoWhatsappValido(crudo)) {
+      toast.error('El número debe ser de 9 dígitos, empezando por 9');
+      return;
+    }
+    const normal = crudo.length === 9 ? `51${crudo}` : crudo;
+    const repetido = (editing.whatsappNumeros ?? []).some(
+      (n, i) => i !== waEditIndex && n.telefono === normal
+    );
+    if (repetido) {
+      toast.error('Ese número ya está en el grupo');
+      return;
+    }
+    setEditing({
+      ...editing,
+      whatsappNumeros: (editing.whatsappNumeros ?? []).map((n, i) =>
+        i === waEditIndex ? { nombre, telefono: normal } : n
+      ),
+    });
+    setWaEditIndex(null);
+  };
+
+  const nombreDeEquipoGrupo = (dev: GrupoCorreoDevice) => {
+    const live = dispositivos.find((d) => deviceRowKey(d) === dev.rowKey);
+    if (live) {
+      const nombre = nombrePlataformaForDevice(user, live, localNames);
+      if (nombre && nombre !== SIN_ASIGNAR) return nombre;
+    }
+    return dev.nombrePlataforma?.trim() || SIN_ASIGNAR;
+  };
+
+  const guardarRangoPredeterminado = async () => {
+    setRangoPredSaving(true);
+    try {
+      const saved = await saveRangoPredeterminadoApi(rangoPred, actingUser);
+      setRangoPred(aplicarRangoPredeterminado(saved));
+      toast.success('Rango predefinido guardado');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'No se pudo guardar el rango');
+    } finally {
+      setRangoPredSaving(false);
+    }
   };
 
   const handleSaveGrupo = async () => {
@@ -1519,11 +1593,13 @@ export default function ConfiguracionCorreo() {
                           <TableRow key={dev.rowKey}>
                             <TableCell className="text-xs">
                               <div className="font-medium">
-                                {dev.nombrePlataforma?.trim() ||
-                                  (live
+                                {(() => {
+                                  const vivo = live
                                     ? nombrePlataformaForDevice(user, live, localNames)
-                                    : null) ||
-                                  'SIN ASIGNAR'}
+                                    : '';
+                                  if (vivo && vivo !== SIN_ASIGNAR) return vivo;
+                                  return dev.nombrePlataforma?.trim() || 'SIN ASIGNAR';
+                                })()}
                               </div>
                               <div className="text-muted-foreground font-mono">
                                 {dev.codigo} · {dev.imei}
@@ -1665,7 +1741,103 @@ export default function ConfiguracionCorreo() {
                 Modo estándar: umbrales del grupo. Puede activar alertas a 30 min / 1 h.
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-4">
+              {isSuper && (
+                <div className="space-y-3 rounded-md border p-3">
+                  <div>
+                    <div className="font-medium text-sm">Rango normal según setpoint</div>
+                    <p className="text-xs text-muted-foreground">
+                      Al abrir un equipo, el rango predefinido sale de estas bandas. Después se puede
+                      personalizar en ese equipo.
+                    </p>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <div className="space-y-1">
+                      <Label className="text-xs">De este valor o más frío</Label>
+                      <Input
+                        type="number"
+                        step="0.1"
+                        value={rangoPred.frioHasta}
+                        onChange={(e) => setRangoPred({ ...rangoPred, frioHasta: Number(e.target.value) })}
+                      />
+                      <Label className="text-xs">Margen ±</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.1"
+                        value={rangoPred.frioMargen}
+                        onChange={(e) => setRangoPred({ ...rangoPred, frioMargen: Number(e.target.value) })}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Hasta antes de</Label>
+                      <Input
+                        type="number"
+                        step="0.1"
+                        value={rangoPred.medioHasta}
+                        onChange={(e) => setRangoPred({ ...rangoPred, medioHasta: Number(e.target.value) })}
+                      />
+                      <Label className="text-xs">Margen ±</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.1"
+                        value={rangoPred.medioMargen}
+                        onChange={(e) => setRangoPred({ ...rangoPred, medioMargen: Number(e.target.value) })}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Hasta antes de</Label>
+                      <Input
+                        type="number"
+                        step="0.1"
+                        value={rangoPred.templadoHasta}
+                        onChange={(e) =>
+                          setRangoPred({ ...rangoPred, templadoHasta: Number(e.target.value) })
+                        }
+                      />
+                      <Label className="text-xs">Margen ±</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.1"
+                        value={rangoPred.templadoMargen}
+                        onChange={(e) =>
+                          setRangoPred({ ...rangoPred, templadoMargen: Number(e.target.value) })
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Desde el último corte</Label>
+                      <Input value="en adelante" disabled />
+                      <Label className="text-xs">Margen ±</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.1"
+                        value={rangoPred.calidoMargen}
+                        onChange={(e) =>
+                          setRangoPred({ ...rangoPred, calidoMargen: Number(e.target.value) })
+                        }
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Con los valores de ahora: setpoint de {rangoPred.frioHasta} o más frío, ±
+                    {rangoPred.frioMargen}. Mayor que {rangoPred.frioHasta} y menor que {rangoPred.medioHasta},
+                    ±{rangoPred.medioMargen}. Desde {rangoPred.medioHasta} y menor que {rangoPred.templadoHasta},
+                    ±{rangoPred.templadoMargen}. Desde {rangoPred.templadoHasta}, ±{rangoPred.calidoMargen}.
+                  </p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={rangoPredSaving}
+                    onClick={() => void guardarRangoPredeterminado()}
+                  >
+                    {rangoPredSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Guardar rangos'}
+                  </Button>
+                </div>
+              )}
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -2092,7 +2264,9 @@ export default function ConfiguracionCorreo() {
                           <>
                             {' '}
                             · Banda efectiva: {rango.min.toFixed(1)} … {rango.max.toFixed(1)} °C
-                            {rango.personalizado ? ' (personalizada)' : ' (±4 °C del setpoint)'}
+                            {rango.personalizado
+                              ? ' (personalizada)'
+                              : ` (±${defaultMargen} °C del setpoint)`}
                           </>
                         )}
                       </p>
@@ -2345,7 +2519,7 @@ export default function ConfiguracionCorreo() {
           else setDialogOpen(true);
         }}
       >
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-6xl w-[min(96vw,72rem)] max-h-[92vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {isEditingExisting
@@ -2474,29 +2648,64 @@ export default function ConfiguracionCorreo() {
                     </div>
                     {(editing.whatsappNumeros?.length ?? 0) > 0 && (
                       <ul className="space-y-1">
-                        {editing.whatsappNumeros!.map((n) => (
+                        {editing.whatsappNumeros!.map((n, index) => (
                           <li
-                            key={n.telefono}
+                            key={`${n.telefono}-${index}`}
                             className="flex items-center gap-2 rounded-md border px-2 py-1"
                           >
-                            <span className="text-sm flex-1 truncate">
-                              {n.nombre} · {n.telefono}
-                            </span>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              onClick={() =>
-                                setEditing({
-                                  ...editing,
-                                  whatsappNumeros: (editing.whatsappNumeros ?? []).filter(
-                                    (x) => x.telefono !== n.telefono
-                                  ),
-                                })
-                              }
-                            >
-                              <Trash2 className="h-4 w-4 text-red-600" />
-                            </Button>
+                            {waEditIndex === index ? (
+                              <>
+                                <Input
+                                  value={waEditNombre}
+                                  onChange={(e) => setWaEditNombre(e.target.value)}
+                                  className="h-8"
+                                  placeholder="Nombre"
+                                />
+                                <Input
+                                  value={waEditNumero}
+                                  onChange={(e) => setWaEditNumero(e.target.value)}
+                                  className="h-8"
+                                  placeholder="987654321"
+                                />
+                                <Button type="button" size="sm" onClick={guardarEdicionWhatsapp}>
+                                  Listo
+                                </Button>
+                              </>
+                            ) : (
+                              <>
+                                <span className="text-sm flex-1 truncate">
+                                  {n.nombre} · {n.telefono}
+                                </span>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    setWaEditIndex(index);
+                                    setWaEditNombre(n.nombre);
+                                    setWaEditNumero(n.telefono);
+                                  }}
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    setEditing({
+                                      ...editing,
+                                      whatsappNumeros: (editing.whatsappNumeros ?? []).filter(
+                                        (_, i) => i !== index
+                                      ),
+                                    });
+                                    if (waEditIndex === index) setWaEditIndex(null);
+                                  }}
+                                >
+                                  <Trash2 className="h-4 w-4 text-red-600" />
+                                </Button>
+                              </>
+                            )}
                           </li>
                         ))}
                       </ul>
@@ -2605,22 +2814,30 @@ export default function ConfiguracionCorreo() {
                 )}
 
                 {editing.devices.length > 0 && (
-                  <Label className="text-sm">Equipos en el grupo ({editing.devices.length})</Label>
+                  <div className="space-y-2">
+                    <Label className="text-sm">Equipos en el grupo ({editing.devices.length})</Label>
+                    <Input
+                      value={busquedaGrupo}
+                      onChange={(e) => setBusquedaGrupo(e.target.value)}
+                      placeholder="Buscar en el grupo por nombre, IMEI o código"
+                    />
+                  </div>
                 )}
 
-                {editing.devices.map((dev) => (
+                {editing.devices
+                  .filter((dev) => {
+                    const q = busquedaGrupo.trim().toLowerCase();
+                    if (!q) return true;
+                    const nombre = nombreDeEquipoGrupo(dev);
+                    return `${nombre} ${dev.nombrePlataforma ?? ''} ${dev.imei} ${dev.codigo ?? ''} ${dev.descripcionEquipo ?? ''}`
+                      .toLowerCase()
+                      .includes(q);
+                  })
+                  .map((dev) => (
                   <Card key={dev.rowKey} className="p-3 space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
-                        <span className="text-sm font-medium block">
-                          {dev.nombrePlataforma?.trim() ||
-                            (() => {
-                              const live = dispositivos.find((d) => deviceRowKey(d) === dev.rowKey);
-                              return live
-                                ? nombrePlataformaForDevice(user, live, localNames)
-                                : SIN_ASIGNAR;
-                            })()}
-                        </span>
+                        <span className="text-sm font-medium block">{nombreDeEquipoGrupo(dev)}</span>
                         <span className="text-xs text-muted-foreground font-mono">
                           {dev.codigo} · {dev.imei}
                         </span>

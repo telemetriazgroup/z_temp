@@ -49,6 +49,7 @@ import {
   saveDeviceAlertConfig,
 } from './lib/deviceAlertConfigRepository.js';
 import { buildFueraDeRangoEmail } from './lib/emailBuilder.js';
+import { getRangoPredeterminado, saveRangoPredeterminado } from './lib/rangoPredeterminado.js';
 import {
   ensureUserRegistry,
   getUsersPublic,
@@ -1284,6 +1285,26 @@ app.get('/reefer/api/correo/ciclos/:id', (req, res) => {
 
 app.get('/reefer/api/correo/alert-config', (_req, res) => {
   res.json({ ok: true, data: getDeviceAlertConfigMap() });
+});
+
+app.get('/reefer/api/correo/rango-predeterminado', (_req, res) => {
+  res.json({ ok: true, data: getRangoPredeterminado() });
+});
+
+app.put('/reefer/api/correo/rango-predeterminado', (req, res) => {
+  if (!requireSuperUser(req, res)) return;
+  try {
+    const data = saveRangoPredeterminado(req.body ?? {});
+    auditActorEvent(req, {
+      action: 'alarma.rango_predeterminado',
+      module: 'alarma',
+      summary: 'Actualizó el rango predefinido según setpoint',
+      detail: data,
+    });
+    res.json({ ok: true, data });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
 });
 
 app.get('/reefer/api/correo/alert-config/state', (req, res) => {

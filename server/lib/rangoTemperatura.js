@@ -1,8 +1,10 @@
-/** Tolerancia por defecto de alertas: ±4 °C respecto al setpoint. */
+import { margenPredeterminado } from './rangoPredeterminado.js';
+
+/** Tolerancia histórica cuando no hay setpoint. Las bandas reales salen de la configuración. */
 export const TOLERANCIA_SETPOINT_C = 4;
 
-export function toleranciaSetpointDefault(_setPoint) {
-  return TOLERANCIA_SETPOINT_C;
+export function toleranciaSetpointDefault(setPoint) {
+  return margenPredeterminado(setPoint);
 }
 
 /**
