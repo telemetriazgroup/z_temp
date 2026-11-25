@@ -164,13 +164,11 @@ export function DispositivosFleetProvider({ children }: { children: ReactNode })
   const findDispositivo = useCallback(
     (imei: string, codigo?: string | null) => {
       const list = data?.data?.dispositivos ?? [];
+      const matches = list.filter((d) => d.imei === imei);
       if (codigo) {
-        const hit = list.find(
-          (d) => d.imei === imei && (d.codigo ?? '') === codigo
-        );
-        if (hit) return hit;
+        return matches.find((d) => (d.codigo ?? '') === codigo) ?? null;
       }
-      return list.find((d) => d.imei === imei) ?? null;
+      return matches.length === 1 ? matches[0] : null;
     },
     [data]
   );

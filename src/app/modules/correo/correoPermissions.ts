@@ -3,8 +3,9 @@ import type { GrupoCorreo, GrupoCorreoDevice } from './types';
 import {
   userCanManageUsers,
   userIsSuperAdmin,
-  userMayAccessImei,
 } from '../usuario';
+import { effectiveDeviceAccessForUser } from '../administracion/gruposEquiposCache';
+import { accesoCubreDispositivo } from '../administracion/asignacionEquipo';
 
 /** Admin: máximo 2 grupos de correo. */
 export const ADMIN_MAX_CORREO_GRUPOS = 2;
@@ -80,7 +81,9 @@ export function userMayAssignCorreoDevice(
 ): boolean {
   if (user == null) return false;
   if (userIsSuperAdmin(user)) return true;
-  if (!userMayAccessImei(user, device.imei)) return false;
+  const eff = effectiveDeviceAccessForUser(user);
+  if (eff === 'all') return true;
+  if (!accesoCubreDispositivo(eff, device, new Set())) return false;
   const allowed = user.allowedCodigos;
   if (Array.isArray(allowed) && allowed.length > 0 && device.codigo) {
     return allowed.includes(device.codigo);

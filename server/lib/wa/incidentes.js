@@ -22,7 +22,13 @@ export function puedeIncidenteDeEquipo(user, imei) {
   if (!puedeGestionarIncidentes(user)) return false;
   const lista = resolveUserEffectiveImeis(user);
   if (lista == null) return true;
-  return Boolean(imei) && lista.map(String).includes(String(imei));
+  const id = String(imei);
+  return lista.some((token) => {
+    const t = String(token);
+    if (t === id) return true;
+    const sep = t.lastIndexOf('|');
+    return sep > 0 && t.slice(sep + 1) === id;
+  });
 }
 
 export const TIPOS_INCIDENTE = [

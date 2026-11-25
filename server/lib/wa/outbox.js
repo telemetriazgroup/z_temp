@@ -29,7 +29,7 @@ export function pendientePorJid(jid) {
   return cola.some((j) => j.jid === jid && !j.esAlerta);
 }
 
-export function encolarTexto(jid, text, { esAlerta = false, contactoId = null, telefono = null, tipo = null, media = null } = {}) {
+export function encolarTexto(jid, text, { esAlerta = false, contactoId = null, telefono = null, tipo = null, media = null, mentions = null } = {}) {
   if (!jid || !text) return null;
   const ahora = Date.now();
   const gap = gapChatMs();
@@ -53,13 +53,19 @@ export function encolarTexto(jid, text, { esAlerta = false, contactoId = null, t
     telefono,
     tipo,
     media,
+    mentions: Array.isArray(mentions) ? mentions : null,
   };
   cola.push(job);
   return job;
 }
 
 async function despachar(job) {
-  const body = job.media ? { text: job.text, media: job.media } : job.text;
+  const mentions = Array.isArray(job.mentions) && job.mentions.length ? job.mentions : undefined;
+  const body = job.media
+    ? { text: job.text, media: job.media, mentions }
+    : mentions
+      ? { text: job.text, mentions }
+      : job.text;
   await sender(job.jid, body);
   if (!job.esAlerta) {
     const enviado = Date.now();

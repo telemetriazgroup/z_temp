@@ -21,6 +21,7 @@ import {
   pruneDashboardHistory,
 } from './repository.js';
 import { resolveUserEffectiveImeis } from '../gruposEquiposRepository.js';
+import { dispositivoPermitido, imeisDuplicadosEn } from '../asignacionEquipo.js';
 import { pickTelemetryFromDispositivo } from '../senal/telemetry.js';
 
 function conexionOf(d) {
@@ -165,12 +166,13 @@ export function filterDispositivosForUser(dispositivos, user) {
   }
   const allowedList = resolveUserEffectiveImeis(user);
   if (allowedList == null) return dispositivos;
-  const allowed = new Set(allowedList.map(String));
+  const allowed = allowedList.map(String);
+  const duplicados = imeisDuplicadosEn(dispositivos);
   const codigos = Array.isArray(user.allowedCodigos)
     ? new Set(user.allowedCodigos.map((c) => String(c).toUpperCase()))
     : null;
   return dispositivos.filter((d) => {
-    if (!allowed.has(d.imei)) return false;
+    if (!dispositivoPermitido(d, allowed, duplicados)) return false;
     if (codigos && codigos.size > 0) {
       const code = d.codigo ? String(d.codigo).toUpperCase() : '';
       if (!codigos.has(code)) return false;

@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { iniciarOutbox, setWaSender } from './outbox.js';
 import { recibirMensaje } from './conversacion.js';
+import { atenderMencionGrupo } from './gruposAlerta.js';
 import { reasignarTelefono, registrarMensaje } from './repository.js';
 import { jidDeTelefono, normalizarTelefono, telefonoDeJid } from './telefono.js';
 
@@ -237,7 +238,11 @@ export async function startWaClient() {
     });
     c.on('message', (msg) => {
       const from = String(msg.from || '');
-      if (from.endsWith('@g.us') || msg.fromMe) return;
+      if (msg.fromMe) return;
+      if (from.endsWith('@g.us')) {
+        atenderMencionGrupo({ msg, client: c, jid: from }).catch((e) => console.warn('[wa] grupo', e.message));
+        return;
+      }
       const texto = String(msg.body || '').trim();
       if (!texto) return;
       resolverEntrada(msg, c)
@@ -250,15 +255,18 @@ export async function startWaClient() {
         .catch((e) => console.warn('[wa] mensaje', e.message));
     });
     setWaSender(async (jid, body) => {
+      const mentions = Array.isArray(body?.mentions) ? body.mentions : undefined;
       if (body && typeof body === 'object' && body.media?.base64) {
         const media = new MessageMedia(body.media.mimetype, body.media.base64, body.media.filename);
         const documento = body.media.documento === true || !String(body.media.mimetype).startsWith('image/');
         return c.sendMessage(jid, media, {
           caption: body.text ? String(body.text).slice(0, 900) : undefined,
           sendMediaAsDocument: documento,
+          mentions,
         });
       }
-      return c.sendMessage(jid, typeof body === 'string' ? body : String(body?.text ?? ''));
+      const text = typeof body === 'string' ? body : String(body?.text ?? '');
+      return c.sendMessage(jid, text, mentions ? { mentions } : undefined);
     });
     iniciarOutbox();
     client = c;
@@ -284,6 +292,41 @@ export async function startWaClient() {
   }
   if (reintentar) return startWaClient();
   return estadoWa();
+}
+
+export async function listarGruposEnSesion() {
+  const wid = client?.info?.wid?.user;
+  if (!wid || !client) {
+    const error = new Error('WhatsApp no está conectado. Vincule la sesión antes de leer los grupos.');
+    error.status = 409;
+    throw error;
+  }
+  const chats = await client.getChats();
+  const grupos = [];
+  for (const chat of chats) {
+    if (!chat?.isGroup) continue;
+    const jid = chat.id?._serialized || '';
+    if (!jid.endsWith('@g.us')) continue;
+    let participants = Array.isArray(chat.participants) ? chat.participants : [];
+    grupos.push({
+      jid,
+      nombre: String(chat.name || '').trim() || jid,
+      participantes: participants
+        .map((p) => {
+          const id = p?.id?._serialized || (typeof p?.id === 'string' ? p.id : '');
+          const numero = p?.id?.user || String(id).split('@')[0] || '';
+          return {
+            jid: id,
+            numero,
+            nombre: String(p?.name || p?.pushname || numero || '').trim(),
+            admin: p?.isAdmin === true || p?.isSuperAdmin === true,
+          };
+        })
+        .filter((p) => p.jid),
+    });
+  }
+  grupos.sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+  return grupos;
 }
 
 export async function reiniciarWaClient() {

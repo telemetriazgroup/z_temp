@@ -1,5 +1,7 @@
 import { getUsers, updateOwnProfile } from '../usersRepository.js';
 import { resolveUserEffectiveImeis } from '../gruposEquiposRepository.js';
+import { codigoDesdeRowKey, imeisDuplicadosEn, tokenCubreDispositivo } from '../asignacionEquipo.js';
+import { loadCurrentDispositivos } from '../dashboard/fleetStore.js';
 import {
   aprobarManual,
   contactosAprobadosPorUsernames,
@@ -48,10 +50,17 @@ export async function destinatariosDeAlerta({
   sumar(await contactosParaAlerta(rowKey));
 
   const usernames = [];
+  const flota = await loadCurrentDispositivos().catch(() => []);
+  const duplicados = imeisDuplicadosEn(flota);
+  const codigo = codigoDesdeRowKey(rowKey, imei);
   for (const user of getUsers()) {
     if (!esCliente(user)) continue;
     const imeis = resolveUserEffectiveImeis(user);
-    if (imeis == null || !imei || !imeis.includes(String(imei))) continue;
+    if (imeis == null || !imei) continue;
+    const cubre = imeis.some((token) =>
+      tokenCubreDispositivo(token, { imei, codigo }, duplicados)
+    );
+    if (!cubre) continue;
     usernames.push(user.username);
   }
   if (grupoWhatsapp) {

@@ -19,6 +19,7 @@ import {
   userMayAnalisisTelemetria,
   userMayIncidentes,
 } from '../modules/usuario';
+import { imeisDuplicados } from '../modules/administracion/asignacionEquipo';
 import { AUDIT_ACTIONS } from '../modules/usuario/auditActions';
 import {
   nivelCo2O2Valido,
@@ -313,6 +314,7 @@ export default function EquipoDetalle() {
     findDispositivo,
     refreshFleet,
     upsertDispositivo,
+    data: flotaData,
   } = useDispositivosFleet();
   const localNames = useMemo(() => readDeviceLocalNames(), []);
   const [muestraOficial, setMuestraOficial] = useState<DatoOficialHistorial | null>(null);
@@ -356,12 +358,12 @@ export default function EquipoDetalle() {
     // y devolvemos el dispositivo seleccionado.
     const response = await refreshFleet();
     if (response == null) return findDispositivo(imei, codigoParam || null);
-    const found =
-      response.data.dispositivos.find((row) => {
-        if (row.imei !== imei) return false;
-        if (!codigoParam) return true;
-        return row.codigo === codigoParam;
-      }) ?? null;
+    const matches = response.data.dispositivos.filter((row) => row.imei === imei);
+    const found = codigoParam
+      ? matches.find((row) => row.codigo === codigoParam) ?? null
+      : matches.length === 1
+        ? matches[0]
+        : null;
     if (found) upsertDispositivo(found);
     return found;
   }, [refreshFleet, findDispositivo, upsertDispositivo, imei, codigoParam]);
@@ -467,10 +469,14 @@ export default function EquipoDetalle() {
     [imei, fetchDispositivoActual]
   );
 
+  const imeisRepetidos = useMemo(
+    () => imeisDuplicados(flotaData?.data?.dispositivos ?? []),
+    [flotaData]
+  );
   const sinAcceso =
     dispositivo != null &&
     user != null &&
-    !userMayAccessDispositivo(user, dispositivo);
+    !userMayAccessDispositivo(user, dispositivo, imeisRepetidos);
 
   const nombreMostrado = useMemo(() => {
     if (dispositivo == null) return '';

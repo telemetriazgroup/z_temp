@@ -1,14 +1,46 @@
 import React, { useMemo, useState } from 'react';
 import { Search, Plus } from 'lucide-react';
 import { Input } from './ui/input';
-import { Button } from './ui/button';
+import { Badge } from './ui/badge';
 import { cn } from './ui/utils';
+
+export function EstadoConexionBadge({ estado }: { estado?: string | null }) {
+  const s = String(estado ?? '').trim().toLowerCase();
+  if (s === 'online') {
+    return (
+      <Badge className="bg-emerald-600 hover:bg-emerald-600 text-[10px] h-5 px-1.5 shrink-0">
+        ONLINE
+      </Badge>
+    );
+  }
+  if (s === 'wait') {
+    return (
+      <Badge className="bg-amber-500 hover:bg-amber-500 text-white text-[10px] h-5 px-1.5 shrink-0">
+        WAIT
+      </Badge>
+    );
+  }
+  if (s === 'offline') {
+    return (
+      <Badge variant="destructive" className="text-[10px] h-5 px-1.5 shrink-0">
+        OFFLINE
+      </Badge>
+    );
+  }
+  if (!s) return null;
+  return (
+    <Badge variant="secondary" className="text-[10px] h-5 px-1.5 shrink-0">
+      {s.toUpperCase()}
+    </Badge>
+  );
+}
 
 export interface DeviceSearchOption {
   rowKey: string;
   label: string;
   /** Texto adicional para filtrar (IMEI, nombre, código). */
   searchText: string;
+  estado?: string | null;
   disabled?: boolean;
   disabledReason?: string;
 }
@@ -94,6 +126,8 @@ export function DeviceSearchPicker({
                 )}
               >
                 <span className="min-w-0 truncate">{opt.label}</span>
+                <span className="flex items-center gap-2 shrink-0">
+                  <EstadoConexionBadge estado={opt.estado} />
                 {!opt.disabled ? (
                   <Plus className="h-4 w-4 shrink-0 text-primary" />
                 ) : (
@@ -101,6 +135,7 @@ export function DeviceSearchPicker({
                     {opt.disabledReason ?? 'No disponible'}
                   </span>
                 )}
+                </span>
               </button>
             </li>
           ))}

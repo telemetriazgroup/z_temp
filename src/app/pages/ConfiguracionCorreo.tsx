@@ -9,6 +9,7 @@ import {
   userIsSuperAdmin,
   userMayAccessDataAt,
 } from '../modules/usuario';
+import { imeisDuplicados } from '../modules/administracion/asignacionEquipo';
 import { readDeviceLocalNames } from '../lib/deviceLocalNames';
 import {
   readSmtpConfig,
@@ -135,7 +136,7 @@ import {
   SelectValue,
 } from '../components/ui/select';
 import { generateGrupoCorreoId } from '../modules/correo/grupoCorreoRepository';
-import { DeviceSearchPicker } from '../components/DeviceSearchPicker';
+import { DeviceSearchPicker, EstadoConexionBadge } from '../components/DeviceSearchPicker';
 import {
   Mail,
   Save,
@@ -371,7 +372,9 @@ export default function ConfiguracionCorreo() {
     setLoading(true);
     try {
       const res = await fetchUltimoEstadoDispositivos();
-      setDispositivos(res.data.dispositivos.filter((d) => userMayAccessDispositivo(user, d)));
+      const lista = res.data.dispositivos;
+      const repetidos = imeisDuplicados(lista);
+      setDispositivos(lista.filter((d) => userMayAccessDispositivo(user, d, repetidos)));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error al cargar equipos');
     } finally {
@@ -1028,6 +1031,7 @@ export default function ConfiguracionCorreo() {
         rowKey: rk,
         label,
         searchText,
+        estado: d.estado_conexion,
         disabled: already,
         disabledReason: already ? 'Ya está en este grupo' : undefined,
       };
@@ -2837,7 +2841,15 @@ export default function ConfiguracionCorreo() {
                   <Card key={dev.rowKey} className="p-3 space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
-                        <span className="text-sm font-medium block">{nombreDeEquipoGrupo(dev)}</span>
+                        <span className="text-sm font-medium flex items-center gap-2">
+                          {nombreDeEquipoGrupo(dev)}
+                          <EstadoConexionBadge
+                            estado={
+                              dispositivos.find((d) => deviceRowKey(d) === dev.rowKey)
+                                ?.estado_conexion
+                            }
+                          />
+                        </span>
                         <span className="text-xs text-muted-foreground font-mono">
                           {dev.codigo} · {dev.imei}
                         </span>

@@ -55,6 +55,7 @@ import {
   userIsSuperAdmin,
 } from '../modules/usuario';
 import { AUDIT_ACTIONS } from '../modules/usuario/auditActions';
+import { imeisDuplicados } from '../modules/administracion/asignacionEquipo';
 import {
   ensureAlarmCatalog,
   resolveAlarmDisplayLabel,
@@ -553,9 +554,10 @@ export default function Listado() {
   const loading = fleetLoading && !data;
   const error = fleetError;
 
+  const imeisRepetidos = useMemo(() => imeisDuplicados(dispositivos), [dispositivos]);
   const visibleDispositivos = useMemo(
-    () => dispositivos.filter((d) => userMayAccessDispositivo(user, d)),
-    [dispositivos, user]
+    () => dispositivos.filter((d) => userMayAccessDispositivo(user, d, imeisRepetidos)),
+    [dispositivos, user, imeisRepetidos]
   );
 
   const codigoCounts = useMemo(() => {

@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { FileDown, Loader2, Search } from 'lucide-react';
 import { useAuth } from '../AuthContext';
-import { displayNameForDevice, userMayAccessImei } from '../modules/usuario';
+import { displayNameForDevice, userMayAccessDispositivo } from '../modules/usuario';
+import { imeisDuplicados } from '../modules/administracion/asignacionEquipo';
 import { readDeviceLocalNames, refreshDeviceNamesFromServer } from '../lib/deviceLocalNames';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
@@ -86,10 +87,10 @@ export default function GeneradorInformes() {
   }, [job?.id, job?.status]);
 
   const localNames = useMemo(() => readDeviceLocalNames(), [nombresListos, user]);
-  const flota = useMemo(
-    () => equipos.filter((e) => userMayAccessImei(user, e.imei)),
-    [equipos, user]
-  );
+  const flota = useMemo(() => {
+    const repetidos = imeisDuplicados(equipos);
+    return equipos.filter((e) => userMayAccessDispositivo(user, e, repetidos));
+  }, [equipos, user]);
 
   const nombreAsignado = (equipo: EquipoInforme): string | null => {
     const shown = displayNameForDevice(user, equipo.imei, rowKeyOf(equipo), localNames, SIN_ASIGNAR);

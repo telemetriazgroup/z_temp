@@ -16,6 +16,12 @@ import { readJson } from '../store.js';
 import { normalizarTelefono } from './telefono.js';
 import { listarAsignaciones } from './repository.js';
 import { excluidoDeWhatsapp } from './decisionFlota.js';
+import {
+  claveAsignacion,
+  codigoDesdeRowKey,
+  imeisDuplicadosEn,
+  tokenCubreDispositivo,
+} from '../asignacionEquipo.js';
 
 function nombreLimpio(value) {
   const s = String(value ?? '').trim();
@@ -71,21 +77,57 @@ export function equiposAlertaWhatsappDeTelefono(telefono) {
  * Lista plana de equipos que el contacto puede consultar por chat.
  */
 export async function equiposEfectivosDeContacto(contacto) {
-  const porImei = new Map();
+  const flota = await loadCurrentDispositivos().catch(() => []);
+  const dups = imeisDuplicadosEn(flota);
+  const porClave = new Map();
 
   const add = (parcial) => {
     const imei = String(parcial?.imei || '').trim();
     if (!imei) return;
-    const prev = porImei.get(imei) || {};
-    porImei.set(imei, {
+    let codigo = parcial.codigo || null;
+    if (!codigo && parcial.rowKey) {
+      const desde = codigoDesdeRowKey(parcial.rowKey, imei);
+      if (desde) codigo = desde;
+    }
+    if (!codigo && dups.has(imei)) return;
+    const clave = claveAsignacion(codigo, imei);
+    const prev = porClave.get(clave) || {};
+    porClave.set(clave, {
       imei,
-      rowKey: parcial.rowKey || prev.rowKey || null,
-      codigo: parcial.codigo || prev.codigo || null,
+      rowKey: parcial.rowKey || prev.rowKey || (codigo ? `${codigo}-${imei}` : null),
+      codigo: codigo || prev.codigo || null,
       nombre: parcial.nombre || prev.nombre || null,
       grupoId: parcial.grupoId || prev.grupoId || null,
       grupoNombre: parcial.grupoNombre || prev.grupoNombre || null,
       origen: parcial.origen || prev.origen || 'cuenta',
     });
+  };
+
+  const agregarToken = (token, extra) => {
+    const hits = flota.filter((d) => tokenCubreDispositivo(token, d, dups));
+    if (hits.length) {
+      for (const d of hits) {
+        add({
+          imei: d.imei,
+          codigo: d.codigo,
+          rowKey: d.codigo && d.imei ? `${d.codigo}-${d.imei}` : null,
+          ...extra,
+        });
+      }
+      return;
+    }
+    const t = String(token || '').trim();
+    if (t.includes('|')) {
+      const sep = t.indexOf('|');
+      add({ codigo: t.slice(0, sep), imei: t.slice(sep + 1), ...extra });
+      return;
+    }
+    if (t && !dups.has(t)) add({ imei: t, ...extra });
+  };
+
+  const nombreDeToken = (names, token) => {
+    const t = String(token || '');
+    return nombreLimpio(names[t] || names[t.split('|').pop() || '']);
   };
 
   // 1) Cuenta ZTRACK vinculada por username
@@ -96,7 +138,6 @@ export async function equiposEfectivosDeContacto(contacto) {
     const groupIds = Array.isArray(user.groupIds) ? user.groupIds.map(String) : [];
 
     if (imeis === null && isSuperAdminUser(user)) {
-      const flota = await loadCurrentDispositivos().catch(() => []);
       for (const d of flota) {
         add({
           imei: d.imei,
@@ -111,21 +152,18 @@ export async function equiposEfectivosDeContacto(contacto) {
       for (const gid of groupIds) {
         const g = getGrupoEquipoById(gid);
         if (!g) continue;
-        for (const imei of g.imeis || []) {
-          add({
-            imei,
-            nombre: nombreLimpio(names[imei]),
+        for (const token of g.imeis || []) {
+          agregarToken(token, {
+            nombre: nombreDeToken(names, token),
             grupoId: g.id,
             grupoNombre: g.nombre,
             origen: 'grupo_cuenta',
           });
         }
       }
-      for (const imei of imeis) {
-        if (porImei.has(String(imei))) continue;
-        add({
-          imei,
-          nombre: nombreLimpio(names[imei]),
+      for (const token of imeis) {
+        agregarToken(token, {
+          nombre: nombreDeToken(names, token),
           origen: 'device_access',
         });
       }
@@ -133,9 +171,9 @@ export async function equiposEfectivosDeContacto(contacto) {
   }
 
   // 2) Números que el superadmin agregó a un grupo de alertas.
-  //    Si el equipo ya está en la cuenta, no se duplica y la web no cambia.
   for (const extra of equiposAlertaWhatsappDeTelefono(contacto?.telefono)) {
-    if (porImei.has(String(extra.imei))) continue;
+    const clave = claveAsignacion(extra.codigo || codigoDesdeRowKey(extra.rowKey, extra.imei), extra.imei);
+    if (porClave.has(clave)) continue;
     add(extra);
   }
 
@@ -148,11 +186,10 @@ export async function equiposEfectivosDeContacto(contacto) {
     });
   }
 
-  // 4) Enriquecer con flota actual (nombre, codigo, estado)
-  const flota = await loadCurrentDispositivos().catch(() => []);
-  const byImei = new Map(flota.map((d) => [String(d.imei), d]));
-  for (const e of porImei.values()) {
-    const d = byImei.get(String(e.imei));
+  // 4) Enriquecer con la flota ya cargada, por API + IMEI
+  const byClave = new Map(flota.map((d) => [claveAsignacion(d.codigo, d.imei), d]));
+  for (const e of porClave.values()) {
+    const d = byClave.get(claveAsignacion(e.codigo, e.imei));
     if (!d) continue;
     e.codigo = e.codigo || d.codigo || null;
     e.rowKey = e.rowKey || `${d.codigo || 'EQ'}-${d.imei}`;
@@ -166,14 +203,14 @@ export async function equiposEfectivosDeContacto(contacto) {
     e._flota = d;
   }
 
-  for (const e of porImei.values()) {
+  for (const e of porClave.values()) {
     if (e.nombre && e.celular) continue;
     const deServidor = partirNombre(getDeviceNameByRowKey(e.rowKey) || getDeviceNameByImei(e.imei), e.imei);
     if (!e.nombre) e.nombre = deServidor.nombre;
     if (!e.celular) e.celular = deServidor.celular;
   }
 
-  return [...porImei.values()]
+  return [...porClave.values()]
     .filter((e) => !excluidoDeWhatsapp(e.rowKey || (e.codigo && e.imei ? `${e.codigo}-${e.imei}` : '')))
     .sort((a, b) => etiqueta(a).localeCompare(etiqueta(b), 'es'));
 }
@@ -188,16 +225,17 @@ export async function equiposOrganizadosDeContacto(contacto) {
 
   const grupos = [];
   const enGrupo = new Set();
+  const dups = imeisDuplicadosEn(planos);
+  const claveDe = (e) => claveAsignacion(e.codigo, e.imei);
 
   for (const gid of groupIds) {
     const g = getGrupoEquipoById(gid) || listGruposEquipos().find((x) => x.id === gid);
     if (!g) continue;
     const dispositivos = planos.filter((e) => {
       if (String(e.grupoId) === String(g.id)) return true;
-      if ((g.imeis || []).map(String).includes(String(e.imei))) return true;
-      return false;
+      return (g.imeis || []).some((token) => tokenCubreDispositivo(token, e, dups));
     });
-    dispositivos.forEach((d) => enGrupo.add(String(d.imei)));
+    dispositivos.forEach((d) => enGrupo.add(claveDe(d)));
     grupos.push({
       id: g.id,
       nombre: g.nombre,
@@ -212,11 +250,11 @@ export async function equiposOrganizadosDeContacto(contacto) {
   // Si hay planos con grupoNombre pero sin groupIds (solo wa_asignacion), agrupar por nombre
   const porNombreExtra = new Map();
   for (const e of planos) {
-    if (enGrupo.has(String(e.imei))) continue;
+    if (enGrupo.has(claveDe(e))) continue;
     if (e.grupoNombre) {
       if (!porNombreExtra.has(e.grupoNombre)) porNombreExtra.set(e.grupoNombre, []);
       porNombreExtra.get(e.grupoNombre).push(e);
-      enGrupo.add(String(e.imei));
+      enGrupo.add(claveDe(e));
     }
   }
   for (const [nombre, dispositivos] of porNombreExtra) {
@@ -227,7 +265,7 @@ export async function equiposOrganizadosDeContacto(contacto) {
     });
   }
 
-  const individuales = planos.filter((e) => !enGrupo.has(String(e.imei)));
+  const individuales = planos.filter((e) => !enGrupo.has(claveDe(e)));
   return { grupos, individuales, planos };
 }
 

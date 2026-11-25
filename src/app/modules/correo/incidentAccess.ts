@@ -1,6 +1,8 @@
 import type { User } from '../../types';
 import type { CorreoIncidente, GrupoCorreo, GrupoCorreoDevice } from './types';
-import { userHasFullDeviceAccess, userMayAccessImei, userMayAccessDataAt } from '../usuario';
+import { userMayAccessDataAt } from '../usuario';
+import { effectiveDeviceAccessForUser } from '../administracion/gruposEquiposCache';
+import { accesoCubreDispositivo } from '../administracion/asignacionEquipo';
 
 /** Equipo del grupo visible para el usuario (IMEI en su cuenta + origen permitido). */
 export function userMayAccessCorreoDevice(
@@ -9,7 +11,9 @@ export function userMayAccessCorreoDevice(
 ): boolean {
   if (user == null) return false;
   if (user.superUser === true) return true;
-  if (!userMayAccessImei(user, device.imei)) return false;
+  const eff = effectiveDeviceAccessForUser(user);
+  if (eff === 'all') return true;
+  if (!accesoCubreDispositivo(eff, device, new Set())) return false;
   const allowed = user.allowedCodigos;
   if (Array.isArray(allowed) && allowed.length > 0 && device.codigo) {
     return allowed.includes(device.codigo);

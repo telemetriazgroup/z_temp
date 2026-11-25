@@ -4,6 +4,8 @@ import { MessageCircle, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '../AuthContext';
 import { userIsSuperAdmin } from '../modules/usuario';
+import { fetchUltimoEstadoDispositivos } from '../api/termoking';
+import type { DispositivoUltimoEstado } from '../types';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
@@ -34,6 +36,22 @@ type Mensaje = {
   tipo: string | null;
   creado_en: string;
 };
+type ParticipanteWa = { jid: string; numero: string; nombre: string; admin: boolean };
+type GrupoWa = {
+  jid: string;
+  nombre: string;
+  participantes: ParticipanteWa[];
+  activo: boolean;
+  umbralFueraRango: number;
+  umbralApagado: number;
+  umbralFueraLinea: number;
+  menciones: string[];
+  rowKeys: string[];
+};
+
+function claveEquipo(d: DispositivoUltimoEstado) {
+  return d.codigo ? `${d.codigo}-${d.imei}` : d.imei;
+}
 
 function headers(): HeadersInit {
   const h: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -76,6 +94,10 @@ export default function WhatsAppAlertas() {
   const [hasta, setHasta] = useState('');
   const [espera, setEspera] = useState('2');
   const esperaTocada = useRef(false);
+  const [grupos, setGrupos] = useState<GrupoWa[]>([]);
+  const [grupoAbierto, setGrupoAbierto] = useState('');
+  const [flota, setFlota] = useState<DispositivoUltimoEstado[]>([]);
+  const [buscaEquipo, setBuscaEquipo] = useState('');
 
   const cargarEstado = useCallback(async () => {
     const estado = await api<{ data: Sesion; tiempos?: { gapChatSeg?: number } }>('/estado');
@@ -106,6 +128,41 @@ export default function WhatsAppAlertas() {
     const t = setInterval(() => cargarEstado().catch(() => {}), 4000);
     return () => clearInterval(t);
   }, [user, cargarEstado, cargarChats]);
+
+  async function leerGrupos() {
+    try {
+      const body = await api<{ data: GrupoWa[] }>('/grupos');
+      setGrupos(body.data);
+      if (flota.length === 0) {
+        const flotaRes = await fetchUltimoEstadoDispositivos();
+        setFlota(flotaRes.data.dispositivos ?? []);
+      }
+      toast.success(`${body.data.length} grupo(s) leídos. Ninguno se activa solo.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'No se pudieron leer los grupos');
+    }
+  }
+
+  function patchGrupo(jid: string, parcial: Partial<GrupoWa>) {
+    setGrupos((prev) => prev.map((g) => (g.jid === jid ? { ...g, ...parcial } : g)));
+  }
+
+  async function guardarGrupo(grupo: GrupoWa) {
+    try {
+      const body = await api<{ data: GrupoWa }>('/grupos', {
+        method: 'PUT',
+        body: JSON.stringify(grupo),
+      });
+      patchGrupo(grupo.jid, body.data);
+      toast.success(
+        body.data.activo
+          ? `Alertas activas solo para ${grupo.nombre}`
+          : `${grupo.nombre} quedó sin alertas`
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'No se pudo guardar el grupo');
+    }
+  }
 
   async function guardarEspera() {
     const n = Number(espera);
@@ -212,6 +269,173 @@ export default function WhatsAppAlertas() {
               <Button variant="outline" onClick={() => guardarEspera()}>
                 Guardar
               </Button>
+            </div>
+          </section>
+
+          <section className="rounded-lg border p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="font-semibold">Grupos de WhatsApp</h2>
+                <p className="text-sm text-muted-foreground max-w-3xl">
+                  Estar en un grupo no activa las alertas. Elija el grupo, los equipos, las horas y a quién
+                  etiquetar, y guarde. El envío automático va de 5:00 a 22:00, hora de Perú. Fuera de ese
+                  horario el bot solo responde si lo mencionan y piden una gráfica.
+                </p>
+              </div>
+              <Button variant="outline" onClick={() => leerGrupos()}>
+                <RefreshCw className="h-4 w-4 mr-1" /> Leer grupos
+              </Button>
+            </div>
+            {grupos.length === 0 && (
+              <p className="text-sm text-muted-foreground">Todavía no hay grupos cargados.</p>
+            )}
+            <div className="space-y-3">
+              {grupos.map((grupo) => {
+                const abierto = grupoAbierto === grupo.jid;
+                const q = buscaEquipo.trim().toLowerCase();
+                const marcado = (d: DispositivoUltimoEstado) => grupo.rowKeys.includes(claveEquipo(d));
+                const seleccionados = flota.filter(marcado);
+                const equipos = flota
+                  .filter((d) => !marcado(d))
+                  .filter((d) => {
+                    if (!q) return false;
+                    return `${d.codigo ?? ''} ${d.imei}`.toLowerCase().includes(q);
+                  })
+                  .slice(0, 12);
+                return (
+                  <div key={grupo.jid} className="rounded-md border">
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
+                      onClick={() => setGrupoAbierto(abierto ? '' : grupo.jid)}
+                    >
+                      <span>
+                        <span className="font-medium block">{grupo.nombre}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {grupo.participantes.length} participante(s)
+                          {grupo.activo ? ' · alertas activas' : ' · sin alertas'}
+                        </span>
+                      </span>
+                      <span className={grupo.activo ? 'text-emerald-600 text-sm' : 'text-muted-foreground text-sm'}>
+                        {grupo.activo ? 'Activo' : 'Inactivo'}
+                      </span>
+                    </button>
+                    {abierto && (
+                      <div className="space-y-3 border-t px-3 py-3">
+                        <label className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={grupo.activo}
+                            onChange={(e) => patchGrupo(grupo.jid, { activo: e.target.checked })}
+                          />
+                          Enviar alertas a este grupo
+                        </label>
+                        <div className="grid gap-2 sm:grid-cols-3">
+                          <label className="text-xs">
+                            Fuera de rango (horas)
+                            <Input
+                              type="number"
+                              min={1}
+                              max={24}
+                              className="mt-1"
+                              value={grupo.umbralFueraRango}
+                              onChange={(e) => patchGrupo(grupo.jid, { umbralFueraRango: Number(e.target.value) })}
+                            />
+                          </label>
+                          <label className="text-xs">
+                            Apagado (horas)
+                            <Input
+                              type="number"
+                              min={1}
+                              max={24}
+                              className="mt-1"
+                              value={grupo.umbralApagado}
+                              onChange={(e) => patchGrupo(grupo.jid, { umbralApagado: Number(e.target.value) })}
+                            />
+                          </label>
+                          <label className="text-xs">
+                            Fuera de línea (horas)
+                            <Input
+                              type="number"
+                              min={1}
+                              max={24}
+                              className="mt-1"
+                              value={grupo.umbralFueraLinea}
+                              onChange={(e) => patchGrupo(grupo.jid, { umbralFueraLinea: Number(e.target.value) })}
+                            />
+                          </label>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium mb-1">Etiquetar en el mensaje</p>
+                          <div className="max-h-36 overflow-auto rounded border">
+                            {grupo.participantes.length === 0 && (
+                              <p className="p-2 text-xs text-muted-foreground">Este grupo no devolvió participantes.</p>
+                            )}
+                            {grupo.participantes.map((p) => (
+                              <label key={p.jid} className="flex items-center gap-2 border-b px-2 py-1 text-xs">
+                                <input
+                                  type="checkbox"
+                                  checked={grupo.menciones.includes(p.jid)}
+                                  onChange={(e) => {
+                                    const menciones = e.target.checked
+                                      ? [...grupo.menciones, p.jid]
+                                      : grupo.menciones.filter((x) => x !== p.jid);
+                                    patchGrupo(grupo.jid, { menciones });
+                                  }}
+                                />
+                                <span className="truncate">
+                                  {p.nombre || p.numero}
+                                  {p.admin ? ' · admin' : ''} · {p.numero}
+                                </span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium mb-1">Equipos que este grupo recibe</p>
+                          <Input
+                            value={buscaEquipo}
+                            onChange={(e) => setBuscaEquipo(e.target.value)}
+                            placeholder="Filtrar por IMEI, API o nombre"
+                            className="mb-2"
+                          />
+                          <div className="max-h-40 overflow-auto rounded border">
+                            {seleccionados.length === 0 && equipos.length === 0 && (
+                              <p className="p-2 text-xs text-muted-foreground">
+                                Escriba un IMEI o la API para marcar equipos. Nada queda activo hasta guardar.
+                              </p>
+                            )}
+                            {seleccionados.concat(equipos).map((d) => {
+                              const clave = claveEquipo(d);
+                              return (
+                                <label key={clave} className="flex items-center gap-2 border-b px-2 py-1 text-xs">
+                                  <input
+                                    type="checkbox"
+                                    checked={grupo.rowKeys.includes(clave)}
+                                    onChange={(e) => {
+                                      const rowKeys = e.target.checked
+                                        ? [...grupo.rowKeys, clave]
+                                        : grupo.rowKeys.filter((x) => x !== clave);
+                                      patchGrupo(grupo.jid, { rowKeys });
+                                    }}
+                                  />
+                                  <span className="truncate">
+                                    {d.codigo} · {d.imei}
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                          <p className="mt-1 text-[11px] text-muted-foreground">
+                            {grupo.rowKeys.length} equipo(s) marcado(s).
+                          </p>
+                        </div>
+                        <Button onClick={() => guardarGrupo(grupo)}>Guardar este grupo</Button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </section>
 

@@ -1,6 +1,7 @@
 import type { User, UserCategory } from '../../types';
 import { IFF_STYLE_ACCOUNT_USERNAMES } from './bootstrapUsers';
 import { effectiveDeviceAccessForUser } from '../administracion/gruposEquiposCache';
+import { accesoCubreDispositivo } from '../administracion/asignacionEquipo';
 
 export function resolveUserCategory(user: User | null | undefined): UserCategory {
   if (user == null) return 'user';
@@ -79,15 +80,24 @@ export function userMayAccessImei(user: User | null, imei: string): boolean {
   if (userHasFullDeviceAccess(user)) return true;
   const eff = effectiveDeviceAccessForUser(user);
   if (eff === 'all') return true;
-  return eff.includes(imei);
+  return eff.some((token) => {
+    if (token === imei) return true;
+    const sep = token.lastIndexOf('|');
+    return sep > 0 && token.slice(sep + 1) === imei;
+  });
 }
 
 /** IMEI + origen (TUNEL / STARCOOL / STARCOOL2 / TERMOKING) según perfil del usuario. */
 export function userMayAccessDispositivo(
   user: User | null,
-  dispositivo: import('../../types').DispositivoUltimoEstado
+  dispositivo: { imei: string; codigo?: string | null },
+  duplicados?: Set<string>
 ): boolean {
-  if (!userMayAccessImei(user, dispositivo.imei)) return false;
+  if (user == null) return false;
+  if (userHasFullDeviceAccess(user)) return true;
+  const eff = effectiveDeviceAccessForUser(user);
+  if (eff === 'all') return true;
+  if (!accesoCubreDispositivo(eff, dispositivo, duplicados ?? new Set())) return false;
   const allowed = user?.allowedCodigos;
   if (!Array.isArray(allowed) || allowed.length === 0) return true;
   if (dispositivo.codigo == null) return true;

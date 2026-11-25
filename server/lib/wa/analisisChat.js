@@ -15,6 +15,13 @@ import {
   marcaDe,
   pieMenu,
 } from './consultaEquipo.js';
+import {
+  compresorAlto,
+  esTermokingOTunel,
+  evaporadorSaturado,
+  HORAS_COMPRESOR,
+  HORAS_EVAPORADOR,
+} from '../sensoresAlerta.js';
 
 function horasTexto(h) {
   if (h == null || Number.isNaN(h)) return '—';
@@ -80,6 +87,48 @@ function fraseCruce(filas, sinceIso, banda) {
   const alto = Math.round((set + banda.max) * 10) / 10;
   const lado = ret < bajo ? 'por debajo del mínimo' : ret > alto ? 'por encima del máximo' : 'fuera de la banda';
   return ` El retorno detectado fue *${fmtNumero(ret)}* °C, ${lado}. En ese momento lo normal era *${fmtNumero(bajo)}* a *${fmtNumero(alto)}* °C.`;
+}
+
+function rachaActual(filas, pred) {
+  const orden = [...filas]
+    .map((row) => ({ row, t: timestampRegistroHistorial(row) }))
+    .filter((x) => Number.isFinite(x.t))
+    .sort((a, b) => a.t - b.t);
+  if (!orden.length || !pred(orden[orden.length - 1].row)) return null;
+  let i = orden.length - 1;
+  while (i > 0 && pred(orden[i - 1].row)) i -= 1;
+  return {
+    horas: (orden[orden.length - 1].t - orden[i].t) / 3600000,
+    since: new Date(orden[i].t).toISOString(),
+    row: orden[orden.length - 1].row,
+  };
+}
+
+function lineasSensores(filas, codigo) {
+  const lineas = [];
+  const eva = rachaActual(filas, (row) => evaporadorSaturado(row.set_point, row.evaporation_coil));
+  if (eva && eva.horas >= HORAS_EVAPORADOR) {
+    const actual = Number(eva.row.evaporation_coil);
+    const set = Number(eva.row.set_point);
+    lineas.push(
+      `Evaporador saturado, posible obstrucción por hielo, desde ${fechaCorta(eva.since)} (${horasTexto(eva.horas)}).` +
+        (Number.isFinite(actual)
+          ? ` Ahora el evaporador está en *${fmtNumero(actual)}* °C${Number.isFinite(set) ? ` y el set en *${fmtNumero(set)}* °C` : ''}.`
+          : '') +
+        ' Conviene realizar defrost.'
+    );
+  }
+  if (esTermokingOTunel(codigo)) {
+    const comp = rachaActual(filas, (row) => compresorAlto(row.compress_coil_1));
+    if (comp && comp.horas >= HORAS_COMPRESOR) {
+      const actual = Number(comp.row.compress_coil_1);
+      lineas.push(
+        `Temperatura alta de compresor desde ${fechaCorta(comp.since)} (${horasTexto(comp.horas)}).` +
+          (Number.isFinite(actual) ? ` Ahora está en *${fmtNumero(actual)}* °C.` : '')
+      );
+    }
+  }
+  return lineas;
 }
 
 function filaConCodigo(row, codigo) {
@@ -177,6 +226,9 @@ export async function textoAnalisis(e, username) {
   } else {
     lineas.push(`Fuente de las 12 h: ${doce.origen}.`);
   }
+
+  const filasSensor = filas3.length ? filas3 : filas12;
+  lineas.push(...lineasSensores(filasSensor, e.codigo));
 
   lineas.push('', pieMenu());
   return lineas.filter((x) => x != null).join('\n');

@@ -30,14 +30,15 @@ function horasTexto(h) {
 export async function resumenFlota() {
   const filas = await loadCurrentDispositivos().catch(() => []);
   const rank = { online: 4, wait: 3, offline: 2, historial: 1 };
-  const porImei = new Map();
+  const porEquipo = new Map();
   for (const d of filas) {
-    const k = String(d?.imei || '').trim();
-    if (!k) continue;
-    const prev = porImei.get(k);
-    if (!prev || (rank[estadoDe(d)] ?? 0) > (rank[estadoDe(prev)] ?? 0)) porImei.set(k, d);
+    const imei = String(d?.imei || '').trim();
+    if (!imei) continue;
+    const k = `${String(d?.codigo || '').toUpperCase()}|${imei}`;
+    const prev = porEquipo.get(k);
+    if (!prev || (rank[estadoDe(d)] ?? 0) > (rank[estadoDe(prev)] ?? 0)) porEquipo.set(k, d);
   }
-  const flota = [...porImei.values()];
+  const flota = [...porEquipo.values()];
   const cuentas = { online: 0, wait: 0, offline: 0, historial: 0, otros: 0 };
   const enLinea = [];
   for (const d of flota) {

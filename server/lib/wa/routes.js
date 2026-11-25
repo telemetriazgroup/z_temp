@@ -19,7 +19,8 @@ import {
   setSilencio,
 } from './repository.js';
 import { enviarPrueba } from './conversacion.js';
-import { enviarMensajePrueba, estadoWa, reiniciarWaClient, startWaClient } from './client.js';
+import { enviarMensajePrueba, estadoWa, listarGruposEnSesion, reiniciarWaClient, startWaClient } from './client.js';
+import { guardarGrupoAlerta, mezclarGrupos } from './gruposAlerta.js';
 import { guardarNumeroPropio, sincronizarNumeroUsuario } from './cuenta.js';
 import { normalizarTelefono } from './telefono.js';
 import { leerAjustesWa, guardarGapChatSeg } from './ajustes.js';
@@ -412,6 +413,28 @@ export function createWaRouter({ actorOf }) {
     const contacto = await contactoPorUsername(req.params.username);
     if (!contacto) return res.status(404).json({ ok: false, error: 'Ese usuario no tiene número de WhatsApp' });
     res.json({ ok: true, data: await aprobarManual(contacto.id) });
+  });
+
+  r.get('/grupos', async (req, res) => {
+    const user = actorOf(req);
+    if (!esSuper(user)) return res.status(403).json({ ok: false, error: 'Se requiere superadmin' });
+    try {
+      const vivos = await listarGruposEnSesion();
+      res.json({ ok: true, data: mezclarGrupos(vivos) });
+    } catch (e) {
+      res.status(e.status || 500).json({ ok: false, error: e.message });
+    }
+  });
+
+  r.put('/grupos', async (req, res) => {
+    const user = actorOf(req);
+    if (!esSuper(user)) return res.status(403).json({ ok: false, error: 'Se requiere superadmin' });
+    try {
+      const data = guardarGrupoAlerta(req.body || {});
+      res.json({ ok: true, data });
+    } catch (e) {
+      res.status(e.status || 400).json({ ok: false, error: e.message });
+    }
   });
 
   r.get('/export', async (_req, res) => {

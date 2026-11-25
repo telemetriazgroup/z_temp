@@ -4,6 +4,7 @@ import { getEnvios, getIncidentes } from '../alertEngine.js';
 import { getUserByUsername } from '../usersRepository.js';
 import { getDeviceNameByImei } from '../deviceNamesRepository.js';
 import { deviceRowKey } from '../telemetry.js';
+import { dispositivoPermitido, imeisDuplicadosEn } from '../asignacionEquipo.js';
 import {
   getPeriodAverages,
   getDailySeries,
@@ -101,16 +102,19 @@ function weekStatusFromSeries(series, averages) {
 }
 
 function buildUrgent(dispositivosVisibles, imeisFilter, limit = 5, accessUser = null) {
-  const allowed =
+  const tokens =
     Array.isArray(imeisFilter) && imeisFilter.length > 0
-      ? new Set(imeisFilter)
+      ? imeisFilter.map(String)
       : null;
+  const duplicados = imeisDuplicadosEn(dispositivosVisibles);
+  const permitido = (ev) =>
+    !tokens || dispositivoPermitido({ imei: ev.imei, codigo: ev.codigo }, tokens, duplicados);
 
   const withinAccess = (imei, atIso) =>
     !accessUser || eventAtOnOrAfterAccess(accessUser, imei, atIso);
 
   const envios = getEnvios()
-    .filter((e) => !allowed || allowed.has(e.imei))
+    .filter((e) => permitido(e))
     .filter((e) => withinAccess(e.imei, e.sentAt))
     .slice(0, limit)
     .map((e) => ({
@@ -126,7 +130,7 @@ function buildUrgent(dispositivosVisibles, imeisFilter, limit = 5, accessUser = 
 
   const alarmas = getIncidentes()
     .filter((i) => i.archivado !== true && i.estado === 'pendiente')
-    .filter((i) => !allowed || allowed.has(i.imei))
+    .filter((i) => permitido(i))
     .filter((i) => withinAccess(i.imei, i.enviadoAt || i.createdAt || i.diaCalendario))
     .slice(0, limit)
     .map((i) => ({

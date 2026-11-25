@@ -13,6 +13,11 @@ import {
   displayNameForDevice,
 } from '../modules/usuario';
 import {
+  accesoCubreDispositivo,
+  imeisDuplicados,
+  tokenDeDispositivo,
+} from '../modules/administracion/asignacionEquipo';
+import {
   fetchGruposEquipos,
   createGrupoEquipo,
   updateGrupoEquipoOnServer,
@@ -164,10 +169,30 @@ export default function Administracion() {
     return new Set(eff);
   }, [isSuper, currentUser]);
 
+  const imeisRepetidos = useMemo(() => imeisDuplicados(dispositivos), [dispositivos]);
+
+  const dispositivoPorToken = useCallback(
+    (token: string) => {
+      const t = String(token || '').trim();
+      if (t.includes('|')) {
+        const sep = t.indexOf('|');
+        const codigo = t.slice(0, sep).toUpperCase();
+        const imei = t.slice(sep + 1);
+        return dispositivos.find(
+          (d) => d.imei === imei && String(d.codigo || '').toUpperCase() === codigo
+        );
+      }
+      const hits = dispositivos.filter((d) => d.imei === t);
+      return hits.length === 1 ? hits[0] : undefined;
+    },
+    [dispositivos]
+  );
+
   const actorAssignableDevices = useMemo(() => {
     if (actorAssignableImeis === 'all') return dispositivos;
-    return dispositivos.filter((d) => actorAssignableImeis.has(d.imei));
-  }, [dispositivos, actorAssignableImeis]);
+    const tokens = [...actorAssignableImeis];
+    return dispositivos.filter((d) => accesoCubreDispositivo(tokens, d, imeisRepetidos));
+  }, [dispositivos, actorAssignableImeis, imeisRepetidos]);
 
   const actorAssignableGrupos = useMemo(() => {
     if (actorAssignableImeis === 'all') return grupos;
@@ -176,9 +201,21 @@ export default function Administracion() {
     );
     return grupos.filter((g) => {
       if (actorGids.has(g.id)) return true;
-      return (g.imeis ?? []).every((imei) => actorAssignableImeis.has(String(imei)));
+      const tokens = [...actorAssignableImeis];
+      return (g.imeis ?? []).every((token) => {
+        const t = String(token);
+        if (t.includes('|')) {
+          const sep = t.indexOf('|');
+          return accesoCubreDispositivo(
+            tokens,
+            { codigo: t.slice(0, sep), imei: t.slice(sep + 1) },
+            imeisRepetidos
+          );
+        }
+        return accesoCubreDispositivo(tokens, { imei: t }, imeisRepetidos);
+      });
     });
-  }, [grupos, actorAssignableImeis, currentUser]);
+  }, [grupos, actorAssignableImeis, currentUser, imeisRepetidos]);
 
   const filteredUsers = useMemo(() => {
     const q = userSearch.trim().toLowerCase();
@@ -230,12 +267,6 @@ export default function Administracion() {
     },
     [empresas]
   );
-
-  const deviceByImei = useMemo(() => {
-    const m = new Map<string, DispositivoUltimoEstado>();
-    for (const d of dispositivos) m.set(d.imei, d);
-    return m;
-  }, [dispositivos]);
 
   const filteredGruposAssign = useMemo(() => {
     const q = groupSearch.trim().toLowerCase();
@@ -289,10 +320,19 @@ export default function Administracion() {
     );
   };
 
-  const toggleDraftImei = (imei: string) => {
-    setDraftImeis((prev) =>
-      prev.includes(imei) ? prev.filter((x) => x !== imei) : [...prev, imei]
-    );
+  const toggleAsignacion = (
+    d: DispositivoUltimoEstado,
+    setActuales: React.Dispatch<React.SetStateAction<string[]>>
+  ) => {
+    const token = tokenDeDispositivo(d, imeisRepetidos);
+    setActuales((prev) => {
+      const sinAmbiguo = imeisRepetidos.has(d.imei)
+        ? prev.filter((x) => x !== d.imei)
+        : prev;
+      return sinAmbiguo.includes(token)
+        ? sinAmbiguo.filter((x) => x !== token)
+        : [...sinAmbiguo, token];
+    });
   };
 
   const saveAssignments = async () => {
@@ -595,7 +635,7 @@ export default function Administracion() {
                       ) : (
                         <div className="flex flex-wrap gap-1.5">
                           {draftImeis.map((imei) => {
-                            const d = deviceByImei.get(imei);
+                            const d = dispositivoPorToken(imei);
                             const name = d
                               ? deviceLabel(d, localNames, currentUser)
                               : imei;
@@ -632,7 +672,7 @@ export default function Administracion() {
                               </div>
                               <ul className="mt-1.5 space-y-1 pl-1">
                                 {g.imeis.map((imei) => {
-                                  const d = deviceByImei.get(imei);
+                                  const d = dispositivoPorToken(imei);
                                   return (
                                     <li
                                       key={imei}
@@ -680,7 +720,7 @@ export default function Administracion() {
                             {[
                               ...new Set([...draftImeis, ...imeisViaGrupos]),
                             ].map((imei) => {
-                              const d = deviceByImei.get(imei);
+                              const d = dispositivoPorToken(imei);
                               const name = d
                                 ? deviceLabel(d, localNames, currentUser)
                                 : imei;
@@ -841,8 +881,8 @@ export default function Administracion() {
                             <li key={`${d.codigo ?? ''}-${d.imei}`}>
                               <label className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50 cursor-pointer text-sm">
                                 <Checkbox
-                                  checked={draftImeis.includes(d.imei)}
-                                  onCheckedChange={() => toggleDraftImei(d.imei)}
+                                  checked={accesoCubreDispositivo(draftImeis, d, imeisRepetidos)}
+                                  onCheckedChange={() => toggleAsignacion(d, setDraftImeis)}
                                 />
                                 <span className="min-w-0 flex-1">
                                   <span className="font-medium block truncate text-xs">
@@ -852,6 +892,11 @@ export default function Administracion() {
                                     {d.codigo ? `${d.codigo} · ` : ''}
                                     {d.imei}
                                   </span>
+                                  {imeisRepetidos.has(d.imei) ? (
+                                    <span className="text-[10px] text-amber-700 block">
+                                      Este IMEI está en otra API. Marque solo este origen.
+                                    </span>
+                                  ) : null}
                                 </span>
                                 {statusBadge(d.estado_conexion)}
                               </label>
@@ -1001,20 +1046,20 @@ export default function Administracion() {
                   <li key={`${d.codigo ?? ''}-${d.imei}`}>
                     <label className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50 cursor-pointer text-sm">
                       <Checkbox
-                        checked={gImeis.includes(d.imei)}
-                        onCheckedChange={() =>
-                          setGImeis((prev) =>
-                            prev.includes(d.imei)
-                              ? prev.filter((x) => x !== d.imei)
-                              : [...prev, d.imei]
-                          )
-                        }
+                        checked={accesoCubreDispositivo(gImeis, d, imeisRepetidos)}
+                        onCheckedChange={() => toggleAsignacion(d, setGImeis)}
                       />
                       <span className="min-w-0 flex-1 truncate text-xs">
                         {deviceLabel(d, localNames, currentUser)}
                         <span className="text-muted-foreground font-mono block text-[10px]">
+                          {d.codigo ? `${d.codigo} · ` : ''}
                           {d.imei}
                         </span>
+                        {imeisRepetidos.has(d.imei) ? (
+                          <span className="text-amber-700 block">
+                            Este IMEI está en otra API. Marque solo este origen.
+                          </span>
+                        ) : null}
                       </span>
                       {statusBadge(d.estado_conexion)}
                     </label>

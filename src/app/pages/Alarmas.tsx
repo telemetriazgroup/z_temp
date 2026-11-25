@@ -10,6 +10,7 @@ import {
   displayNameForDevice,
   userCanManageUsers,
 } from '../modules/usuario';
+import { imeisDuplicados } from '../modules/administracion/asignacionEquipo';
 import {
   ensureAlarmCatalog,
   getDeviceAlarmEvents,
@@ -73,8 +74,9 @@ export default function Alarmas() {
     try {
       ensureAlarmCatalog();
       const response = await fetchUltimoEstadoDispositivos();
+      const repetidos = imeisDuplicados(response.data.dispositivos);
       const visible = response.data.dispositivos.filter((d) =>
-        userMayAccessDispositivo(user, d)
+        userMayAccessDispositivo(user, d, repetidos)
       );
       setLiveDevices(visible);
       const synced = syncDeviceAlarmsFromTelemetry(visible);

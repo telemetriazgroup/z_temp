@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import { fetchUltimoEstadoDispositivos } from '../../api/termoking';
 import { useAuth } from '../../AuthContext';
 import { userMayAccessDispositivo, displayNameForDevice } from '../usuario';
+import { imeisDuplicados } from '../administracion/asignacionEquipo';
 import { readDeviceLocalNames } from '../../lib/deviceLocalNames';
 import {
   ALERT_POLL_INTERVAL_MS,
@@ -29,8 +30,9 @@ export function CorreoAlertRunner() {
     runningRef.current = true;
     try {
       const res = await fetchUltimoEstadoDispositivos();
+      const repetidos = imeisDuplicados(res.data.dispositivos);
       const dispositivos = res.data.dispositivos.filter((d) =>
-        userMayAccessDispositivo(user, d)
+        userMayAccessDispositivo(user, d, repetidos)
       );
       const localNames = readDeviceLocalNames();
 

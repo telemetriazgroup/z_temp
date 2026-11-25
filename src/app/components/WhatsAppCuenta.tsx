@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { useAuth } from '../AuthContext';
 import { userMayAccessDispositivo } from '../modules/usuario';
+import { imeisDuplicados } from '../modules/administracion/asignacionEquipo';
 import { fetchUltimoEstadoDispositivos } from '../api/termoking';
 import { deviceRowKey } from '../modules/correo/alertEngine';
 import type { DispositivoUltimoEstado } from '../types';
@@ -68,10 +69,10 @@ export function WhatsAppCuenta() {
       .catch(() => {});
   }, []);
 
-  const mios = useMemo(
-    () => equipos.filter((d) => userMayAccessDispositivo(user, d)).slice(0, 80),
-    [equipos, user]
-  );
+  const mios = useMemo(() => {
+    const repetidos = imeisDuplicados(equipos);
+    return equipos.filter((d) => userMayAccessDispositivo(user, d, repetidos)).slice(0, 80);
+  }, [equipos, user]);
 
   async function guardar() {
     setGuardando(true);

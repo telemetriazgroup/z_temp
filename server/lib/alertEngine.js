@@ -25,6 +25,7 @@ import { buildTrazabilidadEmailPack } from './emailTraceability.js';
 import { deviceRowKey } from './telemetry.js';
 import { loadCurrentDispositivos, loadSourceDispositivos } from './dashboard/fleetStore.js';
 import { encolarAlertaEquipo } from './wa/alertas.js';
+import { evaluarAvisosGrupoWhatsapp } from './wa/gruposAlerta.js';
 import { sincronizarControlWhatsapp } from './wa/controlFlota.js';
 import { recordarIncidentes } from './wa/incidentes.js';
 import { permiteReporteAutomatico } from './wa/decisionFlota.js';
@@ -33,6 +34,13 @@ import { getApiAsistenciaEmails } from './apiAsistenciaRepository.js';
 import { detectarEnlacesCaidos, horasSinComunicacion } from './enlaceCaido.js';
 import { getLinkStatuses } from './dashboard/linkHealth.js';
 import { getDeviceNameByImei } from './deviceNamesRepository.js';
+import {
+  evaporadorSaturado,
+  compresorAlto,
+  esTermokingOTunel,
+  HORAS_EVAPORADOR,
+  HORAS_COMPRESOR,
+} from './sensoresAlerta.js';
 import { resolveUmbralesForDevice, getDeviceAlertConfig, getDeviceAlertConfigMap, saveDeviceAlertConfig, resolveRangoOptsForDevice, coberturaFueraLineaDe } from './deviceAlertConfigRepository.js';
 import { enVentanaSinSenal, cuentaCliente, HORAS_CLIENTE_TRAS_COBERTURA } from './coberturaHoraria.js';
 import { isEquipoApagado, isEquipoEncendido, defrostActivoEfectivo } from './powerState.js';
@@ -281,6 +289,158 @@ function detalleAlertaWhatsapp(estado, since, umbralHoras, horasTotal, detalleCo
     return `Hoy lleva más de ${formatUmbralHoras(umbralHoras)} ${estado}. El evento lleva ${horasTotal} h en total, desde ${formatRef(since)}.`;
   }
   return detalleCorto;
+}
+
+function umbralesSensor(inicio, horas) {
+  const tope = Math.min(Math.floor(horas), 24 * 14);
+  const out = [];
+  for (let h = inicio; h <= tope; h += 1) out.push(h);
+  return out;
+}
+
+async function asegurarInicioSensor(state, rowKey, kind, activo, dispositivo, pred, now) {
+  if (!state.sensores) state.sensores = {};
+  if (!state.sensores[rowKey]) state.sensores[rowKey] = {};
+  const slot = state.sensores[rowKey];
+  if (!activo) {
+    if (slot[kind]) delete slot[kind];
+    return;
+  }
+  if (slot[kind]?.since) return;
+  let sinceMs = now.getTime();
+  try {
+    if (dispositivo?.codigo && dispositivo?.imei) {
+      const hist = await fetchHistorialUltimasHoras(dispositivo.codigo, dispositivo.imei, 12, now);
+      const datos = Array.isArray(hist?.datos) ? hist.datos : [];
+      const orden = datos
+        .map((row) => ({ row, t: timestampRegistroHistorial(row) }))
+        .filter((x) => Number.isFinite(x.t))
+        .sort((a, b) => a.t - b.t);
+      if (orden.length && pred(orden[orden.length - 1].row)) {
+        let i = orden.length - 1;
+        while (i > 0 && pred(orden[i - 1].row)) i -= 1;
+        sinceMs = orden[i].t;
+      }
+    }
+  } catch {
+    sinceMs = now.getTime();
+  }
+  slot[kind] = { since: new Date(sinceMs).toISOString(), sentUmbrales: [] };
+}
+
+function tickSensor(state, rowKey, kind, activo, umbralInicial, now) {
+  if (!activo) return null;
+  const ep = state.sensores?.[rowKey]?.[kind];
+  if (!ep?.since) return null;
+  const horasTotal = (now.getTime() - new Date(ep.since).getTime()) / 3600000;
+  if (!(horasTotal >= umbralInicial)) return null;
+  const umbrales = umbralesSensor(umbralInicial, horasTotal);
+  const plan = planUmbralAviso(umbrales, horasTotal, ep.sentUmbrales, now, ep);
+  if (plan.enviar == null) return null;
+  return {
+    since: ep.since,
+    umbral: plan.enviar,
+    horasTotal: Math.round(horasTotal * 10) / 10,
+    marcar() {
+      caducarUmbrales(ep, plan.caducar);
+      markUmbralEnviado(ep, plan.enviar, umbrales);
+      cerrarEsperaUmbral(ep, plan, now);
+    },
+  };
+}
+
+function fmtC(n) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return null;
+  return Math.round(x * 10) / 10;
+}
+
+/**
+ * Evaporador (todas las APIs) y compresor (Thermoking/TUNEL).
+ * Un solo texto: si ya sale otra alerta de WhatsApp, se anexa ahí.
+ */
+async function prepararAvisoSensores(state, rowKey, dispositivo, now) {
+  const dato = dispositivo?.ultimo_dato || {};
+  const set = dato.set_point;
+  const eva = dato.evaporation_coil;
+  const comp = dato.compress_coil_1;
+  const evaActivo = evaporadorSaturado(set, eva);
+  const compActivo = esTermokingOTunel(dispositivo?.codigo) && compresorAlto(comp);
+  await asegurarInicioSensor(
+    state,
+    rowKey,
+    'evaporador',
+    evaActivo,
+    dispositivo,
+    (row) => evaporadorSaturado(row.set_point, row.evaporation_coil),
+    now
+  );
+  await asegurarInicioSensor(
+    state,
+    rowKey,
+    'compresor',
+    compActivo,
+    dispositivo,
+    (row) => compresorAlto(row.compress_coil_1),
+    now
+  );
+  const evaPlan = tickSensor(
+    state,
+    rowKey,
+    'evaporador',
+    evaActivo,
+    HORAS_EVAPORADOR,
+    now
+  );
+  const compPlan = tickSensor(
+    state,
+    rowKey,
+    'compresor',
+    compActivo,
+    HORAS_COMPRESOR,
+    now
+  );
+  if (!evaPlan && !compPlan) return null;
+  const lineas = [];
+  if (evaPlan) {
+    const lectura = fmtC(eva);
+    const setTxt = fmtC(set);
+    lineas.push(
+      detalleAlertaWhatsapp(
+        'con evaporador saturado, posible obstrucción por hielo',
+        evaPlan.since,
+        evaPlan.umbral,
+        evaPlan.horasTotal,
+        `Evaporador saturado, posible obstrucción por hielo, desde ${formatRef(evaPlan.since)}. Lleva ${evaPlan.horasTotal} h.${lectura != null ? ` Evaporador ${lectura} °C` : ''}${setTxt != null ? `, set ${setTxt} °C` : ''}. Aviso de ${formatUmbralHoras(evaPlan.umbral)}. Conviene realizar defrost.`
+      ) + (evaPlan.horasTotal > 24 ? ' Conviene realizar defrost.' : '')
+    );
+  }
+  if (compPlan) {
+    const lectura = fmtC(comp);
+    lineas.push(
+      detalleAlertaWhatsapp(
+        'con temperatura alta de compresor',
+        compPlan.since,
+        compPlan.umbral,
+        compPlan.horasTotal,
+        `Temperatura alta de compresor desde ${formatRef(compPlan.since)}. Lleva ${compPlan.horasTotal} h por encima de 100 °C.${lectura != null ? ` Ahora ${lectura} °C.` : ''} Aviso de ${formatUmbralHoras(compPlan.umbral)}.`
+      )
+    );
+  }
+  const titulo = evaPlan && compPlan
+    ? 'Evaporador saturado y temperatura alta de compresor'
+    : evaPlan
+      ? 'Evaporador saturado'
+      : 'Temperatura alta de compresor';
+  return {
+    titulo,
+    texto: lineas.join('\n'),
+    marca: `${todayKey(now)}|${evaPlan?.umbral ?? '-'}|${compPlan?.umbral ?? '-'}`,
+    marcar() {
+      evaPlan?.marcar();
+      compPlan?.marcar();
+    },
+  };
 }
 
 async function fetchTrazabilidadCorreo(dispositivo, now) {
@@ -1026,6 +1186,13 @@ export async function runAlertCycle(options = {}) {
   if (grupos.length === 0) {
     result.skipped = 'no_groups';
     result.criterio = 'No hay grupos de correo activos con destinatarios';
+    try {
+      const flota = await loadCurrentDispositivos();
+      await evaluarAvisosGrupoWhatsapp(flota, new Date());
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      result.errors.push(`WhatsApp grupo: ${msg}`);
+    }
     result.finishedAt = new Date().toISOString();
     saveCiclo({ ...result, evaluaciones: [] });
     writeJson('lastRun.json', result);
@@ -1459,6 +1626,28 @@ export async function runAlertCycle(options = {}) {
         continue;
       }
 
+      let sensorAviso = null;
+      try {
+        sensorAviso = dispositivo
+          ? await prepararAvisoSensores(state, assignment.rowKey, dispositivo, now)
+          : null;
+      } catch (e) {
+        sensorAviso = null;
+        console.warn('[sensor]', e instanceof Error ? e.message : e);
+      }
+      let sensorAcoplado = false;
+      const detalleConSensor = (detalle) => {
+        const hayWa =
+          grupo.whatsappActivo === true &&
+          Array.isArray(grupo.whatsappNumeros) &&
+          grupo.whatsappNumeros.length > 0;
+        if (!sensorAviso || sensorAcoplado || !hayWa) return detalle;
+        sensorAcoplado = true;
+        sensorAviso.marcar();
+        return `${detalle}\n${sensorAviso.texto}`;
+      };
+      try {
+
       // Volvió a línea: cerrar episodio offline (sin correo).
       if (getOfflineEpisode(state, grupo.id, assignment.rowKey)) {
         clearOfflineEpisode(state, grupo.id, assignment.rowKey);
@@ -1544,13 +1733,13 @@ export async function runAlertCycle(options = {}) {
             dispositivo,
             titulo: 'Apagado',
             marca: `${episode.since}|${hoy}|${umbralHoras}`,
-            detalle: detalleAlertaWhatsapp(
+            detalle: detalleConSensor(detalleAlertaWhatsapp(
               'apagado',
               episode.since,
               umbralHoras,
               horasApagadoReport,
               `Apagado desde ${formatRef(episode.since)}. Lleva ${horasApagadoReport} h. Aviso de ${formatUmbralHoras(umbralHoras)}.`
-            ),
+            )),
             grupo,
           });
           addEnvio({
@@ -1956,13 +2145,13 @@ export async function runAlertCycle(options = {}) {
             dispositivo,
             titulo: 'Fuera de rango',
             marca: `${episode.since}|${hoy}|${umbralHoras}`,
-            detalle: detalleAlertaWhatsapp(
+            detalle: detalleConSensor(detalleAlertaWhatsapp(
               'fuera de rango',
               episode.since,
               umbralHoras,
               horasAcumuladas,
               `Fuera de rango desde ${formatRef(episode.since)}. Lleva ${horasAcumuladas} h. Aviso de ${formatUmbralHoras(umbralHoras)}.`
-            ),
+            )),
             grupo,
           });
 
@@ -2080,10 +2269,35 @@ export async function runAlertCycle(options = {}) {
           result.resumen.errores++;
         }
       }
+      } finally {
+        const hayWa =
+          grupo.whatsappActivo === true &&
+          Array.isArray(grupo.whatsappNumeros) &&
+          grupo.whatsappNumeros.length > 0;
+        if (sensorAviso && !sensorAcoplado && hayWa && dispositivo) {
+          sensorAcoplado = true;
+          sensorAviso.marcar();
+          espejoWhatsapp({
+            assignment,
+            dispositivo,
+            titulo: sensorAviso.titulo,
+            marca: sensorAviso.marca,
+            detalle: sensorAviso.texto,
+            grupo,
+          });
+        }
+      }
     }
   }
 
   await avisarCoberturaCiclica({ state, now, smtp, equipos: coberturaSilencio, result });
+
+  try {
+    await evaluarAvisosGrupoWhatsapp(dispositivos, now);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    result.errors.push(`WhatsApp grupo: ${msg}`);
+  }
 
   saveState(state);
   result.finishedAt = new Date().toISOString();

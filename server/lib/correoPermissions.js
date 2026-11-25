@@ -4,6 +4,7 @@ import {
   canManageUsers,
 } from './usersRepository.js';
 import { resolveUserEffectiveImeis } from './gruposEquiposRepository.js';
+import { tokenCubreDispositivo } from './asignacionEquipo.js';
 import { normalizarTelefono } from './wa/telefono.js';
 
 export const ADMIN_MAX_CORREO_GRUPOS = 2;
@@ -24,11 +25,13 @@ export function filterGruposForActor(actor, grupos) {
   return grupos.filter((g) => grupoOwnedBy(g, actor.username));
 }
 
-export function actorMayAccessImei(actor, imei) {
+export function actorMayAccessImei(actor, imei, codigo = null) {
   if (!actor) return false;
   const allowed = resolveUserEffectiveImeis(actor);
   if (allowed == null) return true;
-  return allowed.includes(String(imei));
+  return allowed.some((token) =>
+    tokenCubreDispositivo(token, { imei, codigo }, null)
+  );
 }
 
 export function normalizarWhatsappNumeros(lista) {
@@ -110,7 +113,7 @@ export function validateAndNormalizeGrupoSave(actor, grupo, allGrupos) {
     };
   }
   for (const d of devices) {
-    if (!actorMayAccessImei(actor, d.imei)) {
+    if (!actorMayAccessImei(actor, d.imei, d.codigo)) {
       return {
         ok: false,
         error: `Solo puede asignar equipos disponibles (${d.imei})`,
