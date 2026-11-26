@@ -48,6 +48,7 @@ type GrupoWa = {
   umbralApagado: number;
   umbralFueraLinea: number;
   menciones: string[];
+  nombres?: Record<string, string>;
   rowKeys: string[];
   horaDesde: number;
   horaHasta: number;
@@ -446,27 +447,42 @@ export default function WhatsAppAlertas() {
                         </div>
                         <div>
                           <p className="text-xs font-medium mb-1">Etiquetar en el mensaje</p>
-                          <div className="max-h-36 overflow-auto rounded border">
+                          <p className="mb-1 text-xs text-muted-foreground">
+                            El nombre es el trato. Si esa persona convoca al bot, la saluda así: Buenos días Sr. Mario.
+                          </p>
+                          <div className="max-h-48 overflow-auto rounded border">
                             {grupo.participantes.length === 0 && (
                               <p className="p-2 text-xs text-muted-foreground">Este grupo no devolvió participantes.</p>
                             )}
                             {grupo.participantes.map((p) => (
-                              <label key={p.jid} className="flex items-center gap-2 border-b px-2 py-1 text-xs">
-                                <input
-                                  type="checkbox"
-                                  checked={grupo.menciones.includes(p.jid)}
-                                  onChange={(e) => {
-                                    const menciones = e.target.checked
-                                      ? [...grupo.menciones, p.jid]
-                                      : grupo.menciones.filter((x) => x !== p.jid);
-                                    patchGrupo(grupo.jid, { menciones });
-                                  }}
+                              <div key={p.jid} className="flex items-center gap-2 border-b px-2 py-1">
+                                <label className="flex min-w-0 flex-1 items-center gap-2 text-xs">
+                                  <input
+                                    type="checkbox"
+                                    checked={grupo.menciones.includes(p.jid)}
+                                    onChange={(e) => {
+                                      const menciones = e.target.checked
+                                        ? [...grupo.menciones, p.jid]
+                                        : grupo.menciones.filter((x) => x !== p.jid);
+                                      patchGrupo(grupo.jid, { menciones });
+                                    }}
+                                  />
+                                  <span className="truncate">
+                                    {p.admin ? 'admin · ' : ''}
+                                    {p.numero}
+                                  </span>
+                                </label>
+                                <Input
+                                  className="h-7 w-36 text-xs"
+                                  placeholder="Sr. Mario"
+                                  value={grupo.nombres?.[p.jid] ?? ''}
+                                  onChange={(e) =>
+                                    patchGrupo(grupo.jid, {
+                                      nombres: { ...(grupo.nombres || {}), [p.jid]: e.target.value },
+                                    })
+                                  }
                                 />
-                                <span className="truncate">
-                                  {p.nombre || p.numero}
-                                  {p.admin ? ' · admin' : ''} · {p.numero}
-                                </span>
-                              </label>
+                              </div>
                             ))}
                           </div>
                         </div>

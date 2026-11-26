@@ -131,6 +131,7 @@ export function guardarGrupoAlerta(input) {
     horaDesde: horaDesdeDe({ horaDesde: input?.horaDesde ?? previo.horaDesde }),
     horaHasta: horaHastaDe({ horaHasta: input?.horaHasta ?? previo.horaHasta }),
     participantes: Array.isArray(input?.participantes) ? input.participantes : previo.participantes || [],
+    nombres: normalizarNombres(input?.nombres ?? previo.nombres),
     updatedAt: new Date().toISOString(),
   };
   if (next.horaDesde >= next.horaHasta) {
@@ -165,6 +166,7 @@ export function mezclarGrupos(vivos) {
       umbralFueraLinea: cfg?.umbralFueraLinea ?? UMBRAL_FUERA_LINEA,
       menciones: cfg?.menciones || [],
       rowKeys: cfg?.rowKeys || [],
+      nombres: normalizarNombres(cfg?.nombres),
       horaDesde: horaDesdeDe(cfg),
       horaHasta: horaHastaDe(cfg),
     };
@@ -186,6 +188,7 @@ function grupoDesdeGuardado(g) {
     umbralFueraLinea: g.umbralFueraLinea ?? UMBRAL_FUERA_LINEA,
     menciones: g.menciones || [],
     rowKeys: g.rowKeys || [],
+    nombres: normalizarNombres(g.nombres),
     horaDesde: horaDesdeDe(g),
     horaHasta: horaHastaDe(g),
     guardado: true,
@@ -291,6 +294,56 @@ export function saludoLima(now = new Date()) {
   if (hora >= 5 && hora < 12) return 'Buenos días';
   if (hora >= 12 && hora < 19) return 'Buenas tardes';
   return 'Buenas noches';
+}
+
+function normalizarNombres(raw) {
+  if (!raw || typeof raw !== 'object') return {};
+  const out = {};
+  for (const [jid, nombre] of Object.entries(raw)) {
+    const id = String(jid || '').trim();
+    const trato = String(nombre || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+    if (id.includes('@') && trato) out[id] = trato;
+  }
+  return out;
+}
+
+function digitosDe(valor) {
+  return String(valor || '').split('@')[0].replace(/\D/g, '');
+}
+
+function nombreConfigurado(cfg, autor, telefono) {
+  const nombres = normalizarNombres(cfg?.nombres);
+  if (autor && nombres[autor]) return nombres[autor];
+  const buscados = [digitosDe(autor), digitosDe(telefono)].filter((n) => n.length >= 8);
+  for (const [jid, nombre] of Object.entries(nombres)) {
+    const propio = digitosDe(jid);
+    if (buscados.some((n) => propio && (propio === n || propio.endsWith(n) || n.endsWith(propio)))) return nombre;
+  }
+  for (const p of cfg?.participantes || []) {
+    const trato = nombres[p?.jid];
+    if (!trato) continue;
+    const nums = [digitosDe(p.jid), digitosDe(p.numero)];
+    if (buscados.some((n) => nums.some((u) => u && (u === n || u.endsWith(n) || n.endsWith(u))))) return trato;
+  }
+  return '';
+}
+
+function saludoPara(cfg, autor, telefono, now = new Date()) {
+  const trato = nombreConfigurado(cfg, autor, telefono);
+  return trato ? `${saludoLima(now)} ${trato}` : '';
+}
+
+function saludoDeMenciones(cfg, now) {
+  const tratos = (cfg?.menciones || []).map((jid) => nombreConfigurado(cfg, jid)).filter(Boolean);
+  const saludo = saludoLima(now);
+  return tratos.length ? `${saludo} ${tratos.join(', ')}` : saludo;
+}
+
+function conOperacionesCliente(relato) {
+  const base = String(relato || '').trim();
+  const pedido = 'Validar las operaciones del cliente.';
+  if (base.includes(pedido)) return base;
+  return base ? `${base}\n${pedido}` : pedido;
 }
 
 function indiceNombres() {
@@ -492,7 +545,7 @@ export async function evaluarAvisosGrupoWhatsapp(dispositivos, now = new Date())
         ? `No está comunicando desde ${horaConversada(since, now)}.`
         : (await relatoParaGrupo(equipo).catch(() => ({ texto: '' }))).texto;
       const extra = textoFase(fase);
-      const relato = extra ? `${relatoBase}\n${extra}` : relatoBase;
+      const relato = conOperacionesCliente(extra ? `${relatoBase}\n${extra}` : relatoBase);
       const etiquetar = fase !== 'normal';
       const grafica = await graficaHoras(equipo, 12, { titulo: '12 h' }).catch(() => null);
       avisos.abiertos[rowKey] = condicion.kind;
@@ -524,7 +577,7 @@ export async function evaluarAvisosGrupoWhatsapp(dispositivos, now = new Date())
         continue;
       }
       const texto = armarAviso({
-        saludo: saludoLima(now),
+        saludo: etiquetar ? saludoDeMenciones(cfg, now) : saludoLima(now),
         marcas: etiquetar ? textoMenciones(cfg.menciones) : '',
         nombre,
         relato,
@@ -555,6 +608,24 @@ export async function evaluarAvisosGrupoWhatsapp(dispositivos, now = new Date())
 const ESPERA_CHARLA_MS = 5 * 60 * 1000;
 const charlas = new Map();
 const identidadBot = { usuarios: new Set(), jids: new Set() };
+const telefonosAutor = new Map();
+
+function telefonoRecordado(autor) {
+  return telefonosAutor.get(autor) || '';
+}
+
+async function recordarTelefonoAutor(client, autor) {
+  if (!autor || !client?.getContactLidAndPhone) return '';
+  if (telefonosAutor.has(autor)) return telefonosAutor.get(autor);
+  try {
+    const pares = await client.getContactLidAndPhone([autor]);
+    const pn = String(pares?.[0]?.pn || '').replace(/\D/g, '');
+    if (pn) telefonosAutor.set(autor, pn);
+    return pn;
+  } catch {
+    return '';
+  }
+}
 
 function idTexto(id) {
   if (!id) return '';
@@ -643,15 +714,81 @@ export function rankearReefers(palabras, fichas) {
   return scored.slice(0, 5);
 }
 
+export function extraerZgru(texto) {
+  const t = sinAcento(textoSinMencion(texto));
+  const m = t.match(/zgru\s*(\d{4,10})/);
+  return m ? `ZGRU${m[1]}` : '';
+}
+
+/** Cotización: 100 + año + secuencia. Ejemplo 10020264035. Acepta un prefijo, como 1002026. */
+export function extraerCotizaciones(texto) {
+  const t = sinAcento(textoSinMencion(texto)).replace(/zgru\s*\d{4,10}/g, ' ');
+  const runs = t.match(/\d{6,14}/g) || [];
+  return [...new Set(runs.filter((n) => n.startsWith('100')))];
+}
+
+function zgruDeFicha(ficha) {
+  return String(ficha?.zgru || zgruDe(ficha?.nombre) || '').toUpperCase();
+}
+
+export function exactosZgru(pedido, fichas) {
+  const num = String(pedido || '').replace(/\D/g, '');
+  if (!num) return [];
+  return fichas.filter((f) => {
+    const z = zgruDeFicha(f);
+    return z === pedido || z.replace(/\D/g, '') === num;
+  });
+}
+
+export function similaresZgru(pedido, fichas) {
+  const num = String(pedido || '').replace(/\D/g, '');
+  if (num.length < 4) return [];
+  const scored = [];
+  for (const f of fichas) {
+    const z = zgruDeFicha(f);
+    const otro = z.replace(/\D/g, '');
+    if (!otro || otro === num) continue;
+    let pref = 0;
+    while (pref < num.length && pref < otro.length && num[pref] === otro[pref]) pref += 1;
+    if (pref < 4) continue;
+    const dist = Math.abs(Number(num) - Number(otro));
+    scored.push({ f, pref, dist: Number.isFinite(dist) ? dist : Number.MAX_SAFE_INTEGER });
+  }
+  scored.sort((a, b) => b.pref - a.pref || a.dist - b.dist || String(a.f.nombre).localeCompare(String(b.f.nombre), 'es'));
+  return scored.slice(0, 5).map((s) => s.f);
+}
+
+function cotizacionesEnFicha(ficha) {
+  const texto = `${ficha?.nombre || ''} ${ficha?.blob || ''}`;
+  return texto.match(/100\d{3,11}/g) || [];
+}
+
+export function porCotizacion(pedidos, fichas) {
+  if (!pedidos.length) return [];
+  const vistos = new Set();
+  const hits = [];
+  for (const f of fichas) {
+    const codigos = cotizacionesEnFicha(f);
+    const sirve = pedidos.some((pedido) =>
+      codigos.some((c) => c.startsWith(pedido) || (c.length >= 8 && pedido.startsWith(c)))
+    );
+    if (!sirve || vistos.has(f.rowKey)) continue;
+    vistos.add(f.rowKey);
+    hits.push(f);
+  }
+  return hits.slice(0, 5);
+}
+
 export function interpretarRespuesta(texto, opciones = []) {
   const t = sinAcento(textoSinMencion(texto)).trim();
-  const zgrus = t.match(/zgru\d+/g) || [];
-  if (zgrus.length === 1) return { tipo: 'zgru', zgru: zgrus[0].toUpperCase() };
   const soloNumero = t.match(/^(?:opcion|numero|nro|la|el)?\s*([1-5])$/);
   if (soloNumero) {
     const indice = Number(soloNumero[1]) - 1;
     if (opciones[indice]) return { tipo: 'numero', indice };
   }
+  const zgru = extraerZgru(texto);
+  const cotizaciones = extraerCotizaciones(texto);
+  if (zgru || cotizaciones.length) return { tipo: 'pedido', zgru, cotizaciones };
   if (palabrasDe(texto).length || (t.match(/\d{14,16}/g) || []).length) return { tipo: 'buscar' };
   return { tipo: 'vacio' };
 }
@@ -753,7 +890,11 @@ function fichasDeFlota(flota, indice) {
 }
 
 function lineaOpcion(ficha, n) {
-  return `${n}. *${nombreVisible(ficha.nombre)}*`;
+  const z = zgruDeFicha(ficha);
+  const nombre = nombreVisible(ficha.nombre);
+  const marca = z ? `*${z}*` : '';
+  const visible = nombre && nombre.toUpperCase() !== z ? nombre : '';
+  return `${n}. ${[marca, visible].filter(Boolean).join(' · ') || `*${nombre}*`}`;
 }
 
 const dichos = [];
@@ -791,8 +932,10 @@ function reservarTurno(jid, autor, texto) {
 
 function responderGrupo(jid, texto, autor) {
   const mentions = autor && autor.includes('@') ? [autor] : undefined;
-  const marca = mentions ? `@${autor.split('@')[0]}\n` : '';
-  const completo = `${marca}${texto}`;
+  const marca = mentions ? `@${autor.split('@')[0]}` : '';
+  const saludo = saludoPara(configDeGrupo(jid), autor, telefonoRecordado(autor));
+  const cabeza = [saludo, marca].filter(Boolean).join(' ');
+  const completo = cabeza ? `${cabeza}\n${texto}` : texto;
   recordarDicho(completo);
   anotarHistorialGrupo(jid, completo, 'respuesta');
   encolarTexto(jid, completo, {
@@ -814,10 +957,12 @@ async function enviarGraficaElegida(jid, autor, ficha) {
   const equipo = equipoParaGrafica(ficha.dispositivo, null);
   equipo.nombre = nombreVisible(ficha.nombre);
   const grafica = await graficaHoras(equipo, 12, { titulo: '12 h' }).catch(() => null);
-  const marca = autor && autor.includes('@') ? `@${autor.split('@')[0]}\n` : '';
+  const marca = autor && autor.includes('@') ? `@${autor.split('@')[0]}` : '';
+  const saludo = saludoPara(configDeGrupo(jid), autor, telefonoRecordado(autor));
+  const cabeza = [saludo, marca].filter(Boolean).join(' ');
   const visible = nombreVisible(ficha.nombre);
   if (!grafica?.media) {
-    const aviso = `${marca}No hay gráfica de 12 horas para *${visible}*.`;
+    const aviso = `${cabeza ? `${cabeza}\n` : ''}No hay gráfica de 12 horas para *${visible}*.`;
     recordarDicho(aviso);
     encolarTexto(jid, aviso, {
       esAlerta: false,
@@ -828,7 +973,7 @@ async function enviarGraficaElegida(jid, autor, ficha) {
     return;
   }
   const relato = await relatoParaGrupo(equipo).catch(() => ({ texto: 'No pude leer las últimas 12 horas.' }));
-  const caption = [marca.trimEnd(), `*${visible}*`, relato.texto].filter(Boolean).join('\n');
+  const caption = [cabeza, `*${visible}*`, relato.texto].filter(Boolean).join('\n');
   recordarDicho(caption);
   anotarHistorialGrupo(jid, caption, 'grafica');
   encolarTexto(jid, caption, {
@@ -885,6 +1030,7 @@ export async function atenderMencionGrupo({ msg, client, jid }) {
     void guardarMensajesDeVentana(jid, autor, textoPrevio).catch((e) => console.warn('[wa] ventana', e.message));
   }
   const mencionado = await mencionaAlBot(msg, client);
+  if (autor) await recordarTelefonoAutor(client, autor);
   const charla = charlaViva(jid, autor, ahora);
   if (!mencionado && !charla) {
     const ids = idsMencionados(msg);
@@ -907,40 +1053,75 @@ export async function atenderMencionGrupo({ msg, client, jid }) {
   }
   const flota = await loadCurrentDispositivos().catch(() => []);
   const indice = indiceNombres();
-  if (decision.tipo === 'zgru') {
+  if (decision.tipo === 'pedido') {
     const fichas = fichasAgregadas(flota, indice, jid);
-    const hits = fichas.filter((f) => f.zgru === decision.zgru || f.blob.includes(decision.zgru.toLowerCase()));
-    if (hits.length === 1) {
-      guardarCharla(jid, autor, hits);
-      await enviarGraficaElegida(jid, autor, hits[0]);
-      return;
-    }
-    if (charla) {
-      const enLista = (charla.opciones || []).filter((f) => f.zgru === decision.zgru);
-      if (enLista.length === 1) {
-        charla.ultimo = ahora;
-        await enviarGraficaElegida(jid, autor, enLista[0]);
-        return;
-      }
-    }
-    if (!hits.length) {
-      if (!fichas.length && charlas.get(claveCharla(jid, autor))?.opciones?.length) return;
-      const aviso = fichas.length
-        ? `No hay coincidencias de ${decision.zgru} entre los equipos agregados a este grupo.`
-        : textoSinFichas(jid, flota);
+    if (!fichas.length) {
+      if (charlas.get(claveCharla(jid, autor))?.opciones?.length) return;
+      const aviso = textoSinFichas(jid, flota);
       if (!aviso) return;
       responderGrupo(jid, aviso, autor);
       guardarCharla(jid, autor, []);
       return;
     }
-    const ranked = hits.slice(0, 5);
-    const lista = ranked.map((f, i) => lineaOpcion(f, i + 1)).join('\n');
+    const exactos = decision.zgru ? exactosZgru(decision.zgru, fichas) : [];
+    if (exactos.length === 1) {
+      guardarCharla(jid, autor, exactos);
+      await enviarGraficaElegida(jid, autor, exactos[0]);
+      return;
+    }
+    const porCodigo = porCotizacion(decision.cotizaciones || [], fichas);
+    if (porCodigo.length === 1 && exactos.length === 0) {
+      guardarCharla(jid, autor, porCodigo);
+      await enviarGraficaElegida(jid, autor, porCodigo[0]);
+      return;
+    }
+    if (exactos.length > 1) {
+      const lista = exactos.slice(0, 5).map((f, i) => lineaOpcion(f, i + 1)).join('\n');
+      responderGrupo(
+        jid,
+        `${decision.zgru} está en más de un equipo:\n${lista}\n\nIndique el número del 1 al ${Math.min(exactos.length, 5)}.`,
+        autor
+      );
+      guardarCharla(jid, autor, exactos.slice(0, 5));
+      return;
+    }
+    if (porCodigo.length > 1) {
+      const lista = porCodigo.map((f, i) => lineaOpcion(f, i + 1)).join('\n');
+      responderGrupo(
+        jid,
+        `La cotización aparece en estos equipos:\n${lista}\n\nIndique el número del 1 al ${porCodigo.length}.`,
+        autor
+      );
+      guardarCharla(jid, autor, porCodigo);
+      return;
+    }
+    const parecidos = decision.zgru ? similaresZgru(decision.zgru, fichas) : [];
+    if (parecidos.length) {
+      const lista = parecidos.map((f, i) => lineaOpcion(f, i + 1)).join('\n');
+      responderGrupo(
+        jid,
+        `No está *${decision.zgru}*. Tenemos estas opciones similares:\n${lista}\n\nIndique el número o el ZGRU.`,
+        autor
+      );
+      guardarCharla(jid, autor, parecidos);
+      return;
+    }
+    if (decision.zgru) {
+      responderGrupo(
+        jid,
+        `No hay coincidencia aproximada de *${decision.zgru}*. Indique la cotización. Empieza con 100, sigue el año y cierra con la secuencia, por ejemplo 10020264035.`,
+        autor
+      );
+      guardarCharla(jid, autor, []);
+      return;
+    }
+    const pedido = (decision.cotizaciones || []).join(', ');
     responderGrupo(
       jid,
-      `${decision.zgru} está en más de un origen:\n${lista}\n\nIndique el número del 1 al ${ranked.length}.`,
+      `No hay un equipo cuya cotización empiece con ${pedido}. Puede indicar el ZGRU.`,
       autor
     );
-    guardarCharla(jid, autor, ranked);
+    guardarCharla(jid, autor, []);
     return;
   }
   await abrirBusqueda(jid, autor, texto, flota, indice);
