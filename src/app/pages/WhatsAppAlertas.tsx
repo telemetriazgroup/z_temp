@@ -57,6 +57,7 @@ type GrupoWa = {
   nombres?: Record<string, string>;
   rowKeys: string[];
   alertasAutomaticas?: string[];
+  autorizadosAlertas?: string[];
   horaDesde: number;
   horaHasta: number;
 };
@@ -571,6 +572,42 @@ export default function WhatsAppAlertas() {
                                   }
                                 />
                               </div>
+                            ))}
+                          </div>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium mb-1">Pueden activar o desactivar alertas</p>
+                          <p className="mb-1 text-xs text-muted-foreground">
+                            Los marcados pueden etiquetar al asistente y escribir{' '}
+                            <strong>desactivar alertas en ZGRU1020203</strong> o{' '}
+                            <strong>activar alertas en ZGRU1020203</strong>. Eso apaga o enciende el
+                            aviso automático de ese equipo. El equipo sigue en el grupo y se puede
+                            consultar sus últimas 12 horas. Quien no esté marcado recibe que no tiene
+                            autorización.
+                          </p>
+                          <div className="max-h-48 overflow-auto rounded border">
+                            {grupo.participantes.length === 0 && (
+                              <p className="p-2 text-xs text-muted-foreground">Este grupo no devolvió participantes.</p>
+                            )}
+                            {grupo.participantes.map((p) => (
+                              <label key={`alerta-${p.jid}`} className="flex items-center gap-2 border-b px-2 py-1 text-xs">
+                                <input
+                                  type="checkbox"
+                                  checked={(grupo.autorizadosAlertas || []).includes(p.jid)}
+                                  onChange={(e) => {
+                                    const base = grupo.autorizadosAlertas || [];
+                                    const autorizadosAlertas = e.target.checked
+                                      ? [...base, p.jid]
+                                      : base.filter((x) => x !== p.jid);
+                                    patchGrupo(grupo.jid, { autorizadosAlertas });
+                                  }}
+                                />
+                                <span className="truncate">
+                                  {p.admin ? 'admin · ' : ''}
+                                  {grupo.nombres?.[p.jid] ? `${grupo.nombres[p.jid]} · ` : ''}
+                                  {p.numero}
+                                </span>
+                              </label>
                             ))}
                           </div>
                         </div>

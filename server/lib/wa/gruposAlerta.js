@@ -104,6 +104,16 @@ function listaClaves(lista) {
   ];
 }
 
+function listaJids(lista) {
+  return [
+    ...new Set(
+      (Array.isArray(lista) ? lista : [])
+        .map((x) => String(x || '').trim())
+        .filter((x) => x.includes('@'))
+    ),
+  ];
+}
+
 /** Sin la lista, cada equipo del grupo sigue con alerta. Una lista vacía no avisa a ninguno. */
 function alertasAutomaticasDe(input, previo, rowKeys) {
   const permitidas = new Set(rowKeys);
@@ -158,6 +168,7 @@ export function guardarGrupoAlerta(input) {
     participantes: Array.isArray(input?.participantes) ? input.participantes : previo.participantes || [],
     nombres: normalizarNombres(input?.nombres ?? previo.nombres),
     alertasAutomaticas: alertasAutomaticasDe(input, previo, listaClaves(input?.rowKeys)),
+    autorizadosAlertas: listaJids(input?.autorizadosAlertas ?? previo.autorizadosAlertas),
     updatedAt: new Date().toISOString(),
   };
   if (next.horaDesde >= next.horaHasta) {
@@ -193,6 +204,7 @@ export function mezclarGrupos(vivos) {
       menciones: cfg?.menciones || [],
       rowKeys: cfg?.rowKeys || [],
       alertasAutomaticas: alertasVisibles(cfg),
+      autorizadosAlertas: listaJids(cfg?.autorizadosAlertas),
       nombres: normalizarNombres(cfg?.nombres),
       horaDesde: horaDesdeDe(cfg),
       horaHasta: horaHastaDe(cfg),
@@ -216,6 +228,7 @@ function grupoDesdeGuardado(g) {
     menciones: g.menciones || [],
     rowKeys: g.rowKeys || [],
     alertasAutomaticas: alertasVisibles(g),
+    autorizadosAlertas: listaJids(g.autorizadosAlertas),
     nombres: normalizarNombres(g.nombres),
     horaDesde: horaDesdeDe(g),
     horaHasta: horaHastaDe(g),
@@ -832,6 +845,100 @@ export function extraerZgru(texto) {
   return m ? `ZGRU${m[1]}` : '';
 }
 
+/** «desactivar alertas en ZGRU1020203» o «activar alertas en ZGRU1020203». */
+export function ordenAlerta(texto) {
+  const t = sinAcento(textoSinMencion(texto));
+  const verbo = t.match(/\b(desactivar|desactiva|activar|activa)\b/);
+  if (!verbo || !/\balertas?\b/.test(t)) return null;
+  const accion = verbo[1].startsWith('desactiv') ? 'desactivar' : 'activar';
+  return {
+    accion,
+    zgru: extraerZgru(texto),
+  };
+}
+
+function mismoNumero(a, b) {
+  if (!a || !b || a.length < 8 || b.length < 8) return false;
+  return a === b || a.endsWith(b) || b.endsWith(a);
+}
+
+export function autorPuedeCambiarAlertas(cfg, autor, telefono) {
+  const lista = listaJids(cfg?.autorizadosAlertas);
+  if (!lista.length || !autor) return false;
+  const telAutor = digitosDe(telefono);
+  const idAutor = digitosDe(String(autor).split('@')[0]);
+  for (const jid of lista) {
+    if (jid === autor) return true;
+    const participante = (cfg?.participantes || []).find((p) => p?.jid === jid);
+    const candidatos = [digitosDe(jid), digitosDe(participante?.numero), digitosDe(participante?.jid)];
+    if (candidatos.some((n) => mismoNumero(n, telAutor) || mismoNumero(n, idAutor))) return true;
+  }
+  return false;
+}
+
+function fijarAlertaEnGrupo(jid, rowKey, activa) {
+  const cfg = configDeGrupo(jid);
+  if (!cfg) return false;
+  const actuales = alertasVisibles(cfg);
+  const siguientes = activa
+    ? [...new Set([...actuales, rowKey])]
+    : actuales.filter((k) => k !== rowKey);
+  const grupos = leerTodo().map((g) => (g.jid === jid ? { ...g, alertasAutomaticas: siguientes, updatedAt: new Date().toISOString() } : g));
+  guardarTodo(grupos);
+  if (!activa) {
+    const avisos = leerAvisos();
+    let cambio = false;
+    for (const campo of ['episodios', 'graves', 'abiertos']) {
+      if (avisos[campo]?.[rowKey]) {
+        delete avisos[campo][rowKey];
+        cambio = true;
+      }
+    }
+    if (cambio) guardarAvisos(avisos);
+    void cerrarSeguimientoAutomatico(rowKey, 'Alerta automática desactivada para este equipo.').catch((e) =>
+      console.warn('[wa-grupo] cierre', e.message)
+    );
+  }
+  return true;
+}
+
+async function aplicarOrdenAlerta({ jid, autor, orden }) {
+  const cfg = configDeGrupo(jid);
+  const telefono = telefonoRecordado(autor);
+  if (!autorPuedeCambiarAlertas(cfg, autor, telefono)) {
+    responderGrupo(jid, 'No tiene autorización para activar o desactivar las alertas automáticas.', autor);
+    return;
+  }
+  if (!orden.zgru) {
+    responderGrupo(jid, 'Indique el ZGRU. Ejemplo: desactivar alertas en ZGRU1020203', autor);
+    return;
+  }
+  const flota = await loadCurrentDispositivos().catch(() => []);
+  const fichas = fichasAgregadas(flota, indiceNombres(), jid);
+  const exactos = exactosZgru(orden.zgru, fichas);
+  if (exactos.length === 0) {
+    responderGrupo(jid, `No hay coincidencia de *${orden.zgru}* en este grupo.`, autor);
+    return;
+  }
+  if (exactos.length > 1) {
+    const lista = exactos.slice(0, 5).map((f, i) => lineaOpcion(f, i + 1)).join('\n');
+    responderGrupo(
+      jid,
+      `*${orden.zgru}* coincide con más de un equipo:\n${lista}\n\nIndique el ZGRU exacto.`,
+      autor
+    );
+    return;
+  }
+  const ficha = exactos[0];
+  const nombre = nombreVisible(ficha.nombre) || orden.zgru;
+  const activar = orden.accion === 'activar';
+  fijarAlertaEnGrupo(jid, ficha.rowKey, activar);
+  const hecho = activar
+    ? `Listo. Se activaron las alertas automáticas de *${nombre}*.`
+    : `Listo. Se desactivaron las alertas automáticas de *${nombre}*. El equipo sigue disponible para consultar sus últimas 12 horas.`;
+  responderGrupo(jid, hecho, autor);
+}
+
 /** Cotización: 100 + año + secuencia. Ejemplo 10020264035. Acepta un prefijo, como 1002026. */
 export function extraerCotizaciones(texto) {
   const t = sinAcento(textoSinMencion(texto)).replace(/zgru\s*\d{4,10}/g, ' ');
@@ -1240,6 +1347,12 @@ export async function atenderMencionGrupo({ msg, client, jid }) {
     return;
   }
   const texto = String(msg?.body || '').trim();
+  const orden = mencionado ? ordenAlerta(texto) : null;
+  if (orden) {
+    console.log('[wa] grupo orden alerta', jid, autor || 'sin-autor', orden.accion, orden.zgru || 'sin-zgru');
+    await aplicarOrdenAlerta({ jid, autor, orden });
+    return;
+  }
   const decision = interpretarRespuesta(texto, charla?.opciones || []);
   if (decision.tipo === 'vacio') {
     if (mencionado && !charla) guardarCharla(jid, autor, []);
