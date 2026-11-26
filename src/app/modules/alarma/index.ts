@@ -17,6 +17,7 @@ export {
   getDeviceAlarmEventsByImei,
   addDeviceAlarmEvent,
   updateDeviceAlarmEvent,
+  replaceDeviceAlarmEvents,
   deleteDeviceAlarmEvent,
   isActiveAlarmCode,
 } from './deviceAlarmRepository';

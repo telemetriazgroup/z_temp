@@ -28,6 +28,8 @@ export interface DeviceAlarmEvent {
   /** Referencia al catálogo (`AlarmCatalogEntry.id`). */
   catalogId: string | null;
   detectedAt: string;
+  /** Última trama en la que esta misma alarma seguía llegando. */
+  lastSeenAt?: string;
   clearedAt: string | null;
   atendida: boolean;
   reportadaEmail: boolean;

@@ -44,17 +44,25 @@ function deviceRowKey(d: DispositivoUltimoEstado): string {
   return d.codigo != null ? `${d.codigo}-${d.imei}` : d.imei;
 }
 
-function formatDate(dateString: string | null): string {
+function formatMomento(dateString: string | null): string {
   if (dateString == null) return '—';
   const date = new Date(dateString);
   if (Number.isNaN(date.getTime())) return '—';
-  return date.toLocaleString('es-ES', {
+  return date.toLocaleString('es-PE', {
+    timeZone: 'America/Lima',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+    hourCycle: 'h23',
   });
+}
+
+function formatRango(alarm: DeviceAlarmEvent): string {
+  const desde = formatMomento(alarm.detectedAt);
+  if (alarm.clearedAt == null) return `Desde ${desde} hasta actualidad`;
+  return `Desde ${desde} hasta ${formatMomento(alarm.clearedAt)}`;
 }
 
 export default function Alarmas() {
@@ -139,8 +147,7 @@ export default function Alarmas() {
         <div>
           <h1 className="text-3xl font-bold">{t('alarmas.title')}</h1>
           <p className="text-gray-500 mt-1">
-            Eventos detectados desde telemetría (<code className="text-xs">numero_alarma</code>)
-            enlazados al catálogo MP4000.
+            Eventos detectados desde telemetría. Si la misma alarma sigue llegando en cada trama, queda un solo registro: desde que empezó hasta actualidad.
           </p>
         </div>
         <div className="flex gap-2">
@@ -250,15 +257,14 @@ export default function Alarmas() {
                 <TableHead>Equipo</TableHead>
                 <TableHead>Código</TableHead>
                 <TableHead>{showTechnical ? 'Alarma (técnico)' : 'Mensaje'}</TableHead>
-                <TableHead>Detectada</TableHead>
-                <TableHead>Cerrada</TableHead>
+                <TableHead>Periodo</TableHead>
                 <TableHead>Atendida</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {events.length === 0 && !loading && (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
                     No hay eventos registrados. Aparecerán cuando un dispositivo reporte{' '}
                     <code>numero_alarma</code> distinto de 0.
                   </TableCell>
@@ -291,8 +297,7 @@ export default function Alarmas() {
                       })}
                     </span>
                   </TableCell>
-                  <TableCell className="text-sm">{formatDate(alarm.detectedAt)}</TableCell>
-                  <TableCell className="text-sm">{formatDate(alarm.clearedAt)}</TableCell>
+                  <TableCell className="text-sm whitespace-nowrap">{formatRango(alarm)}</TableCell>
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <Checkbox
                       checked={alarm.atendida}

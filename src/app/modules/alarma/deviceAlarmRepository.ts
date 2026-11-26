@@ -59,6 +59,10 @@ export function updateDeviceAlarmEvent(
   return next;
 }
 
+export function replaceDeviceAlarmEvents(events: DeviceAlarmEvent[]): void {
+  writeRaw(events);
+}
+
 export function deleteDeviceAlarmEvent(id: string): void {
   writeRaw(readRaw().filter((e) => e.id !== id));
 }
