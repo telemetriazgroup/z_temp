@@ -88,7 +88,11 @@ export function sanitizeTableValue(
   }
   const n = rawFieldValue(row, def, codigo);
   if (n == null) return null;
-  if (!inRange(n, def)) return 'NA';
+  if (!inRange(n, def)) {
+    const usda = def.key.startsWith('cargo_') && def.key.endsWith('_temp');
+    if (def.key === 'evaporation_coil' || usda) return null;
+    return 'NA';
+  }
   return n;
 }
 

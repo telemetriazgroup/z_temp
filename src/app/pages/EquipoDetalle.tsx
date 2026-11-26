@@ -88,6 +88,14 @@ interface DetalleItem {
   value: string;
 }
 
+function tempFiltrada(v: number | null | undefined, opts: { min?: number; max?: number }) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return formatearNumero(v, ' °C');
+  if (opts.min != null && n < opts.min) return '—';
+  if (opts.max != null && n > opts.max) return '—';
+  return formatearNumero(n, ' °C');
+}
+
 function buildDetalleItems(
   d: UltimoDatoDispositivo,
   codigo?: string | null,
@@ -123,7 +131,7 @@ function buildDetalleItems(
       label: 'Evaporador',
       Icon: Snowflake,
       iconClass: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300',
-      value: formatearNumero(d.evaporation_coil, ' °C'),
+      value: tempFiltrada(d.evaporation_coil, { max: 99 }),
     },
     {
       id: 'condensation_coil',
@@ -158,28 +166,28 @@ function buildDetalleItems(
       label: 'Sensor 1',
       Icon: Cpu,
       iconClass: 'bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300',
-      value: formatearNumero(d.cargo_1_temp, ' °C'),
+      value: tempFiltrada(d.cargo_1_temp, { min: -30 }),
     },
     {
       id: 'cargo_2_temp',
       label: 'Sensor 2',
       Icon: Cpu,
       iconClass: 'bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300',
-      value: formatearNumero(d.cargo_2_temp, ' °C'),
+      value: tempFiltrada(d.cargo_2_temp, { min: -30 }),
     },
     {
       id: 'cargo_3_temp',
       label: 'Sensor 3',
       Icon: Cpu,
       iconClass: 'bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300',
-      value: formatearNumero(d.cargo_3_temp, ' °C'),
+      value: tempFiltrada(d.cargo_3_temp, { min: -30 }),
     },
     {
       id: 'cargo_4_temp',
       label: 'Sensor 4',
       Icon: Cpu,
       iconClass: 'bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300',
-      value: formatearNumero(d.cargo_4_temp, ' °C'),
+      value: tempFiltrada(d.cargo_4_temp, { min: -30 }),
     },
     {
       id: 'power_kwh',

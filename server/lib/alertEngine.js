@@ -44,6 +44,8 @@ import {
 import { resolveUmbralesForDevice, getDeviceAlertConfig, getDeviceAlertConfigMap, saveDeviceAlertConfig, resolveRangoOptsForDevice, coberturaFueraLineaDe } from './deviceAlertConfigRepository.js';
 import { enVentanaSinSenal, cuentaCliente, HORAS_CLIENTE_TRAS_COBERTURA } from './coberturaHoraria.js';
 import { isEquipoApagado, isEquipoEncendido, defrostActivoEfectivo } from './powerState.js';
+import { ajusteDefrostAlerta } from './analisis/defrostAlerta.js';
+import { evaporadorValido } from './lecturasValidas.js';
 import {
   fetchHistorialUltimasHoras,
   resolveAlertOutOfRangeSince,
@@ -763,19 +765,32 @@ function nombreAlerta(assignment, dispositivo) {
 
 function lineaAhora(dispositivo) {
   const d = dispositivo?.ultimo_dato ?? {};
+  const eva = evaporadorValido(d.evaporation_coil);
   const partes = [
     d.set_point != null ? `set *${d.set_point}*` : null,
     d.temp_supply_1 != null ? `suministro *${d.temp_supply_1}*` : null,
     d.return_air != null ? `retorno *${d.return_air}*` : null,
-    d.evaporation_coil != null ? `evaporador *${d.evaporation_coil}*` : null,
+    eva != null ? `evaporador *${eva}*` : null,
   ].filter(Boolean);
   return partes.length ? `Ahora: ${partes.join(' · ')}` : null;
+}
+
+function estadoEnNegrita(titulo, detalle) {
+  const t = String(titulo || '').trim();
+  const d = String(detalle || '').trim();
+  if (!t) return d || null;
+  if (!d) return `*${t}*`;
+  const plano = d.replace(/\*/g, '');
+  if (plano.toLowerCase().startsWith(t.toLowerCase())) {
+    return `*${t}*${plano.slice(t.length)}`;
+  }
+  return `*${t}*\n${d}`;
 }
 
 function espejoWhatsapp({ assignment, dispositivo, titulo, detalle, grupo, marca = '' }) {
   const clave = `${assignment?.rowKey}|${titulo}|${marca}`;
   const nombre = nombreAlerta(assignment, dispositivo);
-  const texto = [`*${nombre}*`, titulo, detalle || null, lineaAhora(dispositivo), 'Escribe *resumen* o *menu* para ver el equipo.']
+  const texto = [`*${nombre}*`, estadoEnNegrita(titulo, detalle), lineaAhora(dispositivo), 'Escribe *resumen* o *menu* para ver el equipo.']
     .filter(Boolean)
     .join('\n');
   void publicarAlertaIndividual(clave, {
@@ -1834,26 +1849,29 @@ export async function runAlertCycle(options = {}) {
         rangoOpts
       );
 
-      // Defrost: NO cierra el incidente ni envía «volvió a rango» (evita spam cada ciclo).
-      // Solo pausa alertas de fuera de rango mientras dura el defrost.
+      // Defrost real (bandera o patrón, máximo 2 h): no cierra el incidente ni alerta fuera de rango.
+      // Si la forma de defrost pasa de 2 h, es falso y sigue como fuera de rango.
       if (enDefrost && enRangoTemperatura !== true) {
         const ep = getEpisode(state, assignment.rowKey);
         const epFuera = ep && episodeKind(ep) === 'fuera_rango' ? ep : null;
-        pushEval(evaluaciones, {
-          ...base,
-          estado: 'defrost_pausa',
-          accion: 'ninguna',
-          enRango: true,
-          diaCalendario: hoy,
-          umbralesConfigurados: umbrales,
-          referenciaDesde: epFuera?.since ?? null,
-          telemetria: telem,
-          criterio: epFuera
-            ? `DEFROST activo. Episodio fuera de rango en pausa desde ${formatRef(epFuera.since)} (no se cierra; no correo «volvió a rango»).`
-            : 'DEFROST activo con equipo ON. No se alerta fuera de rango.',
-        });
-        result.resumen.normal++;
-        continue;
+        const aj = await ajusteDefrostAlerta(dispositivo, epFuera?.since || new Date(now.getTime() - 3 * 3600000).toISOString(), now).catch(() => ({ falso: false }));
+        if (!aj.falso) {
+          pushEval(evaluaciones, {
+            ...base,
+            estado: 'defrost_pausa',
+            accion: 'ninguna',
+            enRango: true,
+            diaCalendario: hoy,
+            umbralesConfigurados: umbrales,
+            referenciaDesde: epFuera?.since ?? null,
+            telemetria: telem,
+            criterio: epFuera
+              ? `DEFROST (≤ 2 h). Episodio fuera de rango en pausa desde ${formatRef(epFuera.since)}. Ese tiempo no cuenta como fuera de rango.`
+              : 'DEFROST (≤ 2 h) con equipo ON. No se alerta fuera de rango.',
+          });
+          result.resumen.normal++;
+          continue;
+        }
       }
 
       // Recuperación real: return_air otra vez en banda.
@@ -2024,9 +2042,29 @@ export async function runAlertCycle(options = {}) {
       }
 
       const horasAcumuladasRaw = horasDesdeReferenciaEquipo(dispositivo, episode.since, now);
-      const horasEnDia = horasEnDiaCalendario(episode.since, dispositivo, now);
+      let horasEnDia = horasEnDiaCalendario(episode.since, dispositivo, now);
       const horasEnteras = horasEnterasDesdeReferenciaEquipo(dispositivo, episode.since, now);
-      const horasAcumuladas = Math.round(horasAcumuladasRaw * 10) / 10;
+      let horasAcumuladas = Math.round(horasAcumuladasRaw * 10) / 10;
+      const defrostAj = await ajusteDefrostAlerta(dispositivo, episode.since, now).catch(() => null);
+      if (defrostAj?.pausar) {
+        pushEval(evaluaciones, {
+          ...base,
+          estado: 'defrost_pausa',
+          accion: 'ninguna',
+          enRango: true,
+          diaCalendario: hoy,
+          umbralesConfigurados: umbrales,
+          referenciaDesde: episode.since,
+          telemetria: telem,
+          criterio: `DEFROST detectado por patrón (≤ 2 h) desde ${formatRef(episode.since)}. No se alerta fuera de rango. Si pasa de 2 h cuenta como fuera de rango.`,
+        });
+        result.resumen.normal++;
+        continue;
+      }
+      if (defrostAj && defrostAj.horasQuitar > 0) {
+        horasAcumuladas = Math.max(0, Math.round((horasAcumuladasRaw - defrostAj.horasQuitar) * 10) / 10);
+        horasEnDia = Math.max(0, horasEnDia - defrostAj.horasQuitar);
+      }
       void sincronizarControlWhatsapp({
         rowKey: assignment.rowKey,
         imei: dispositivo.imei,

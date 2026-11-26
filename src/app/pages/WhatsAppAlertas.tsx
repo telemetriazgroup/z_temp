@@ -49,7 +49,10 @@ type GrupoWa = {
   umbralFueraLinea: number;
   menciones: string[];
   rowKeys: string[];
+  horaDesde: number;
+  horaHasta: number;
 };
+type HistorialGrupo = { jid: string; texto: string; tipo: string; at: string };
 
 function claveEquipo(d: DispositivoUltimoEstado) {
   return d.codigo ? `${d.codigo}-${d.imei}` : d.imei;
@@ -97,6 +100,7 @@ export default function WhatsAppAlertas() {
   const [espera, setEspera] = useState('2');
   const esperaTocada = useRef(false);
   const [grupos, setGrupos] = useState<GrupoWa[]>([]);
+  const [historial, setHistorial] = useState<HistorialGrupo[]>([]);
   const [grupoAbierto, setGrupoAbierto] = useState('');
   const [flota, setFlota] = useState<DispositivoUltimoEstado[]>([]);
   const [buscaEquipo, setBuscaEquipo] = useState('');
@@ -126,13 +130,34 @@ export default function WhatsAppAlertas() {
     setMensajes(body.data);
   }, []);
 
+  const cargarGruposGuardados = useCallback(async () => {
+    const [body, correo] = await Promise.all([
+      api<{ data: GrupoWa[] }>('/grupos-guardados'),
+      api<{ data: { grupos: GrupoCorreoListo[]; nombres: NombreEquipo[] } }>('/grupos-correo'),
+    ]);
+    setGrupos(body.data);
+    setGruposCorreo(correo.data.grupos || []);
+    setNombresEquipo(correo.data.nombres || []);
+    if (flota.length === 0) {
+      const flotaRes = await fetchUltimoEstadoDispositivos();
+      setFlota(flotaRes.data.dispositivos ?? []);
+    }
+  }, [flota.length]);
+
+  const cargarHistorialGrupo = useCallback(async (jid: string) => {
+    const q = new URLSearchParams({ jid });
+    const body = await api<{ data: HistorialGrupo[] }>(`/grupos-historial?${q}`);
+    setHistorial(body.data);
+  }, []);
+
   useEffect(() => {
     if (!userIsSuperAdmin(user)) return;
     cargarEstado().catch((e) => toast.error(e.message));
     cargarChats().catch(() => {});
+    cargarGruposGuardados().catch(() => {});
     const t = setInterval(() => cargarEstado().catch(() => {}), 4000);
     return () => clearInterval(t);
-  }, [user, cargarEstado, cargarChats]);
+  }, [user, cargarEstado, cargarChats, cargarGruposGuardados]);
 
   function etiquetaDe(rowKey: string, d?: DispositivoUltimoEstado) {
     const n = nombresEquipo.find((x) => x.rowKey === rowKey);
@@ -297,10 +322,11 @@ export default function WhatsAppAlertas() {
                 <h2 className="font-semibold">Grupos de WhatsApp</h2>
                 <p className="text-sm text-muted-foreground max-w-3xl">
                   Estar en un grupo no activa las alertas. Elija el grupo, los equipos por su nombre y a quién
-                  saludar, y guarde. El aviso automático va de 5:00 a 22:00, hora de Perú, con el saludo del
-                  momento, el análisis de 12 h y la gráfica. Desde las 22:00 y hasta las 5:00 el grupo no
-                  atiende solo: hay que etiquetar al bot. Las alertas de WhatsApp a cada número usan ese
-                  mismo horario; el correo no. Si alguien etiqueta al bot, la búsqueda es solo entre los
+                  saludar, y guarde.                   El aviso automático de cada grupo tiene su propio horario (de 5:00 a 22:00 si no lo cambia),
+                  hora de Perú, con el saludo del momento, el análisis de 12 h y la gráfica. Fuera de ese
+                  horario el grupo no atiende solo: hay que etiquetar al bot. Un grupo activo queda guardado
+                  y sus respuestas quedan en el historial; no hace falta volver a leerlo. Las alertas de
+                  WhatsApp a cada número van de 5:00 a 22:00. El correo no usa ese horario. Si alguien etiqueta al bot, la búsqueda es solo entre los
                   equipos agregados a ese grupo. Si etiqueta y no escribe un nombre, el bot no contesta.
                   A los 5 minutos sin consulta tiene que etiquetar de nuevo.
                 </p>
@@ -332,7 +358,11 @@ export default function WhatsAppAlertas() {
                     <button
                       type="button"
                       className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
-                      onClick={() => setGrupoAbierto(abierto ? '' : grupo.jid)}
+                      onClick={() => {
+                        const siguiente = abierto ? '' : grupo.jid;
+                        setGrupoAbierto(siguiente);
+                        if (siguiente) cargarHistorialGrupo(siguiente).catch(() => setHistorial([]));
+                      }}
                     >
                       <span>
                         <span className="font-medium block">{grupo.nombre}</span>
@@ -355,6 +385,30 @@ export default function WhatsAppAlertas() {
                           />
                           Enviar alertas a este grupo
                         </label>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <label className="text-xs">
+                            Alertar desde (hora Perú)
+                            <Input
+                              type="number"
+                              min={0}
+                              max={23}
+                              className="mt-1"
+                              value={grupo.horaDesde ?? 5}
+                              onChange={(e) => patchGrupo(grupo.jid, { horaDesde: Number(e.target.value) })}
+                            />
+                          </label>
+                          <label className="text-xs">
+                            Hasta (no incluye esta hora)
+                            <Input
+                              type="number"
+                              min={1}
+                              max={24}
+                              className="mt-1"
+                              value={grupo.horaHasta ?? 22}
+                              onChange={(e) => patchGrupo(grupo.jid, { horaHasta: Number(e.target.value) })}
+                            />
+                          </label>
+                        </div>
                         <div className="grid gap-2 sm:grid-cols-3">
                           <label className="text-xs">
                             Fuera de rango (horas)
@@ -512,6 +566,20 @@ export default function WhatsAppAlertas() {
                           </p>
                         </div>
                         <Button onClick={() => guardarGrupo(grupo)}>Guardar este grupo</Button>
+                        <div>
+                          <p className="text-xs font-medium mb-1">Historial de respuestas</p>
+                          <div className="max-h-40 overflow-auto rounded border">
+                            {historial.length === 0 && (
+                              <p className="p-2 text-xs text-muted-foreground">Todavía no hay respuestas guardadas de este grupo.</p>
+                            )}
+                            {historial.map((h, i) => (
+                              <div key={`${h.at}-${i}`} className="border-b px-2 py-1 text-xs">
+                                <p className="text-[11px] text-muted-foreground">{new Date(h.at).toLocaleString('es-PE', { timeZone: 'America/Lima' })} · {h.tipo}</p>
+                                <p className="whitespace-pre-wrap">{h.texto}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
                       </div>
                     )}
                   </div>

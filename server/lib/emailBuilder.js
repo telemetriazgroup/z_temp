@@ -1,10 +1,16 @@
 import { formatDateTimeTz, formatDateSubjectTz } from './timezone.js';
 import { formatUmbralHoras } from './store.js';
 import { buildTrazabilidadText, fmtPowerState } from './emailTraceability.js';
+import { evaporadorValido } from './lecturasValidas.js';
 
 function fmtTemp(v) {
   if (v == null || Number.isNaN(v)) return '—';
   return `${v} C°`;
+}
+
+function fmtEvap(v) {
+  const n = evaporadorValido(v);
+  return n == null ? '—' : `${n} C°`;
 }
 
 function fmtDateShort(iso) {
@@ -33,7 +39,7 @@ function buildParametrosLinea(d, powerLabel) {
   const power =
     powerLabel ??
     fmtPowerState(d.power_state ?? null);
-  return `Set ${fmtTemp(d.set_point)} · Supply ${fmtTemp(d.temp_supply_1)} · Return ${fmtTemp(d.return_air)} · Evap. ${fmtTemp(d.evaporation_coil)} · Power: ${power}`;
+  return `Set ${fmtTemp(d.set_point)} · Supply ${fmtTemp(d.temp_supply_1)} · Return ${fmtTemp(d.return_air)} · Evap. ${fmtEvap(d.evaporation_coil)} · Power: ${power}`;
 }
 
 function buildDetalleEventoTexto({

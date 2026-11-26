@@ -20,7 +20,7 @@ import {
 } from './repository.js';
 import { enviarPrueba } from './conversacion.js';
 import { enviarMensajePrueba, estadoWa, listarGruposEnSesion, reiniciarWaClient, startWaClient } from './client.js';
-import { catalogoParaUi, guardarGrupoAlerta, mezclarGrupos } from './gruposAlerta.js';
+import { catalogoParaUi, guardarGrupoAlerta, historialDeGrupo, listarGruposGuardados, mezclarGrupos } from './gruposAlerta.js';
 import { guardarNumeroPropio, sincronizarNumeroUsuario } from './cuenta.js';
 import { normalizarTelefono } from './telefono.js';
 import { leerAjustesWa, guardarGapChatSeg } from './ajustes.js';
@@ -419,6 +419,20 @@ export function createWaRouter({ actorOf }) {
     const user = actorOf(req);
     if (!esSuper(user)) return res.status(403).json({ ok: false, error: 'Se requiere superadmin' });
     res.json({ ok: true, data: catalogoParaUi() });
+  });
+
+  r.get('/grupos-guardados', (req, res) => {
+    const user = actorOf(req);
+    if (!esSuper(user)) return res.status(403).json({ ok: false, error: 'Se requiere superadmin' });
+    res.json({ ok: true, data: listarGruposGuardados() });
+  });
+
+  r.get('/grupos-historial', (req, res) => {
+    const user = actorOf(req);
+    if (!esSuper(user)) return res.status(403).json({ ok: false, error: 'Se requiere superadmin' });
+    const jid = String(req.query.jid || '');
+    if (!jid.endsWith('@g.us')) return res.status(400).json({ ok: false, error: 'Grupo inválido' });
+    res.json({ ok: true, data: historialDeGrupo(jid) });
   });
 
   r.get('/grupos', async (req, res) => {

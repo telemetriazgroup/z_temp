@@ -59,7 +59,8 @@ function pointsInInterval(datos, sinceIso, untilIso) {
         ret == null ||
         Number.isNaN(Number(ret)) ||
         evap == null ||
-        Number.isNaN(Number(evap))
+        Number.isNaN(Number(evap)) ||
+        Number(evap) > 99
       ) {
         return null;
       }
@@ -245,13 +246,14 @@ export function evaluateDefrostShape(points) {
  * ¿El intervalo cerrado parece un defrost por patrón térmico?
  * @returns {{ match: boolean, reason?: string, metrics?: object }}
  */
-export function evaluateDefrostPattern(datos, sinceIso, untilIso) {
+export function evaluateDefrostPattern(datos, sinceIso, untilIso, opciones = {}) {
   if (untilIso == null) {
     return { match: false, reason: 'intervalo_abierto' };
   }
+  const maxMin = (opciones.maxMs ?? MAX_DEFROST_MS) / 60000;
 
   const durationMin = intervalDurationMinutes(sinceIso, untilIso);
-  if (durationMin <= 0 || durationMin > 60) {
+  if (durationMin <= 0 || durationMin > maxMin) {
     return { match: false, reason: 'duracion_fuera_de_ventana_defrost', metrics: { durationMin } };
   }
 
@@ -291,7 +293,8 @@ export function isDefrostPattern(datos, sinceIso, untilIso) {
  *
  * @returns {{ since: string, until: string, durationHours: number, metrics?: object }[]}
  */
-export function findDefrostSegmentsInInterval(datos, sinceIso, untilIso) {
+export function findDefrostSegmentsInInterval(datos, sinceIso, untilIso, opciones = {}) {
+  const maxMs = opciones.maxMs ?? MAX_DEFROST_MS;
   if (untilIso == null) return [];
   const points = pointsInInterval(datos, sinceIso, untilIso);
   if (points.length < 3) return [];
@@ -346,7 +349,7 @@ export function findDefrostSegmentsInInterval(datos, sinceIso, untilIso) {
       const cur = points[hi];
       const next = points[hi + 1];
       if (next.ts - cur.ts > 8 * 60 * 1000) break;
-      if (points[hi].ts - points[lo].ts >= MAX_DEFROST_MS) break;
+      if (points[hi].ts - points[lo].ts >= maxMs) break;
       if (next.evap <= cur.evap + 0.3) {
         hi += 1;
         if (!isLikelyDefrostPoint(next) && next.evap <= next.ret + 2) {
@@ -361,15 +364,15 @@ export function findDefrostSegmentsInInterval(datos, sinceIso, untilIso) {
     let untilTs = points[hi].ts;
     let dur = untilTs - sinceTs;
     if (dur < MIN_DEFROST_SEGMENT_MS) continue;
-    if (dur > MAX_DEFROST_MS) {
+    if (dur > maxMs) {
       const peakIdx =
         lo +
         points
           .slice(lo, hi + 1)
           .reduce((best, p, idx, arr) => (p.evap > arr[best].evap ? idx : best), 0);
-      const half = Math.floor(MAX_DEFROST_MS / 2);
+      const half = Math.floor(maxMs / 2);
       sinceTs = Math.max(points[lo].ts, points[peakIdx].ts - half);
-      untilTs = Math.min(points[hi].ts, sinceTs + MAX_DEFROST_MS);
+      untilTs = Math.min(points[hi].ts, sinceTs + maxMs);
       const inWin = points.filter((p) => p.ts >= sinceTs && p.ts <= untilTs);
       if (inWin.length < 3) continue;
       sinceTs = inWin[0].ts;
@@ -379,9 +382,9 @@ export function findDefrostSegmentsInInterval(datos, sinceIso, untilIso) {
 
     const since = new Date(sinceTs).toISOString();
     const until = new Date(untilTs).toISOString();
-    const evalSeg = evaluateDefrostPattern(datos, since, until);
+    const evalSeg = evaluateDefrostPattern(datos, since, until, { maxMs });
     if (!evalSeg.match) continue;
-    if (dur < MIN_DEFROST_SEGMENT_MS || dur > MAX_DEFROST_MS) continue;
+    if (dur < MIN_DEFROST_SEGMENT_MS || dur > maxMs) continue;
 
     segments.push({
       since,

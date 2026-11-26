@@ -6,6 +6,7 @@ import { resolveRangoOptsForDevice } from '../deviceAlertConfigRepository.js';
 import { fetchHistorialUltimasHoras } from '../historicalTelemetry.js';
 import { getHistorialVistaPrefs } from '../historialVistaPrefsRepository.js';
 import { parseTelemetryTimestamp } from '../timezone.js';
+import { evaporadorValido, usdaValido } from '../lecturasValidas.js';
 import { etiqueta } from './equiposCuenta.js';
 import { rangoWhatsappDe } from './controlFlota.js';
 
@@ -161,7 +162,7 @@ export function textoDetalle(e, username) {
     `Set ${negrita(fmt(u.set_point))} °C`,
     `Suministro ${negrita(fmt(u.temp_supply_1))} °C`,
     `Retorno ${negrita(fmt(u.return_air))} °C`,
-    `Evaporador ${negrita(fmt(u.evaporation_coil))} °C`,
+    `Evaporador ${negrita(fmt(evaporadorValido(u.evaporation_coil)))} °C`,
   ];
   if (esTermokingOTunel(e.codigo)) {
     const energia = e._flota?.power_state_texto || (num(u.power_state) === 1 ? 'on' : num(u.power_state) === 0 ? 'off' : null);
@@ -179,7 +180,7 @@ function puntoDe(row) {
     set: num(t.set_point),
     sup: num(t.temp_supply_1),
     ret: num(t.return_air),
-    eva: num(t.evaporation_coil),
+    eva: evaporadorValido(t.evaporation_coil),
     power: num(t.power_state),
   };
 }
@@ -527,11 +528,12 @@ function esStarcool(codigo) {
   return c === 'STARCOOL' || c === 'STARCOOL2';
 }
 
-/** USDA solo es lectura entre −24 y 40 °C. En StarCool, 0 en voltaje, fases y humedad es el valor por defecto, no una medición. */
+/** USDA menor a −30 °C y evaporador mayor a 99 °C no se muestran. En StarCool, 0 en voltaje, fases y humedad es el valor por defecto, no una medición. */
 export function lecturaVisible(key, value, codigo) {
   const n = num(value);
   if (n == null) return value == null || value === '' ? '' : String(value);
-  if (USDA.has(key) && (n > 40 || n < -24)) return 'dato erróneo';
+  if (USDA.has(key) && (usdaValido(n) == null || n > 40)) return '';
+  if (key === 'evaporation_coil' && evaporadorValido(n) == null) return '';
   if (esStarcool(codigo) && CERO_SIN_LECTURA_STARCOOL.has(key) && n === 0) return 'NA';
   return fmt(n);
 }

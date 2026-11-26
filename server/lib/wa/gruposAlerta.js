@@ -10,6 +10,7 @@ import { deviceRowKey } from '../telemetry.js';
 import { horasSinComunicacion } from '../enlaceCaido.js';
 import { isEquipoApagado } from '../powerState.js';
 import { effectiveEnRangoAlertaFromDispositivo } from '../historicalTelemetry.js';
+import { ajusteDefrostAlerta } from '../analisis/defrostAlerta.js';
 import { resolveRangoOptsForDevice } from '../deviceAlertConfigRepository.js';
 import { getSmtpConfig } from '../smtpRepository.js';
 import { getDeviceNameByImei, getDeviceNameByRowKey, getDeviceNamesView } from '../deviceNamesRepository.js';
@@ -20,6 +21,7 @@ import { encolarTexto } from './outbox.js';
 
 const FILE = 'grupos_wa_alerta.json';
 const AVISOS = 'grupos_wa_avisos.json';
+const HISTORIAL = 'grupos_wa_historial.json';
 const CORREO_SIN_GRAFICA = 'ztrack@zgroup.com.pe';
 
 const UMBRAL_FUERA_RANGO = 2;
@@ -38,6 +40,21 @@ function horaLima(now) {
 export function enVentanaAlertaGrupo(now = new Date()) {
   const hora = horaLima(now);
   return hora >= 5 && hora < 22;
+}
+
+function horaDesdeDe(cfg) {
+  const n = Number(cfg?.horaDesde);
+  return Number.isInteger(n) && n >= 0 && n <= 23 ? n : 5;
+}
+
+function horaHastaDe(cfg) {
+  const n = Number(cfg?.horaHasta);
+  return Number.isInteger(n) && n >= 1 && n <= 24 ? n : 22;
+}
+
+export function enVentanaDeGrupo(cfg, now = new Date()) {
+  const hora = horaLima(now);
+  return hora >= horaDesdeDe(cfg) && hora < horaHastaDe(cfg);
 }
 
 function slotHorario(now) {
@@ -101,8 +118,16 @@ export function guardarGrupoAlerta(input) {
           .filter(Boolean)
       ),
     ],
+    horaDesde: horaDesdeDe({ horaDesde: input?.horaDesde ?? previo.horaDesde }),
+    horaHasta: horaHastaDe({ horaHasta: input?.horaHasta ?? previo.horaHasta }),
+    participantes: Array.isArray(input?.participantes) ? input.participantes : previo.participantes || [],
     updatedAt: new Date().toISOString(),
   };
+  if (next.horaDesde >= next.horaHasta) {
+    const error = new Error('La hora de inicio tiene que ser anterior a la hora de fin.');
+    error.status = 400;
+    throw error;
+  }
   if (next.activo && next.rowKeys.length === 0) {
     const error = new Error('Marque al menos un equipo antes de activar este grupo.');
     error.status = 400;
@@ -116,7 +141,9 @@ export function guardarGrupoAlerta(input) {
 
 export function mezclarGrupos(vivos) {
   const guardados = new Map(leerTodo().map((g) => [g.jid, g]));
-  return (vivos || []).map((vivo) => {
+  const vistos = new Set();
+  const lista = (vivos || []).map((vivo) => {
+    vistos.add(vivo.jid);
     const cfg = guardados.get(vivo.jid);
     return {
       jid: vivo.jid,
@@ -128,8 +155,53 @@ export function mezclarGrupos(vivos) {
       umbralFueraLinea: cfg?.umbralFueraLinea ?? UMBRAL_FUERA_LINEA,
       menciones: cfg?.menciones || [],
       rowKeys: cfg?.rowKeys || [],
+      horaDesde: horaDesdeDe(cfg),
+      horaHasta: horaHastaDe(cfg),
     };
   });
+  for (const g of guardados.values()) {
+    if (!vistos.has(g.jid) && g.activo === true) lista.push(grupoDesdeGuardado(g));
+  }
+  return lista;
+}
+
+function grupoDesdeGuardado(g) {
+  return {
+    jid: g.jid,
+    nombre: g.nombre || g.jid,
+    participantes: g.participantes || [],
+    activo: g.activo === true,
+    umbralFueraRango: g.umbralFueraRango ?? UMBRAL_FUERA_RANGO,
+    umbralApagado: g.umbralApagado ?? UMBRAL_APAGADO,
+    umbralFueraLinea: g.umbralFueraLinea ?? UMBRAL_FUERA_LINEA,
+    menciones: g.menciones || [],
+    rowKeys: g.rowKeys || [],
+    horaDesde: horaDesdeDe(g),
+    horaHasta: horaHastaDe(g),
+    guardado: true,
+  };
+}
+
+export function listarGruposGuardados() {
+  return leerTodo().map(grupoDesdeGuardado);
+}
+
+export function anotarHistorialGrupo(jid, texto, tipo) {
+  if (!jid || !texto) return;
+  const prev = readJson(HISTORIAL, []);
+  const lista = Array.isArray(prev) ? prev : [];
+  lista.unshift({
+    jid,
+    texto: String(texto).slice(0, 1800),
+    tipo: tipo || 'respuesta',
+    at: new Date().toISOString(),
+  });
+  writeJson(HISTORIAL, lista.slice(0, 400));
+}
+
+export function historialDeGrupo(jid) {
+  const prev = readJson(HISTORIAL, []);
+  return (Array.isArray(prev) ? prev : []).filter((x) => x.jid === jid).slice(0, 40);
 }
 
 function leerAvisos() {
@@ -336,7 +408,6 @@ export async function evaluarAvisosGrupoWhatsapp(dispositivos, now = new Date())
   const porImei = new Map(dispositivos.filter((d) => d?.imei).map((d) => [String(d.imei), d]));
   const avisos = leerAvisos();
   const episodes = readJson('state.json', {}).episodes || {};
-  const ventana = enVentanaAlertaGrupo(now);
   const slot = slotHorario(now);
   let cambio = false;
   const vistos = new Set();
@@ -370,12 +441,18 @@ export async function evaluarAvisosGrupoWhatsapp(dispositivos, now = new Date())
         else since = now.toISOString();
         const ms = new Date(since).getTime();
         horas = Number.isFinite(ms) ? (now.getTime() - ms) / 3600000 : 0;
+        if (condicion.kind === 'fuera_rango' && since) {
+          const aj = await ajusteDefrostAlerta(dispositivo, since, now).catch(() => null);
+          if (aj?.pausar) continue;
+          if (aj && !aj.falso && aj.horasQuitar > 0) horas = Math.max(0, horas - aj.horasQuitar);
+          if (aj && !aj.falso && aj.fueraDesde && aj.fueraDesde !== since) since = aj.fueraDesde;
+        }
         if (!previo || previo.kind !== condicion.kind || previo.since !== since) {
           avisos.episodios[claveEp] = { kind: condicion.kind, since };
           cambio = true;
         }
       }
-      if (!ventana || !(Number(horas) >= umbralDe(cfg, condicion.kind))) continue;
+      if (!enVentanaDeGrupo(cfg, now) || !(Number(horas) >= umbralDe(cfg, condicion.kind))) continue;
       const claveEnvio = `${cfg.jid}|${rowKey}|${condicion.kind}`;
       if (avisos.enviados[claveEnvio] === slot) continue;
       avisos.enviados[claveEnvio] = slot;
@@ -400,6 +477,7 @@ export async function evaluarAvisosGrupoWhatsapp(dispositivos, now = new Date())
           ? `No está comunicando desde ${horaConversada(since, now)}.`
           : relato.texto,
       });
+      anotarHistorialGrupo(cfg.jid, texto, 'alerta');
       encolarTexto(cfg.jid, texto, {
         esAlerta: true,
         telefono: cfg.jid,
@@ -661,6 +739,7 @@ function responderGrupo(jid, texto, autor) {
   const marca = mentions ? `@${autor.split('@')[0]}\n` : '';
   const completo = `${marca}${texto}`;
   recordarDicho(completo);
+  anotarHistorialGrupo(jid, completo, 'respuesta');
   encolarTexto(jid, completo, {
     esAlerta: false,
     telefono: jid,
@@ -696,6 +775,7 @@ async function enviarGraficaElegida(jid, autor, ficha) {
   const relato = await relatoParaGrupo(equipo).catch(() => ({ texto: 'No pude leer las últimas 12 horas.' }));
   const caption = [marca.trimEnd(), `*${visible}*`, relato.texto].filter(Boolean).join('\n');
   recordarDicho(caption);
+  anotarHistorialGrupo(jid, caption, 'grafica');
   encolarTexto(jid, caption, {
     esAlerta: false,
     telefono: jid,

@@ -1,7 +1,9 @@
-/** Evaporador saturado: bajo -35 °C, o al menos 10 °C más frío que el set. */
+import { evaporadorValido } from './lecturasValidas.js';
+
+/** Evaporador saturado: bajo -35 °C, o al menos 10 °C más frío que el set. Por encima de 99 °C es dato erróneo. */
 export function evaporadorSaturado(setPoint, evaporador) {
-  const eva = Number(evaporador);
-  if (!Number.isFinite(eva)) return false;
+  const eva = evaporadorValido(evaporador);
+  if (eva == null) return false;
   if (eva < -35) return true;
   const set = Number(setPoint);
   if (!Number.isFinite(set)) return false;

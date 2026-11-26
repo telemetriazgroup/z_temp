@@ -4,6 +4,7 @@ import {
   rowEnRangoTemperaturaParaAlerta,
   timestampRegistroHistorial,
 } from '../historicalTelemetry.js';
+import { clasificarDefrostEnFilas } from '../analisis/defrostAlerta.js';
 import { powerStateEfectivo } from '../powerEfectivo.js';
 import { etiqueta } from './equiposCuenta.js';
 import {
@@ -353,6 +354,12 @@ export async function relatoParaGrupo(e) {
       if (real) abierto = real;
     }
   }
+  let fueraDesde = abierto?.since || null;
+  if (abierto?.since) {
+    const aj = clasificarDefrostEnFilas(filas, abierto.since, ahora);
+    if (aj.pausar) fueraDesde = null;
+    else if (!aj.falso && aj.fueraDesde) fueraDesde = aj.fueraDesde;
+  }
   const apagado = episodioActual(computeApagadoIntervals(filas, ahora, e.codigo));
   const ultima = [...filas].reverse().find((row) => Number.isFinite(timestampRegistroHistorial(row)));
   const energia = ultima ? powerStateEfectivo(ultima, e.codigo) : null;
@@ -365,7 +372,7 @@ export async function relatoParaGrupo(e) {
     {
       energia,
       apagadoDesde: apagado?.since || null,
-      fueraDesde: abierto?.since || null,
+      fueraDesde,
       evaporador: evaporador ? { since: evaporador.since, horas: evaporador.horas } : null,
       condensador: condensador ? { since: condensador.since } : null,
       compresor: compresor ? { since: compresor.since } : null,

@@ -1,6 +1,6 @@
 import type { HistorialFieldDef } from './types';
 
-/** Catálogo normativo (manejo_tabla_grafica.md). USDA alineado a −40…50. */
+/** Catálogo normativo. USDA menor a −30 °C y evaporador mayor a 99 °C son dato erróneo. */
 export const HISTORIAL_FIELD_CATALOG: HistorialFieldDef[] = [
   {
     key: 'temp_supply_1',
@@ -44,7 +44,7 @@ export const HISTORIAL_FIELD_CATALOG: HistorialFieldDef[] = [
     tableable: true,
     axis: 'temp',
     min: -45,
-    max: 50,
+    max: 99,
     unit: '°C',
     color: '#9E9E9E',
   },
@@ -87,7 +87,7 @@ export const HISTORIAL_FIELD_CATALOG: HistorialFieldDef[] = [
     chartable: true,
     tableable: true,
     axis: 'temp',
-    min: -40,
+    min: -30,
     max: 50,
     unit: '°C',
     color: '#0288D1',
@@ -98,7 +98,7 @@ export const HISTORIAL_FIELD_CATALOG: HistorialFieldDef[] = [
     chartable: true,
     tableable: true,
     axis: 'temp',
-    min: -40,
+    min: -30,
     max: 50,
     unit: '°C',
     color: '#00897B',
@@ -109,7 +109,7 @@ export const HISTORIAL_FIELD_CATALOG: HistorialFieldDef[] = [
     chartable: true,
     tableable: true,
     axis: 'temp',
-    min: -40,
+    min: -30,
     max: 50,
     unit: '°C',
     color: '#F57C00',
@@ -120,7 +120,7 @@ export const HISTORIAL_FIELD_CATALOG: HistorialFieldDef[] = [
     chartable: true,
     tableable: true,
     axis: 'temp',
-    min: -40,
+    min: -30,
     max: 50,
     unit: '°C',
     color: '#5E35B1',
