@@ -2,7 +2,7 @@ import express from 'express';
 import { ensureDashboardSchema } from '../db.js';
 import { getEnvios, getIncidentes } from '../alertEngine.js';
 import { getUserByUsername } from '../usersRepository.js';
-import { getDeviceNameByImei } from '../deviceNamesRepository.js';
+import { getDeviceNameByImei, getDeviceNameByRowKey } from '../deviceNamesRepository.js';
 import { deviceRowKey } from '../telemetry.js';
 import { dispositivoPermitido, imeisDuplicadosEn } from '../asignacionEquipo.js';
 import {
@@ -40,7 +40,24 @@ function isSuper(req, user) {
 }
 
 function restrictedImeis(user) {
-  return resolveUserEffectiveImeis(user);
+  const tokens = resolveUserEffectiveImeis(user);
+  if (tokens == null) return null;
+  return [
+    ...new Set(
+      tokens
+        .map((token) => {
+          const s = String(token ?? '').trim();
+          const cut = s.lastIndexOf('|');
+          return (cut >= 0 ? s.slice(cut + 1) : s).trim();
+        })
+        .filter((imei) => imei && imei !== 'all')
+    ),
+  ];
+}
+
+function nombreDeEquipo(device) {
+  const rowKey = device?.rowKey || deviceRowKey(device);
+  return getDeviceNameByRowKey(rowKey) || getDeviceNameByImei(device?.imei) || null;
 }
 
 function weekStatusFromSeries(series, averages) {
@@ -152,7 +169,7 @@ function buildUrgent(dispositivosVisibles, imeisFilter, limit = 5, accessUser = 
     .slice(0, limit)
     .map((d) => {
       const nombre =
-        getDeviceNameByImei(d.imei) ||
+        nombreDeEquipo(d) ||
         d.ultimo_dato?.nombre_contenedor ||
         d.imei;
       return {
@@ -179,7 +196,7 @@ function buildUrgent(dispositivosVisibles, imeisFilter, limit = 5, accessUser = 
       imei: d.imei,
       codigo: d.codigo ?? null,
       rowKey: deviceRowKey(d),
-      nombre: getDeviceNameByImei(d.imei) || d.imei,
+      nombre: nombreDeEquipo(d) || d.imei,
       en_rango: false,
       ultima_actualizacion: d.ultima_actualizacion,
     }));
@@ -205,7 +222,7 @@ function buildLongestOffline(dispositivosVisibles, limit = 5) {
         codigo: d.codigo ?? null,
         rowKey: deviceRowKey(d),
         nombre:
-          getDeviceNameByImei(d.imei) ||
+          nombreDeEquipo(d) ||
           d.ultimo_dato?.nombre_contenedor ||
           d.imei,
         estado_conexion: String(d.estado_conexion ?? 'offline').toLowerCase(),

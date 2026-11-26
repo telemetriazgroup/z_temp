@@ -43,7 +43,7 @@ export function WhatsAppFloatingButton() {
       title={label}
       aria-label={label}
       className={cn(
-        'fixed z-[60] bottom-5 right-5 sm:bottom-6 sm:right-6',
+        'fixed z-[60] bottom-5 right-5 sm:bottom-6 sm:right-6 print:hidden',
         'flex h-14 w-14 items-center justify-center rounded-full',
         'bg-[#25D366] text-white shadow-lg',
         'hover:bg-[#1ebe57] hover:scale-105',

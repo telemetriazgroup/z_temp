@@ -17,6 +17,7 @@ import WhatsAppAlertas from "./pages/WhatsAppAlertas";
 import IncidentesCorreo from "./pages/IncidentesCorreo";
 import Ubicanos from "./pages/Ubicanos";
 import AyudaSoporte from "./pages/AyudaSoporte";
+import ManualPlataforma from "./pages/ManualPlataforma";
 import Perfil from "./pages/Perfil";
 import Empresas from "./pages/Empresas";
 import AuditoriaUsuarios from "./pages/AuditoriaUsuarios";
@@ -120,6 +121,10 @@ const routeTree = [
       {
         path: "ayuda",
         element: <AyudaSoporte />,
+      },
+      {
+        path: "manual",
+        element: <ManualPlataforma />,
       },
       {
         path: "perfil",

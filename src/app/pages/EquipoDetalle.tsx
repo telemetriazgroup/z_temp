@@ -489,8 +489,15 @@ export default function EquipoDetalle() {
   const nombreMostrado = useMemo(() => {
     if (dispositivo == null) return '';
     const rk = deviceRowKey(dispositivo);
-    return displayNameForDevice(user, dispositivo.imei, rk, localNames, SIN_ASIGNAR);
-  }, [dispositivo, user, localNames]);
+    return displayNameForDevice(
+      user,
+      dispositivo.imei,
+      rk,
+      localNames,
+      SIN_ASIGNAR,
+      imeisRepetidos.has(dispositivo.imei)
+    );
+  }, [dispositivo, user, localNames, imeisRepetidos]);
 
   const { principal: detallePrincipal, extra: detalleExtra } = useMemo(() => {
     if (dispositivo == null) return { principal: [], extra: [] };

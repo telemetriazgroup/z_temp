@@ -12,6 +12,7 @@ import {
   type AyudaLinkItem,
   type AyudaFaqItem,
 } from '../modules/ayuda';
+import { Link } from 'react-router';
 import { ManualUsuarioPanel } from '../components/ManualUsuarioPanel';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import {
@@ -247,6 +248,25 @@ export default function AyudaSoporte() {
           Modo edición (solo superadmin)
         </Badge>
       )}
+
+      <Card className="print:hidden">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <FileText className="h-5 w-5 text-sky-600" />
+            Manual ilustrado
+          </CardTitle>
+          <CardDescription>
+            Capturas de la plataforma real. El recuadro marca la zona: inicio, listado,
+            detalle, informes, alarmas, crear un usuario, asignarle equipos y correo.
+            Se puede descargar en PDF.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button asChild>
+            <Link to="/manual">Abrir el manual</Link>
+          </Button>
+        </CardContent>
+      </Card>
 
       <ManualUsuarioPanel
         userRole={manualRole}

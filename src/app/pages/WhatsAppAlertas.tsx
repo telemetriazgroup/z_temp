@@ -55,6 +55,7 @@ type GrupoWa = {
   menciones: string[];
   nombres?: Record<string, string>;
   rowKeys: string[];
+  alertasAutomaticas?: string[];
   horaDesde: number;
   horaHasta: number;
 };
@@ -62,6 +63,10 @@ type HistorialGrupo = { jid: string; texto: string; tipo: string; at: string };
 
 function claveEquipo(d: DispositivoUltimoEstado) {
   return d.codigo ? `${d.codigo}-${d.imei}` : d.imei;
+}
+
+function alertasDe(grupo: GrupoWa) {
+  return Array.isArray(grupo.alertasAutomaticas) ? grupo.alertasAutomaticas : grupo.rowKeys;
 }
 
 function headers(): HeadersInit {
@@ -196,6 +201,27 @@ export default function WhatsAppAlertas() {
 
   function patchGrupo(jid: string, parcial: Partial<GrupoWa>) {
     setGrupos((prev) => prev.map((g) => (g.jid === jid ? { ...g, ...parcial } : g)));
+  }
+
+  function quitarEquipo(grupo: GrupoWa, clave: string) {
+    patchGrupo(grupo.jid, {
+      rowKeys: grupo.rowKeys.filter((x) => x !== clave),
+      alertasAutomaticas: alertasDe(grupo).filter((x) => x !== clave),
+    });
+  }
+
+  function sumarEquipo(grupo: GrupoWa, clave: string) {
+    patchGrupo(grupo.jid, {
+      rowKeys: [...new Set([...grupo.rowKeys, clave])],
+      alertasAutomaticas: [...new Set([...alertasDe(grupo), clave])],
+    });
+  }
+
+  function toggleAlerta(grupo: GrupoWa, clave: string, activo: boolean) {
+    const base = alertasDe(grupo);
+    patchGrupo(grupo.jid, {
+      alertasAutomaticas: activo ? [...new Set([...base, clave])] : base.filter((x) => x !== clave),
+    });
   }
 
   async function guardarGrupo(grupo: GrupoWa) {
@@ -493,9 +519,11 @@ export default function WhatsAppAlertas() {
                           </div>
                         </div>
                         <div>
-                          <p className="text-xs font-medium mb-1">Equipos que este grupo recibe</p>
+                          <p className="text-xs font-medium mb-1">Añadir dispositivos</p>
                           <p className="mb-2 text-xs text-muted-foreground">
                             El selector usa los dos: grupos de correo ({gruposCorreo.filter((g) => g.origen !== 'administracion').length}) y grupos de Administración ({gruposCorreo.filter((g) => g.origen === 'administracion').length}). Agregue uno y después el otro; cada uno suma sus equipos.
+                            Cada equipo queda en el grupo y se puede pedir su gráfica de 12 horas etiquetando al bot.
+                            «Alerta automática» se puede apagar: el equipo sigue en el grupo, pero no avisa solo cuando hay un evento.
                           </p>
                           <div className="mb-2 flex flex-wrap items-center gap-2">
                             <select
@@ -541,8 +569,16 @@ export default function WhatsAppAlertas() {
                                   if (mismos.length === 1) return claveEquipo(mismos[0]);
                                   return e.rowKey;
                                 });
-                                const rowKeys = [...new Set([...grupo.rowKeys, ...claves.filter(Boolean)])];
-                                patchGrupo(grupo.jid, { rowKeys });
+                                const nuevas = claves.filter(Boolean);
+                                const yaEstaban = new Set(grupo.rowKeys);
+                                const rowKeys = [...new Set([...grupo.rowKeys, ...nuevas])];
+                                const alertasAutomaticas = [
+                                  ...new Set([
+                                    ...alertasDe(grupo),
+                                    ...nuevas.filter((k) => !yaEstaban.has(k)),
+                                  ]),
+                                ];
+                                patchGrupo(grupo.jid, { rowKeys, alertasAutomaticas });
                                 const lado = origen.origen === 'administracion' ? 'Administración' : 'Correo';
                                 toast.success(
                                   `${claves.length} equipo(s) de ${origen.nombre} (${lado}) quedaron marcados. Guarde este grupo. El interruptor no cambia.`
@@ -570,26 +606,44 @@ export default function WhatsAppAlertas() {
                               <p className="px-2 py-1 text-[11px] font-medium text-muted-foreground">Agregados</p>
                             )}
                             {huerfanos.map((clave) => (
-                              <label key={clave} className="flex items-center gap-2 border-b px-2 py-1 text-xs">
+                              <div key={clave} className="flex items-center gap-2 border-b px-2 py-1 text-xs">
                                 <input
                                   type="checkbox"
                                   checked
-                                  onChange={() => patchGrupo(grupo.jid, { rowKeys: grupo.rowKeys.filter((x) => x !== clave) })}
+                                  aria-label="Quitar del grupo"
+                                  onChange={() => quitarEquipo(grupo, clave)}
                                 />
-                                <span className="truncate">{etiquetaDe(clave)}</span>
-                              </label>
+                                <span className="min-w-0 flex-1 truncate">{etiquetaDe(clave)}</span>
+                                <label className="flex shrink-0 items-center gap-1">
+                                  <input
+                                    type="checkbox"
+                                    checked={alertasDe(grupo).includes(clave)}
+                                    onChange={(e) => toggleAlerta(grupo, clave, e.target.checked)}
+                                  />
+                                  Alerta automática
+                                </label>
+                              </div>
                             ))}
                             {agregados.map((d) => {
                               const clave = claveEquipo(d);
                               return (
-                                <label key={clave} className="flex items-center gap-2 border-b px-2 py-1 text-xs">
+                                <div key={clave} className="flex items-center gap-2 border-b px-2 py-1 text-xs">
                                   <input
                                     type="checkbox"
                                     checked
-                                    onChange={() => patchGrupo(grupo.jid, { rowKeys: grupo.rowKeys.filter((x) => x !== clave) })}
+                                    aria-label="Quitar del grupo"
+                                    onChange={() => quitarEquipo(grupo, clave)}
                                   />
-                                  <span className="truncate">{etiquetaDe(clave, d)}</span>
-                                </label>
+                                  <span className="min-w-0 flex-1 truncate">{etiquetaDe(clave, d)}</span>
+                                  <label className="flex shrink-0 items-center gap-1">
+                                    <input
+                                      type="checkbox"
+                                      checked={alertasDe(grupo).includes(clave)}
+                                      onChange={(e) => toggleAlerta(grupo, clave, e.target.checked)}
+                                    />
+                                    Alerta automática
+                                  </label>
+                                </div>
                               );
                             })}
                             {paraSumar.length > 0 && (
@@ -602,7 +656,7 @@ export default function WhatsAppAlertas() {
                                   <input
                                     type="checkbox"
                                     checked={false}
-                                    onChange={() => patchGrupo(grupo.jid, { rowKeys: [...grupo.rowKeys, clave] })}
+                                    onChange={() => sumarEquipo(grupo, clave)}
                                   />
                                   <span className="truncate">{etiquetaDe(clave, d)}</span>
                                 </label>
@@ -610,7 +664,8 @@ export default function WhatsAppAlertas() {
                             })}
                           </div>
                           <p className="mt-1 text-[11px] text-muted-foreground">
-                            {grupo.rowKeys.length} equipo(s) marcado(s).
+                            {grupo.rowKeys.length} equipo(s) en el grupo ·{' '}
+                            {alertasDe(grupo).filter((k) => grupo.rowKeys.includes(k)).length} con alerta automática.
                           </p>
                         </div>
                         <Button onClick={() => guardarGrupo(grupo)}>Guardar este grupo</Button>

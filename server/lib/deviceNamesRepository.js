@@ -16,6 +16,7 @@ function readStore() {
     return {
       byRowKey: raw.byRowKey ?? {},
       byImei: raw.byImei ?? {},
+      ambiguousImeis: raw.ambiguousImeis ?? {},
     };
   }
 
@@ -27,7 +28,7 @@ function readStore() {
       if (name) byImei[key] = name;
     }
   }
-  return { byRowKey: {}, byImei };
+  return { byRowKey: {}, byImei, ambiguousImeis: {} };
 }
 
 function writeStore(store) {
@@ -49,6 +50,49 @@ function entryName(entry) {
   return normalizeName(entry.name);
 }
 
+/** IMEI de una ficha guardada. El rowKey es `CODIGO-imei` o el imei solo. */
+function imeiDeEntrada(rowKey, entry) {
+  if (entry?.imei) return String(entry.imei);
+  const dash = String(rowKey).indexOf('-');
+  return dash >= 0 ? String(rowKey).slice(dash + 1) : String(rowKey);
+}
+
+function rowKeysDelImei(store, imei) {
+  if (!imei) return [];
+  const keys = [];
+  for (const [rowKey, entry] of Object.entries(store.byRowKey)) {
+    if (imeiDeEntrada(rowKey, entry) === imei) keys.push(rowKey);
+  }
+  return keys;
+}
+
+/**
+ * `byImei` solo refleja un nombre cuando hay una sola ficha.
+ * STARCOOL y THERMOKING con el mismo IMEI no comparten ese mapa.
+ */
+function marcarImeiCompartido(store, imei) {
+  if (!store.ambiguousImeis) store.ambiguousImeis = {};
+  store.ambiguousImeis[imei] = true;
+  delete store.byImei[imei];
+}
+
+function syncByImei(store, imei) {
+  if (store.ambiguousImeis?.[imei]) {
+    delete store.byImei[imei];
+    return;
+  }
+  const keys = rowKeysDelImei(store, imei);
+  if (keys.length > 1) {
+    marcarImeiCompartido(store, imei);
+    return;
+  }
+  if (keys.length === 1) {
+    const name = entryName(store.byRowKey[keys[0]]);
+    if (name) store.byImei[imei] = name;
+    else delete store.byImei[imei];
+  }
+}
+
 /** Vista para clientes: rowKey → nombre. */
 export function getDeviceNamesView() {
   const store = readStore();
@@ -67,6 +111,8 @@ export function getDeviceNamesView() {
 export function getDeviceNameByImei(imei) {
   if (!imei) return null;
   const store = readStore();
+  if (store.ambiguousImeis?.[imei] || rowKeysDelImei(store, imei).length > 1) return null;
+
   const fromImei = normalizeName(store.byImei[imei]);
   if (fromImei) return fromImei;
 
@@ -101,11 +147,11 @@ export function setDeviceName({ rowKey, imei, codigo, name, usuario = 'sistema' 
   const store = readStore();
   const normalized = normalizeName(name);
   const prevEntry = store.byRowKey[rowKey];
-  const prevName = entryName(prevEntry) ?? normalizeName(store.byImei[imei]) ?? '—';
+  const prevName = entryName(prevEntry) ?? '—';
+  const yaCompartido = rowKeysDelImei(store, imei).length > 1;
 
   if (normalized == null) {
     delete store.byRowKey[rowKey];
-    delete store.byImei[imei];
   } else {
     store.byRowKey[rowKey] = {
       name: normalized,
@@ -114,7 +160,11 @@ export function setDeviceName({ rowKey, imei, codigo, name, usuario = 'sistema' 
       updatedAt: new Date().toISOString(),
       updatedBy: usuario,
     };
-    store.byImei[imei] = normalized;
+  }
+  if (yaCompartido || rowKeysDelImei(store, imei).length > 1) {
+    marcarImeiCompartido(store, imei);
+  } else {
+    syncByImei(store, imei);
   }
 
   writeStore(store);
@@ -145,32 +195,38 @@ export function mergeDeviceNames(entries) {
   const store = readStore();
   let changed = false;
 
+  const tocados = [];
   for (const [key, name] of Object.entries(entries)) {
     const trimmed = normalizeName(name);
     if (!key || !trimmed) continue;
+    const keys = rowKeysDelImei(store, key);
+    if (store.ambiguousImeis?.[key] || keys.length > 1) continue;
 
-    if (store.byImei[key] !== trimmed) {
-      store.byImei[key] = trimmed;
-      changed = true;
-    }
-
-    for (const [rowKey, entry] of Object.entries(store.byRowKey)) {
-      if (entry?.imei === key && entryName(entry) !== trimmed) {
+    if (keys.length === 1) {
+      const rowKey = keys[0];
+      const entry = store.byRowKey[rowKey];
+      if (entryName(entry) !== trimmed) {
         store.byRowKey[rowKey] = {
           ...entry,
           name: trimmed,
+          imei: entry?.imei || key,
           updatedAt: new Date().toISOString(),
         };
         changed = true;
       }
     }
+    if (store.byImei[key] !== trimmed) {
+      store.byImei[key] = trimmed;
+      changed = true;
+    }
+    tocados.push(key);
   }
 
   if (changed) {
     writeStore(store);
-    for (const [key, name] of Object.entries(entries)) {
-      const trimmed = normalizeName(name);
-      if (key && trimmed) propagarNombreAGrupos(null, key, trimmed);
+    for (const key of tocados) {
+      const keys = rowKeysDelImei(store, key);
+      propagarNombreAGrupos(keys[0] || null, key, store.byImei[key]);
     }
   }
   return store.byImei;
@@ -183,8 +239,9 @@ function propagarNombreAGrupos(rowKey, imei, name) {
   let changed = false;
   for (const grupo of grupos) {
     for (const device of grupo.devices ?? []) {
-      const mismo =
-        (rowKey && device.rowKey === rowKey) || (imei && device.imei === imei);
+      const mismo = rowKey
+        ? device.rowKey === rowKey
+        : Boolean(imei && device.imei === imei);
       if (!mismo) continue;
       if (name) {
         if (device.nombrePlataforma !== name) {

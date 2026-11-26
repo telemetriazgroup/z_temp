@@ -1020,9 +1020,17 @@ export default function ConfiguracionCorreo() {
 
   const deviceSearchOptions = useMemo(() => {
     const inGroup = new Set(editing?.devices.map((d) => d.rowKey) ?? []);
+    const compartidos = imeisDuplicados(dispositivos);
     return dispositivos.map((d) => {
       const rk = deviceRowKey(d);
-      const nombre = displayNameForDevice(user, d.imei, rk, localNames, SIN_ASIGNAR);
+      const nombre = displayNameForDevice(
+        user,
+        d.imei,
+        rk,
+        localNames,
+        SIN_ASIGNAR,
+        compartidos.has(d.imei)
+      );
       const codigo = d.codigo ?? '';
       const label = `${codigo} · ${d.imei} · ${nombre}`;
       const searchText = `${codigo} ${d.imei} ${nombre} ${rk}`.toLowerCase();
@@ -1137,7 +1145,8 @@ export default function ConfiguracionCorreo() {
         dispositivo.imei,
         assignment.rowKey,
         localNames,
-        SIN_ASIGNAR
+        SIN_ASIGNAR,
+        imeisDuplicados(dispositivos).has(dispositivo.imei)
       );
       const desc = assignment.descripcionEquipo?.trim() || nombrePlat;
       const content = buildFueraDeRangoEmail({

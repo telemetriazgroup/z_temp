@@ -72,10 +72,18 @@ const SIN_ASIGNAR = 'SIN ASIGNAR';
 function deviceLabel(
   d: DispositivoUltimoEstado,
   localNames: Record<string, string>,
-  user: User | null
+  user: User | null,
+  repetidos?: Set<string>
 ): string {
   const rk = d.codigo != null ? `${d.codigo}-${d.imei}` : d.imei;
-  return displayNameForDevice(user, d.imei, rk, localNames, SIN_ASIGNAR);
+  return displayNameForDevice(
+    user,
+    d.imei,
+    rk,
+    localNames,
+    SIN_ASIGNAR,
+    repetidos?.has(d.imei) ?? false
+  );
 }
 
 function statusBadge(estado: string | undefined) {
@@ -282,7 +290,7 @@ export default function Administracion() {
     const q = deviceSearch.trim().toLowerCase();
     return actorAssignableDevices.filter((d) => {
       if (!q) return true;
-      const name = deviceLabel(d, localNames, currentUser);
+      const name = deviceLabel(d, localNames, currentUser, imeisRepetidos);
       return (
         d.imei.toLowerCase().includes(q) ||
         name.toLowerCase().includes(q) ||
@@ -291,7 +299,7 @@ export default function Administracion() {
           .includes(q)
       );
     });
-  }, [actorAssignableDevices, deviceSearch, localNames, currentUser]);
+  }, [actorAssignableDevices, deviceSearch, localNames, currentUser, imeisRepetidos]);
 
   const filteredDevicesForGrupo = useMemo(() => {
     const q = gDeviceSearch.trim().toLowerCase();
@@ -299,7 +307,7 @@ export default function Administracion() {
     const base = actorAssignableDevices;
     return base.filter((d) => {
       if (!q) return true;
-      const name = deviceLabel(d, localNames, currentUser);
+      const name = deviceLabel(d, localNames, currentUser, imeisRepetidos);
       return (
         d.imei.toLowerCase().includes(q) ||
         name.toLowerCase().includes(q) ||
@@ -308,7 +316,7 @@ export default function Administracion() {
           .includes(q)
       );
     });
-  }, [actorAssignableDevices, gDeviceSearch, localNames, currentUser]);
+  }, [actorAssignableDevices, gDeviceSearch, localNames, currentUser, imeisRepetidos]);
 
   const selectUser = (u: User) => {
     setSelectedUserId(u.id);
@@ -637,7 +645,7 @@ export default function Administracion() {
                           {draftImeis.map((imei) => {
                             const d = dispositivoPorToken(imei);
                             const name = d
-                              ? deviceLabel(d, localNames, currentUser)
+                              ? deviceLabel(d, localNames, currentUser, imeisRepetidos)
                               : imei;
                             return (
                               <Badge
@@ -680,7 +688,7 @@ export default function Administracion() {
                                     >
                                       <span className="truncate font-mono">
                                         {d
-                                          ? deviceLabel(d, localNames, currentUser)
+                                          ? deviceLabel(d, localNames, currentUser, imeisRepetidos)
                                           : imei}
                                       </span>
                                       {d && statusBadge(d.estado_conexion)}
@@ -722,7 +730,7 @@ export default function Administracion() {
                             ].map((imei) => {
                               const d = dispositivoPorToken(imei);
                               const name = d
-                                ? deviceLabel(d, localNames, currentUser)
+                                ? deviceLabel(d, localNames, currentUser, imeisRepetidos)
                                 : imei;
                               return (
                                 <li
@@ -886,7 +894,7 @@ export default function Administracion() {
                                 />
                                 <span className="min-w-0 flex-1">
                                   <span className="font-medium block truncate text-xs">
-                                    {deviceLabel(d, localNames, currentUser)}
+                                    {deviceLabel(d, localNames, currentUser, imeisRepetidos)}
                                   </span>
                                   <span className="text-[10px] text-muted-foreground font-mono truncate block">
                                     {d.codigo ? `${d.codigo} · ` : ''}
@@ -1050,7 +1058,7 @@ export default function Administracion() {
                         onCheckedChange={() => toggleAsignacion(d, setGImeis)}
                       />
                       <span className="min-w-0 flex-1 truncate text-xs">
-                        {deviceLabel(d, localNames, currentUser)}
+                        {deviceLabel(d, localNames, currentUser, imeisRepetidos)}
                         <span className="text-muted-foreground font-mono block text-[10px]">
                           {d.codigo ? `${d.codigo} · ` : ''}
                           {d.imei}

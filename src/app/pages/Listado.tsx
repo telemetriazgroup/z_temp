@@ -613,7 +613,8 @@ export default function Listado() {
         device.imei,
         rk,
         localNames,
-        SIN_ASIGNAR
+        SIN_ASIGNAR,
+        imeisRepetidos.has(device.imei)
       ).toLowerCase();
       return (
         device.imei.toLowerCase().includes(search) ||
@@ -629,13 +630,15 @@ export default function Listado() {
         d.imei,
         base.rowKey,
         localNames,
-        SIN_ASIGNAR
+        SIN_ASIGNAR,
+        imeisRepetidos.has(d.imei)
       );
       return {
         ...base,
         raw: d,
         nombreAsignado,
-        nameLockedByProfile: Boolean(user?.deviceNames?.[d.imei]),
+        nameLockedByProfile:
+          Boolean(user?.deviceNames?.[d.imei]) && !imeisRepetidos.has(d.imei),
       };
     });
 

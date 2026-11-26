@@ -96,6 +96,36 @@ function guardarTodo(grupos) {
   writeJson(FILE, { grupos });
 }
 
+function listaClaves(lista) {
+  return [
+    ...new Set(
+      (Array.isArray(lista) ? lista : []).map((x) => String(x || '').trim()).filter(Boolean)
+    ),
+  ];
+}
+
+/** Sin la lista, cada equipo del grupo sigue con alerta. Una lista vacía no avisa a ninguno. */
+function alertasAutomaticasDe(input, previo, rowKeys) {
+  const permitidas = new Set(rowKeys);
+  const origen = Array.isArray(input?.alertasAutomaticas)
+    ? input.alertasAutomaticas
+    : Array.isArray(previo?.alertasAutomaticas)
+      ? previo.alertasAutomaticas
+      : rowKeys;
+  return listaClaves(origen).filter((k) => permitidas.has(k));
+}
+
+function alertasVisibles(cfg) {
+  const rowKeys = Array.isArray(cfg?.rowKeys) ? cfg.rowKeys : [];
+  if (!Array.isArray(cfg?.alertasAutomaticas)) return [...rowKeys];
+  const permitidas = new Set(rowKeys);
+  return listaClaves(cfg.alertasAutomaticas).filter((k) => permitidas.has(k));
+}
+
+function clavesAlertaAutomatica(cfg) {
+  return alertasVisibles(cfg);
+}
+
 export function configDeGrupo(jid) {
   return leerTodo().find((g) => g.jid === jid) || null;
 }
@@ -122,17 +152,12 @@ export function guardarGrupoAlerta(input) {
           .filter((x) => x.includes('@'))
       ),
     ],
-    rowKeys: [
-      ...new Set(
-        (Array.isArray(input?.rowKeys) ? input.rowKeys : [])
-          .map((x) => String(x || '').trim())
-          .filter(Boolean)
-      ),
-    ],
+    rowKeys: listaClaves(input?.rowKeys),
     horaDesde: horaDesdeDe({ horaDesde: input?.horaDesde ?? previo.horaDesde }),
     horaHasta: horaHastaDe({ horaHasta: input?.horaHasta ?? previo.horaHasta }),
     participantes: Array.isArray(input?.participantes) ? input.participantes : previo.participantes || [],
     nombres: normalizarNombres(input?.nombres ?? previo.nombres),
+    alertasAutomaticas: alertasAutomaticasDe(input, previo, listaClaves(input?.rowKeys)),
     updatedAt: new Date().toISOString(),
   };
   if (next.horaDesde >= next.horaHasta) {
@@ -167,6 +192,7 @@ export function mezclarGrupos(vivos) {
       umbralFueraLinea: cfg?.umbralFueraLinea ?? UMBRAL_FUERA_LINEA,
       menciones: cfg?.menciones || [],
       rowKeys: cfg?.rowKeys || [],
+      alertasAutomaticas: alertasVisibles(cfg),
       nombres: normalizarNombres(cfg?.nombres),
       horaDesde: horaDesdeDe(cfg),
       horaHasta: horaHastaDe(cfg),
@@ -189,6 +215,7 @@ function grupoDesdeGuardado(g) {
     umbralFueraLinea: g.umbralFueraLinea ?? UMBRAL_FUERA_LINEA,
     menciones: g.menciones || [],
     rowKeys: g.rowKeys || [],
+    alertasAutomaticas: alertasVisibles(g),
     nombres: normalizarNombres(g.nombres),
     horaDesde: horaDesdeDe(g),
     horaHasta: horaHastaDe(g),
@@ -399,9 +426,15 @@ function indiceNombres() {
     if (imei) prev.imei = imei;
     porClave.set(rowKey, prev);
   }
+  const conteoImei = new Map();
+  for (const prev of porClave.values()) {
+    if (!prev.imei) continue;
+    conteoImei.set(prev.imei, (conteoImei.get(prev.imei) || 0) + 1);
+  }
   for (const [imei, name] of Object.entries(view.byImei || {})) {
     const limpio = nombreLimpio(name);
     if (!imei || !limpio) continue;
+    if ((conteoImei.get(imei) || 0) > 1) continue;
     let colocado = false;
     for (const prev of porClave.values()) {
       if (prev.imei !== imei) continue;
@@ -542,8 +575,13 @@ export async function evaluarAvisosGrupoWhatsapp(dispositivos, now = new Date())
   let cambio = false;
   const vistos = new Set();
 
+  const vigilados = new Set();
   for (const cfg of activos) {
-    for (const rowKey of cfg.rowKeys) {
+    for (const rowKey of clavesAlertaAutomatica(cfg)) vigilados.add(rowKey);
+  }
+
+  for (const cfg of activos) {
+    for (const rowKey of clavesAlertaAutomatica(cfg)) {
       const dispositivo = dispositivoGuardado(porClave, porImei, rowKey);
       if (!dispositivo) continue;
       const claveEp = `${rowKey}`;
@@ -650,6 +688,23 @@ export async function evaluarAvisosGrupoWhatsapp(dispositivos, now = new Date())
         mentions: etiquetar ? cfg.menciones : undefined,
       });
     }
+  }
+
+  const soloConsulta = new Set();
+  for (const cfg of activos) {
+    for (const rowKey of cfg.rowKeys || []) {
+      if (!vigilados.has(rowKey)) soloConsulta.add(rowKey);
+    }
+  }
+  for (const rowKey of soloConsulta) {
+    if (!(avisos.episodios[rowKey] || avisos.abiertos?.[rowKey] || avisos.graves?.[rowKey])) continue;
+    delete avisos.episodios[rowKey];
+    if (avisos.graves) delete avisos.graves[rowKey];
+    if (avisos.abiertos) delete avisos.abiertos[rowKey];
+    cambio = true;
+    void cerrarSeguimientoAutomatico(rowKey, 'Alerta automática desactivada para este equipo.').catch((e) =>
+      console.warn('[wa-grupo] cierre', e.message)
+    );
   }
 
   for (const clave of Object.keys(avisos.episodios)) {

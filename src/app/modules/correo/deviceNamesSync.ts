@@ -24,15 +24,22 @@ export function buildDeviceNamesForServer(
 ): Record<string, string> {
   const locals = localNames ?? readDeviceLocalNames();
   const out: Record<string, string> = {};
+  const veces = new Map<string, number>();
+  for (const d of dispositivos) {
+    veces.set(d.imei, (veces.get(d.imei) ?? 0) + 1);
+  }
+  const compartido = (imei: string) => (veces.get(imei) ?? 0) > 1;
 
   if (user?.deviceNames) {
     for (const [imei, name] of Object.entries(user.deviceNames)) {
+      if (compartido(imei)) continue;
       const trimmed = name?.trim();
       if (trimmed && trimmed !== SIN_ASIGNAR) out[imei] = trimmed;
     }
   }
 
   for (const d of dispositivos) {
+    if (compartido(d.imei)) continue;
     const name = nombrePlataformaForDevice(user, d, locals);
     if (name !== SIN_ASIGNAR) out[d.imei] = name;
   }

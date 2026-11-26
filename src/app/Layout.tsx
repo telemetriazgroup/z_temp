@@ -287,10 +287,10 @@ export default function Layout() {
   }, [menuMonitoreo, user, verIncidentesCorreo, t, locale]);
 
   return (
-    <div className="min-h-screen bg-background text-foreground flex">
+    <div className="min-h-screen bg-background text-foreground flex print:block">
       <aside
         className={cn(
-          'relative z-50 bg-card border-r border-border transition-[width] duration-300 ease-in-out flex flex-col shrink-0',
+          'relative z-50 bg-card border-r border-border transition-[width] duration-300 ease-in-out flex flex-col shrink-0 print:hidden',
           sidebarExpanded ? 'w-64' : 'w-16'
         )}
       >
@@ -395,7 +395,7 @@ export default function Layout() {
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="h-16 bg-card border-b border-border flex items-center justify-between gap-4 px-4 sm:px-6">
+        <header className="h-16 bg-card border-b border-border flex items-center justify-between gap-4 px-4 sm:px-6 print:hidden">
           <div className="min-w-0 flex items-center gap-2">
             <button
               type="button"
@@ -518,7 +518,7 @@ export default function Layout() {
         </header>
 
         {impersonator && user && (
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-950">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-950 print:hidden">
             <p>
               Está viendo la cuenta de <strong>{displayName}</strong> (@{user.username}) como soporte.
               Lo que haga se guarda en esta cuenta.
@@ -537,7 +537,7 @@ export default function Layout() {
         )}
 
         <RecordatorioIncidentes />
-        <main className="flex-1 overflow-auto p-6 bg-background">
+        <main className="flex-1 overflow-auto p-6 bg-background print:overflow-visible print:p-0">
           {userHasNoFleetAccess(user) &&
           pathRequiresFleet(location.pathname) &&
           !userCanManageUsers(user) ? (

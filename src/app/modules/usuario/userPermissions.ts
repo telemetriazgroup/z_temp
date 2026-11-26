@@ -109,12 +109,16 @@ export function displayNameForDevice(
   imei: string,
   rowKey: string,
   localNames: Record<string, string>,
-  sinAsignar: string
+  sinAsignar: string,
+  imeiCompartido = false
 ): string {
-  const profile = user?.deviceNames?.[imei]?.trim();
-  if (profile) return profile;
   const local = localNames[rowKey]?.trim();
-  return local ? local : sinAsignar;
+  if (local) return local;
+  if (!imeiCompartido) {
+    const profile = user?.deviceNames?.[imei]?.trim();
+    if (profile) return profile;
+  }
+  return sinAsignar;
 }
 
 export function countSuperUsers(users: User[]): number {
