@@ -14,6 +14,7 @@ import { ajusteDefrostAlerta } from '../analisis/defrostAlerta.js';
 import { resolveRangoOptsForDevice } from '../deviceAlertConfigRepository.js';
 import { getSmtpConfig } from '../smtpRepository.js';
 import { getDeviceNameByImei, getDeviceNameByRowKey, getDeviceNamesView } from '../deviceNamesRepository.js';
+import { listGruposEquipos } from '../gruposEquiposRepository.js';
 import { loadCurrentDispositivos } from '../dashboard/fleetStore.js';
 import { fechaCorta, graficaHoras } from './consultaEquipo.js';
 import { horaConversada, relatoParaGrupo } from './analisisChat.js';
@@ -349,10 +350,11 @@ function conOperacionesCliente(relato) {
 function indiceNombres() {
   const porClave = new Map();
   const grupos = [];
-  const raw = readJson('grupos.json', []);
-  for (const g of Array.isArray(raw) ? raw : []) {
+  const crudoCorreo = readJson('grupos.json', []);
+  const listaCorreo = Array.isArray(crudoCorreo) ? crudoCorreo : Array.isArray(crudoCorreo?.grupos) ? crudoCorreo.grupos : [];
+  for (const g of listaCorreo) {
     const equipos = [];
-    for (const d of g.devices || []) {
+    for (const d of g.devices || g.equipos || []) {
       if (d?.enabled === false) continue;
       const imei = String(d.imei || '').trim();
       if (!imei) continue;
@@ -377,7 +379,12 @@ function indiceNombres() {
         zgru,
       });
     }
-    grupos.push({ id: String(g.id || g.nombre || equipos.length), nombre: g.nombre || 'Sin nombre', equipos });
+    grupos.push({
+      id: String(g.id || g.nombre || equipos.length),
+      nombre: g.nombre || 'Sin nombre',
+      origen: 'correo',
+      equipos,
+    });
   }
   const view = getDeviceNamesView();
   for (const [rowKey, name] of Object.entries(view.namesByRowKey || {})) {
@@ -388,7 +395,56 @@ function indiceNombres() {
     prev.alias.add(limpio);
     const zgru = zgruDe(limpio);
     if (zgru && !prev.zgru) prev.zgru = zgru;
+    const imei = prev.imei || (String(rowKey).match(/(\d{14,16})$/) || [])[1] || '';
+    if (imei) prev.imei = imei;
     porClave.set(rowKey, prev);
+  }
+  for (const [imei, name] of Object.entries(view.byImei || {})) {
+    const limpio = nombreLimpio(name);
+    if (!imei || !limpio) continue;
+    let colocado = false;
+    for (const prev of porClave.values()) {
+      if (prev.imei !== imei) continue;
+      prev.alias.add(limpio);
+      if (!prev.nombre) prev.nombre = limpio;
+      const zgru = zgruDe(limpio);
+      if (zgru && !prev.zgru) prev.zgru = zgru;
+      colocado = true;
+    }
+    if (!colocado) {
+      porClave.set(imei, { alias: new Set([limpio]), zgru: zgruDe(limpio), nombre: limpio, imei, codigo: '' });
+    }
+  }
+  for (const g of listGruposEquipos()) {
+    const equipos = [];
+    for (const imei of g.imeis || []) {
+      const id = String(imei || '').trim();
+      if (!id) continue;
+      let elegido = null;
+      for (const [rowKey, f] of porClave) {
+        if (f.imei === id || rowKey === id) {
+          elegido = {
+            rowKey,
+            imei: id,
+            codigo: f.codigo || '',
+            nombre: f.nombre || zgruDe(f.nombre) || id,
+            zgru: f.zgru || zgruDe(f.nombre),
+          };
+          break;
+        }
+      }
+      if (!elegido) {
+        const nombre = nombreLimpio(getDeviceNameByImei(id));
+        elegido = { rowKey: id, imei: id, codigo: '', nombre: nombre || id, zgru: zgruDe(nombre) };
+      }
+      equipos.push(elegido);
+    }
+    grupos.push({
+      id: String(g.id),
+      nombre: g.nombre || 'Sin nombre',
+      origen: 'administracion',
+      equipos,
+    });
   }
   return { porClave, grupos };
 }
@@ -727,17 +783,24 @@ export function extraerCotizaciones(texto) {
   return [...new Set(runs.filter((n) => n.startsWith('100')))];
 }
 
+function zgrusDeTexto(texto) {
+  const found = String(texto || '').toUpperCase().match(/ZGRU\s*\d{4,10}/g) || [];
+  return found.map((s) => s.replace(/\s+/g, ''));
+}
+
+function zgrusDeFicha(ficha) {
+  return [...new Set([...zgrusDeTexto(ficha?.zgru), ...zgrusDeTexto(ficha?.nombre), ...zgrusDeTexto(ficha?.blob)])];
+}
+
 function zgruDeFicha(ficha) {
-  return String(ficha?.zgru || zgruDe(ficha?.nombre) || '').toUpperCase();
+  return zgrusDeFicha(ficha)[0] || '';
 }
 
 export function exactosZgru(pedido, fichas) {
-  const num = String(pedido || '').replace(/\D/g, '');
+  const buscado = String(pedido || '').toUpperCase().replace(/\s+/g, '');
+  const num = buscado.replace(/\D/g, '');
   if (!num) return [];
-  return fichas.filter((f) => {
-    const z = zgruDeFicha(f);
-    return z === pedido || z.replace(/\D/g, '') === num;
-  });
+  return fichas.filter((f) => zgrusDeFicha(f).some((z) => z === buscado || z.replace(/\D/g, '') === num));
 }
 
 export function similaresZgru(pedido, fichas) {
@@ -745,14 +808,20 @@ export function similaresZgru(pedido, fichas) {
   if (num.length < 4) return [];
   const scored = [];
   for (const f of fichas) {
-    const z = zgruDeFicha(f);
-    const otro = z.replace(/\D/g, '');
-    if (!otro || otro === num) continue;
-    let pref = 0;
-    while (pref < num.length && pref < otro.length && num[pref] === otro[pref]) pref += 1;
-    if (pref < 4) continue;
-    const dist = Math.abs(Number(num) - Number(otro));
-    scored.push({ f, pref, dist: Number.isFinite(dist) ? dist : Number.MAX_SAFE_INTEGER });
+    let mejor = null;
+    for (const z of zgrusDeFicha(f)) {
+      const otro = z.replace(/\D/g, '');
+      if (!otro || otro === num) continue;
+      let pref = 0;
+      while (pref < num.length && pref < otro.length && num[pref] === otro[pref]) pref += 1;
+      if (pref < 4) continue;
+      const dist = Math.abs(Number(num) - Number(otro));
+      const candidato = { pref, dist: Number.isFinite(dist) ? dist : Number.MAX_SAFE_INTEGER };
+      if (!mejor || candidato.pref > mejor.pref || (candidato.pref === mejor.pref && candidato.dist < mejor.dist)) {
+        mejor = candidato;
+      }
+    }
+    if (mejor) scored.push({ f, ...mejor });
   }
   scored.sort((a, b) => b.pref - a.pref || a.dist - b.dist || String(a.f.nombre).localeCompare(String(b.f.nombre), 'es'));
   return scored.slice(0, 5).map((s) => s.f);
@@ -869,12 +938,87 @@ function clavesGuardadas(jid) {
   return set;
 }
 
+function codigoDeClave(rowKey, imei) {
+  const s = String(rowKey || '');
+  if (imei && s.endsWith(`-${imei}`)) return s.slice(0, -(imei.length + 1));
+  return '';
+}
+
+function fichaGuardada(indice, rowKey, imei, flota) {
+  const directo = indice?.porClave?.get(rowKey);
+  const porImei = imei
+    ? [...(indice?.porClave?.entries() || [])].find(([clave, f]) => f.imei === imei || clave === imei)
+    : null;
+  const ficha = directo || porImei?.[1] || null;
+  const nombre =
+    nombreLimpio(ficha?.nombre) ||
+    nombreLimpio(getDeviceNameByRowKey(rowKey)) ||
+    nombreLimpio(getDeviceNameByImei(imei)) ||
+    '';
+  const alias = ficha ? [...ficha.alias] : [];
+  const zgru = ficha?.zgru || zgruDe(nombre);
+  const vivo = (flota || []).find(
+    (d) => (imei && String(d.imei) === imei) || deviceRowKey(d) === rowKey
+  );
+  const dispositivo = vivo || {
+    imei: imei || ficha?.imei || '',
+    codigo: ficha?.codigo || codigoDeClave(rowKey, imei),
+    nombre,
+  };
+  const blob = sinAcento([nombre, zgru, dispositivo.imei, dispositivo.codigo, ...alias].filter(Boolean).join(' '));
+  return {
+    dispositivo,
+    rowKey: vivo ? deviceRowKey(vivo) : rowKey,
+    nombre: nombre || zgru || imei || rowKey,
+    zgru,
+    imei: dispositivo.imei || imei,
+    codigo: dispositivo.codigo || '',
+    blob,
+  };
+}
+
 function fichasAgregadas(flota, indice, jid) {
   const claves = clavesGuardadas(jid);
   if (!claves.size) return [];
-  return fichasDeFlota(flota, indice).filter(
+  const vivas = fichasDeFlota(flota, indice).filter(
     (f) => claves.has(f.rowKey) || claves.has(String(f.rowKey).toUpperCase()) || (f.imei && claves.has(String(f.imei)))
   );
+  const ya = new Set(vivas.flatMap((f) => [f.rowKey, f.imei].filter(Boolean).map(String)));
+  const extra = [];
+  for (const rowKey of configDeGrupo(jid)?.rowKeys || []) {
+    const imei = imeiDeClave(rowKey) || (/^\d{14,16}$/.test(String(rowKey)) ? String(rowKey) : '');
+    if (ya.has(String(rowKey)) || (imei && ya.has(imei))) continue;
+    const ficha = fichaGuardada(indice, rowKey, imei, flota);
+    extra.push(ficha);
+    ya.add(String(ficha.rowKey));
+    if (ficha.imei) ya.add(String(ficha.imei));
+  }
+  return [...vivas, ...extra];
+}
+
+function unirFichas(listas) {
+  const porId = new Map();
+  for (const lista of listas) {
+    for (const f of lista || []) {
+      const id = String(f?.rowKey || f?.imei || '');
+      if (!id) continue;
+      const previo = porId.get(id);
+      if (!previo) {
+        porId.set(id, f);
+        continue;
+      }
+      const nombre = zgrusDeTexto(f?.nombre).length >= zgrusDeTexto(previo?.nombre).length ? f.nombre || previo.nombre : previo.nombre;
+      porId.set(id, {
+        ...previo,
+        ...f,
+        nombre,
+        zgru: zgruDe(nombre) || previo.zgru || f.zgru,
+        blob: [previo.blob, f.blob, nombre].filter(Boolean).join(' '),
+        dispositivo: f?.dispositivo?.imei ? f.dispositivo : previo.dispositivo,
+      });
+    }
+  }
+  return [...porId.values()];
 }
 
 function fichasDeFlota(flota, indice) {
@@ -1054,9 +1198,9 @@ export async function atenderMencionGrupo({ msg, client, jid }) {
   const flota = await loadCurrentDispositivos().catch(() => []);
   const indice = indiceNombres();
   if (decision.tipo === 'pedido') {
-    const fichas = fichasAgregadas(flota, indice, jid);
+    const guardadas = fichasAgregadas(flota, indice, jid);
+    const fichas = unirFichas([charla?.opciones || [], guardadas]);
     if (!fichas.length) {
-      if (charlas.get(claveCharla(jid, autor))?.opciones?.length) return;
       const aviso = textoSinFichas(jid, flota);
       if (!aviso) return;
       responderGrupo(jid, aviso, autor);
@@ -1109,7 +1253,7 @@ export async function atenderMencionGrupo({ msg, client, jid }) {
     if (decision.zgru) {
       responderGrupo(
         jid,
-        `No hay coincidencia aproximada de *${decision.zgru}*. Indique la cotización. Empieza con 100, sigue el año y cierra con la secuencia, por ejemplo 10020264035.`,
+        `No hay coincidencia aproximada de *${decision.zgru}*. Indique la cotización, el nombre u otro ZGRU.`,
         autor
       );
       guardarCharla(jid, autor, []);
@@ -1118,7 +1262,7 @@ export async function atenderMencionGrupo({ msg, client, jid }) {
     const pedido = (decision.cotizaciones || []).join(', ');
     responderGrupo(
       jid,
-      `No hay un equipo cuya cotización empiece con ${pedido}. Puede indicar el ZGRU.`,
+      `No hay un equipo con la cotización ${pedido}. Indique la cotización, el nombre u otro ZGRU.`,
       autor
     );
     guardarCharla(jid, autor, []);

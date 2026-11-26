@@ -38,7 +38,12 @@ type Mensaje = {
 };
 type ParticipanteWa = { jid: string; numero: string; nombre: string; admin: boolean };
 type NombreEquipo = { rowKey: string; imei: string; codigo: string; nombre: string; zgru: string | null };
-type GrupoCorreoListo = { id: string; nombre: string; equipos: NombreEquipo[] };
+type GrupoCorreoListo = {
+  id: string;
+  nombre: string;
+  origen?: 'correo' | 'administracion';
+  equipos: NombreEquipo[];
+};
 type GrupoWa = {
   jid: string;
   nombre: string;
@@ -161,7 +166,8 @@ export default function WhatsAppAlertas() {
   }, [user, cargarEstado, cargarChats, cargarGruposGuardados]);
 
   function etiquetaDe(rowKey: string, d?: DispositivoUltimoEstado) {
-    const n = nombresEquipo.find((x) => x.rowKey === rowKey);
+    const imeiClave = d?.imei || String(rowKey).match(/(\d{14,16})$/)?.[1] || '';
+    const n = nombresEquipo.find((x) => x.rowKey === rowKey || (imeiClave && x.imei === imeiClave));
     const titulo = n?.nombre || '';
     const zgru = n?.zgru && !titulo.toUpperCase().includes(n.zgru) ? n.zgru : '';
     const codigo = d?.codigo || n?.codigo || '';
@@ -488,32 +494,58 @@ export default function WhatsAppAlertas() {
                         </div>
                         <div>
                           <p className="text-xs font-medium mb-1">Equipos que este grupo recibe</p>
+                          <p className="mb-2 text-xs text-muted-foreground">
+                            El selector usa los dos: grupos de correo ({gruposCorreo.filter((g) => g.origen !== 'administracion').length}) y grupos de Administración ({gruposCorreo.filter((g) => g.origen === 'administracion').length}). Agregue uno y después el otro; cada uno suma sus equipos.
+                          </p>
                           <div className="mb-2 flex flex-wrap items-center gap-2">
                             <select
                               className="h-9 min-w-56 rounded-md border bg-background px-2 text-sm"
                               value={correoElegido}
                               onChange={(e) => setCorreoElegido(e.target.value)}
                             >
-                              <option value="">Tomar un grupo de correo ya armado</option>
-                              {gruposCorreo.map((g) => (
-                                <option key={g.id} value={g.id}>
-                                  {g.nombre} ({g.equipos.length})
-                                </option>
-                              ))}
+                              <option value="">Agregar un grupo ya armado</option>
+                              <optgroup label="Correo">
+                                {gruposCorreo
+                                  .filter((g) => g.origen !== 'administracion')
+                                  .map((g) => (
+                                    <option key={`correo:${g.id}`} value={`correo:${g.id}`}>
+                                      {g.nombre} ({g.equipos.length})
+                                    </option>
+                                  ))}
+                              </optgroup>
+                              <optgroup label="Administración">
+                                {gruposCorreo
+                                  .filter((g) => g.origen === 'administracion')
+                                  .map((g) => (
+                                    <option key={`administracion:${g.id}`} value={`administracion:${g.id}`}>
+                                      {g.nombre} ({g.equipos.length})
+                                    </option>
+                                  ))}
+                              </optgroup>
                             </select>
                             <Button
                               type="button"
                               variant="outline"
                               onClick={() => {
-                                const origen = gruposCorreo.find((g) => g.id === correoElegido);
+                                const origen = gruposCorreo.find(
+                                  (g) => `${g.origen === 'administracion' ? 'administracion' : 'correo'}:${g.id}` === correoElegido
+                                );
                                 if (!origen) {
-                                  toast.error('Elija un grupo de correo');
+                                  toast.error('Elija un grupo de correo o de Administración');
                                   return;
                                 }
-                                const rowKeys = [...new Set([...grupo.rowKeys, ...origen.equipos.map((e) => e.rowKey)])];
+                                const claves = origen.equipos.map((e) => {
+                                  const exacto = flota.find((d) => claveEquipo(d) === e.rowKey);
+                                  if (exacto) return e.rowKey;
+                                  const mismos = flota.filter((d) => d.imei && d.imei === e.imei);
+                                  if (mismos.length === 1) return claveEquipo(mismos[0]);
+                                  return e.rowKey;
+                                });
+                                const rowKeys = [...new Set([...grupo.rowKeys, ...claves.filter(Boolean)])];
                                 patchGrupo(grupo.jid, { rowKeys });
+                                const lado = origen.origen === 'administracion' ? 'Administración' : 'Correo';
                                 toast.success(
-                                  `${origen.equipos.length} equipo(s) de ${origen.nombre} quedaron marcados. Guarde este grupo. El interruptor no cambia.`
+                                  `${claves.length} equipo(s) de ${origen.nombre} (${lado}) quedaron marcados. Guarde este grupo. El interruptor no cambia.`
                                 );
                               }}
                             >
@@ -531,7 +563,7 @@ export default function WhatsAppAlertas() {
                               <p className="p-2 text-xs text-muted-foreground">
                                 {q
                                   ? 'Ningún equipo agregado coincide con ese nombre.'
-                                  : 'Todavía no hay equipos agregados. Escriba un nombre o tome un grupo de correo.'}
+                                  : 'Todavía no hay equipos agregados. Escriba un nombre o agregue un grupo de correo o de Administración.'}
                               </p>
                             )}
                             {(agregados.length > 0 || huerfanos.length > 0) && (
