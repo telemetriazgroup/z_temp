@@ -418,6 +418,54 @@ export async function evaluarAvisosGrupoWhatsapp(dispositivos, now = new Date())
 
 const ESPERA_CHARLA_MS = 5 * 60 * 1000;
 const charlas = new Map();
+const identidadBot = { usuarios: new Set(), jids: new Set() };
+
+function idTexto(id) {
+  if (!id) return '';
+  if (typeof id === 'string') return id;
+  return id._serialized || id.$1 || '';
+}
+
+export async function recordarIdentidadBot(client) {
+  const wid = client?.info?.wid;
+  const user = String(wid?.user || '').split(':')[0].replace(/\D/g, '');
+  const ser = idTexto(wid);
+  if (user) identidadBot.usuarios.add(user);
+  if (ser) identidadBot.jids.add(ser);
+  if (!client?.getContactLidAndPhone || !ser) return;
+  try {
+    const lista = await client.getContactLidAndPhone([ser]);
+    const par = Array.isArray(lista) ? lista[0] : null;
+    const lid = idTexto(par?.lid);
+    const pn = String(par?.pn || '').replace(/\D/g, '');
+    if (lid) {
+      identidadBot.jids.add(lid);
+      const u = lid.split('@')[0].split(':')[0];
+      if (u) identidadBot.usuarios.add(u);
+    }
+    if (pn) identidadBot.usuarios.add(pn);
+  } catch (e) {
+    console.warn('[wa] identidad', e.message);
+  }
+}
+
+function idsMencionados(msg) {
+  return []
+    .concat(msg?.mentionedIds || [])
+    .concat(msg?._data?.mentionedJidList || [])
+    .map(idTexto)
+    .filter(Boolean);
+}
+
+function coincideUsuario(candidato, usuarios) {
+  const limpio = String(candidato || '').replace(/\D/g, '');
+  if (limpio.length < 8) return false;
+  for (const u of usuarios) {
+    if (!u) continue;
+    if (limpio === u || limpio.endsWith(u) || u.endsWith(limpio)) return true;
+  }
+  return false;
+}
 const PALABRAS_VACIAS = new Set([
   'grafica', 'grafico', 'horas', 'hora', 'ultimas', 'ultima', 'reefer', 'equipo', 'informacion',
   'info', 'por', 'favor', 'hola', 'buenos', 'dias', 'buenas', 'tardes', 'noches', 'quiero', 'ver',
@@ -466,23 +514,39 @@ export function interpretarRespuesta(texto, opciones = []) {
   return { tipo: 'vacio' };
 }
 
-function mencionaAlBot(msg, client) {
-  const yo = client?.info?.wid;
-  if (!yo) return false;
-  const user = String(yo.user || '');
-  const serialized = String(yo._serialized || '');
-  const ids = []
-    .concat(msg?.mentionedIds || [])
-    .concat(msg?._data?.mentionedJidList || [])
-    .map((id) => (typeof id === 'string' ? id : id?._serialized || ''))
-    .filter(Boolean);
-  if (ids.some((id) => id === serialized || (user && id.startsWith(`${user}@`)))) return true;
+async function mencionaAlBot(msg, client) {
+  if (identidadBot.usuarios.size === 0) await recordarIdentidadBot(client);
+  const mencionados = idsMencionados(msg);
+  if (
+    mencionados.some(
+      (id) => identidadBot.jids.has(id) || identidadBot.usuarios.has(id.split('@')[0].split(':')[0])
+    )
+  ) {
+    return true;
+  }
   const body = String(msg?.body || '');
-  return Boolean(user) && body.includes(`@${user}`);
+  for (const u of identidadBot.usuarios) {
+    if (u && body.includes(`@${u}`)) return true;
+  }
+  const marcas = body.match(/@\+?[\d\s-]{8,22}/g) || [];
+  if (marcas.some((m) => coincideUsuario(m, identidadBot.usuarios))) return true;
+  if (!mencionados.length || !client?.getContactLidAndPhone) return false;
+  try {
+    const pares = await client.getContactLidAndPhone(mencionados);
+    for (const par of pares || []) {
+      const lid = idTexto(par?.lid);
+      const pn = String(par?.pn || '');
+      if (lid && identidadBot.jids.has(lid)) return true;
+      if (coincideUsuario(pn, identidadBot.usuarios)) return true;
+    }
+  } catch (e) {
+    console.warn('[wa] lid mencion', e.message);
+  }
+  return false;
 }
 
 function autorDe(msg) {
-  return String(msg?.author || msg?.id?.participant || msg?._data?.author || '').trim();
+  return idTexto(msg?.author || msg?.id?.participant || msg?._data?.author || msg?._data?.participant);
 }
 
 function claveCharla(jid, autor) {
@@ -593,9 +657,16 @@ export async function atenderMencionGrupo({ msg, client, jid }) {
     if (ahora - charla.ultimo > ESPERA_CHARLA_MS) charlas.delete(clave);
   }
   const autor = autorDe(msg);
-  const mencionado = mencionaAlBot(msg, client);
+  const mencionado = await mencionaAlBot(msg, client);
   const charla = charlaViva(jid, autor, ahora);
-  if (!mencionado && !charla) return;
+  if (!mencionado && !charla) {
+    const ids = idsMencionados(msg);
+    if (ids.length || String(msg?.body || '').includes('@')) {
+      console.warn('[wa] grupo sin respuesta', jid, autor || 'sin-autor', ids.join('|') || String(msg.body || '').slice(0, 80));
+    }
+    return;
+  }
+  console.log('[wa] grupo responde', jid, autor || 'sin-autor');
   const texto = String(msg?.body || '').trim();
   const decision = interpretarRespuesta(texto, charla?.opciones || []);
   if (charla && decision.tipo === 'numero') {

@@ -4,7 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { iniciarOutbox, setWaSender } from './outbox.js';
 import { recibirMensaje } from './conversacion.js';
-import { atenderMencionGrupo } from './gruposAlerta.js';
+import { atenderMencionGrupo, recordarIdentidadBot } from './gruposAlerta.js';
 import { reasignarTelefono, registrarMensaje } from './repository.js';
 import { jidDeTelefono, normalizarTelefono, telefonoDeJid } from './telefono.js';
 
@@ -221,6 +221,7 @@ export async function startWaClient() {
     });
     c.on('ready', () => {
       const wid = c.info?.wid?.user || null;
+      recordarIdentidadBot(c).catch((e) => console.warn('[wa] identidad', e.message));
       tocar({ fase: 'conectado', telefono: wid, qr: null, qrDataUrl: null, error: null });
       registrarPaso('cliente', 'Cliente WhatsApp', 'whatsapp-web.js', 'ok');
       registrarPaso('conectado', 'WhatsApp conectado', `Sesión activa ${wid || ''}`.trim(), 'ok');
@@ -236,13 +237,39 @@ export async function startWaClient() {
       tocar({ fase: 'desconectado', error: String(reason || 'desconectado'), qr: null });
       client = null;
     });
+    const gruposVistos = new Set();
+    const idMensaje = (msg) => {
+      const id = msg?.id;
+      if (!id) return '';
+      if (typeof id === 'string') return id;
+      return id._serialized || '';
+    };
+    const jidGrupo = (msg) => {
+      const from = String(msg?.from || '');
+      if (from.endsWith('@g.us')) return from;
+      const remote = msg?.id?.remote;
+      const r = typeof remote === 'string' ? remote : remote?._serialized || '';
+      return String(r).endsWith('@g.us') ? String(r) : '';
+    };
+    const tomarGrupo = (msg) => {
+      const grupo = jidGrupo(msg);
+      if (!grupo || msg.fromMe) return false;
+      const id = idMensaje(msg);
+      if (id) {
+        if (gruposVistos.has(id)) return true;
+        gruposVistos.add(id);
+        if (gruposVistos.size > 400) gruposVistos.delete(gruposVistos.values().next().value);
+      }
+      atenderMencionGrupo({ msg, client: c, jid: grupo }).catch((e) => console.warn('[wa] grupo', e.message));
+      return true;
+    };
+    c.on('message_create', (msg) => {
+      tomarGrupo(msg);
+    });
     c.on('message', (msg) => {
       const from = String(msg.from || '');
       if (msg.fromMe) return;
-      if (from.endsWith('@g.us')) {
-        atenderMencionGrupo({ msg, client: c, jid: from }).catch((e) => console.warn('[wa] grupo', e.message));
-        return;
-      }
+      if (tomarGrupo(msg)) return;
       const texto = String(msg.body || '').trim();
       if (!texto) return;
       resolverEntrada(msg, c)
@@ -255,18 +282,28 @@ export async function startWaClient() {
         .catch((e) => console.warn('[wa] mensaje', e.message));
     });
     setWaSender(async (jid, body) => {
-      const mentions = Array.isArray(body?.mentions) ? body.mentions : undefined;
-      if (body && typeof body === 'object' && body.media?.base64) {
-        const media = new MessageMedia(body.media.mimetype, body.media.base64, body.media.filename);
-        const documento = body.media.documento === true || !String(body.media.mimetype).startsWith('image/');
-        return c.sendMessage(jid, media, {
-          caption: body.text ? String(body.text).slice(0, 900) : undefined,
-          sendMediaAsDocument: documento,
-          mentions,
-        });
+      const mentions = Array.isArray(body?.mentions) ? body.mentions.filter(Boolean) : undefined;
+      const enviar = async (conMencion) => {
+        const marca = conMencion && mentions?.length ? mentions : undefined;
+        if (body && typeof body === 'object' && body.media?.base64) {
+          const media = new MessageMedia(body.media.mimetype, body.media.base64, body.media.filename);
+          const documento = body.media.documento === true || !String(body.media.mimetype).startsWith('image/');
+          return c.sendMessage(jid, media, {
+            caption: body.text ? String(body.text).slice(0, 900) : undefined,
+            sendMediaAsDocument: documento,
+            mentions: marca,
+          });
+        }
+        const text = typeof body === 'string' ? body : String(body?.text ?? '');
+        return c.sendMessage(jid, text, marca ? { mentions: marca } : undefined);
+      };
+      try {
+        return await enviar(true);
+      } catch (e) {
+        if (!mentions?.length) throw e;
+        console.warn('[wa] reintento sin etiqueta', e.message);
+        return enviar(false);
       }
-      const text = typeof body === 'string' ? body : String(body?.text ?? '');
-      return c.sendMessage(jid, text, mentions ? { mentions } : undefined);
     });
     iniciarOutbox();
     client = c;
