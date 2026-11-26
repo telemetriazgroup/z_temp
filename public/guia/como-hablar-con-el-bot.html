@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Cómo hablar con el bot</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: #e8eef5; }
+    body {
+      font-family: "Segoe UI", system-ui, sans-serif;
+      color: #0f2744;
+    }
+    .hoja {
+      width: 1080px;
+      margin: 0 auto;
+      background: #f7fafc;
+      padding: 36px 40px 32px;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 24px;
+      border-bottom: 3px solid #075e54;
+      padding-bottom: 16px;
+    }
+    .marca { font-size: 13px; letter-spacing: .14em; font-weight: 700; color: #075e54; }
+    h1 { margin: 6px 0 0; font-size: 34px; line-height: 1.15; }
+    .bajada { margin: 8px 0 0; font-size: 18px; color: #35516e; }
+    .pasos { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 22px; }
+    .paso {
+      background: white;
+      border: 1px solid #d5e2ee;
+      border-radius: 16px;
+      padding: 16px 18px 14px;
+    }
+    .paso.ancho { grid-column: 1 / -1; }
+    .num {
+      display: inline-flex;
+      width: 28px; height: 28px;
+      align-items: center; justify-content: center;
+      border-radius: 50%;
+      background: #075e54;
+      color: white;
+      font-weight: 700;
+      margin-right: 8px;
+    }
+    h2 { display: flex; align-items: center; margin: 0 0 8px; font-size: 20px; }
+    p { margin: 0 0 8px; font-size: 16px; line-height: 1.4; }
+    .ej {
+      background: #e7f6ef;
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: 15px;
+      line-height: 1.45;
+    }
+    .ej b { color: #075e54; }
+    .chat {
+      background: #ece5dd;
+      border-radius: 14px;
+      padding: 12px;
+    }
+    .burbuja {
+      background: white;
+      border-radius: 10px 10px 10px 2px;
+      padding: 8px 10px;
+      margin-bottom: 8px;
+      font-size: 14.5px;
+      line-height: 1.35;
+      max-width: 92%;
+    }
+    .burbuja.mia {
+      margin-left: auto;
+      background: #d9fdd3;
+      border-radius: 10px 10px 2px 10px;
+    }
+    .pie {
+      margin-top: 16px;
+      background: #0f2744;
+      color: white;
+      border-radius: 14px;
+      padding: 14px 16px;
+      font-size: 15.5px;
+      line-height: 1.45;
+    }
+    .pie strong { color: #9ae6b4; }
+  </style>
+</head>
+<body>
+  <article class="hoja">
+    <header>
+      <div>
+        <div class="marca">ZTRACK · GRUPO DE WHATSAPP</div>
+        <h1>Cómo pedirle la gráfica al bot</h1>
+        <p class="bajada">Etiqueta al bot y dile qué equipo quieres. Solo busca entre los equipos de este grupo.</p>
+      </div>
+    </header>
+
+    <section class="pasos">
+      <div class="paso">
+        <h2><span class="num">1</span> Invócalo</h2>
+        <p>En el grupo, <b>etiqueta al bot</b> y escribe el pedido en el mismo mensaje. Puedes usar el ZGRU, el nombre o la cotización.</p>
+        <div class="ej">
+          <div>@asistente_desarrollo ZGRU1047392 <b>DONOFRIO PVEA COMAS</b></div>
+          <div>@asistente_desarrollo ZGRU2206118 <b>MAKRO Santa Anita</b></div>
+          <div>@asistente_desarrollo ZGRU1186255 <b>REDONDOS Huancayo</b></div>
+          <div>@asistente_desarrollo ZGRU3094410 <b>San Fernando Ate</b></div>
+        </div>
+      </div>
+
+      <div class="paso">
+        <h2><span class="num">2</span> Si hay un solo equipo</h2>
+        <p>El bot te saluda y envía <b>la gráfica de las últimas 12 horas</b>. No muestra un menú: ya encontró el equipo.</p>
+        <div class="chat">
+          <div class="burbuja mia">@asistente_desarrollo ZGRU1047392 DONOFRIO PVEA COMAS</div>
+          <div class="burbuja">Buenos días Jorge<br>Gráfica de 12 h de ZGRU1047392 DONOFRIO PVEA COMAS.</div>
+        </div>
+      </div>
+
+      <div class="paso ancho">
+        <h2><span class="num">3</span> Si hay varias opciones, elige una</h2>
+        <p>El bot lista <b>hasta 5</b>, de la más parecida a la menos. Responde <b>sin volver a etiquetarlo</b>: escribe el número o el ZGRU.</p>
+        <div class="chat">
+          <div class="burbuja">¿De cuál quiere ver la gráfica? Indique el ZGRU o el número del 1 al 4.<br>1. ZGRU1047392 · DONOFRIO PVEA COMAS<br>2. ZGRU2206118 · MAKRO Santa Anita<br>3. ZGRU1186255 · REDONDOS Huancayo<br>4. ZGRU3094410 · San Fernando Ate</div>
+          <div class="burbuja mia">2</div>
+          <div class="burbuja mia">o también: ZGRU2206118</div>
+        </div>
+      </div>
+
+      <div class="paso">
+        <h2><span class="num">4</span> Si no lo encuentra</h2>
+        <p>Escribe otra pista. Sirve <b>la cotización, el nombre u otro ZGRU</b>. La cotización empieza por 100, por ejemplo 10020264035.</p>
+      </div>
+
+      <div class="paso">
+        <h2><span class="num">5</span> Tienes 5 minutos</h2>
+        <p>Si no escribes en <b>5 minutos</b>, la conversación se cierra sola. Para preguntar de nuevo, <b>vuelve a etiquetar al bot</b>.</p>
+      </div>
+    </section>
+
+    <section class="paso ancho" style="margin-top:16px">
+      <h2><span class="num">6</span> Alerta automática y saludo</h2>
+      <p>Ya asimilamos varios equipos para la <b>alerta automática</b>. Algunos pueden no estar todavía: el equipo de desarrollo está integrando más equipos a esa respuesta. En la alerta se etiqueta a las personas marcadas.</p>
+    </section>
+
+    <footer class="pie">
+      Un ZGRU exacto trae la gráfica al momento. Varias coincidencias: responda <strong>1</strong>, <strong>2</strong>, <strong>3</strong>, <strong>4</strong> o <strong>5</strong>, o el ZGRU.
+    </footer>
+  </article>
+</body>
+</html>

@@ -32,6 +32,67 @@ function perfilAjeno() {
   }
 }
 
+function digitosJid(valor) {
+  return String(valor || '').split('@')[0].replace(/\D/g, '');
+}
+
+function idSerializado(participante) {
+  const id = participante?.id;
+  if (!id) return '';
+  if (typeof id === 'string') return id;
+  return id._serialized || (id.user && id.server ? `${id.user}@${id.server}` : '');
+}
+
+function mismoNumero(a, b) {
+  if (!a || !b || a.length < 8 || b.length < 8) return false;
+  return a === b || a.endsWith(b) || b.endsWith(a);
+}
+
+/** La etiqueta tiene que usar el id con el que esa persona está en el grupo. */
+async function alinearMencionesGrupo(client, jid, body, pedidos) {
+  const textoBase = typeof body === 'string' ? body : String(body?.text ?? '');
+  if (!pedidos?.length) return { texto: textoBase, mentions: undefined };
+  let resueltas = pedidos.map((id) => String(id));
+  if (String(jid).endsWith('@g.us') && client?.getChatById) {
+    try {
+      const chat = await client.getChatById(jid);
+      const participants = Array.isArray(chat?.participants) ? chat.participants : [];
+      const porId = new Map(participants.map((p) => [idSerializado(p), p]));
+      let pares = null;
+      resueltas = [];
+      for (const pedido of pedidos) {
+        const id = String(pedido);
+        if (porId.has(id)) {
+          resueltas.push(id);
+          continue;
+        }
+        const dig = digitosJid(id);
+        const hallado = participants.find((p) => mismoNumero(digitosJid(idSerializado(p)), dig));
+        if (hallado) {
+          resueltas.push(idSerializado(hallado));
+          continue;
+        }
+        if (!pares && dig && client.getContactLidAndPhone) {
+          const ids = participants.map(idSerializado).filter(Boolean);
+          pares = ids.length ? await client.getContactLidAndPhone(ids).catch(() => []) : [];
+        }
+        const par = (pares || []).find((item) => mismoNumero(String(item?.pn || '').replace(/\D/g, ''), dig));
+        const lid = String(par?.lid?._serialized || par?.lid || '');
+        resueltas.push(lid.includes('@') ? lid : id);
+      }
+    } catch (e) {
+      console.warn('[wa] menciones del grupo', e.message);
+    }
+  }
+  let texto = textoBase;
+  pedidos.forEach((pedido, i) => {
+    const antes = digitosJid(pedido);
+    const despues = digitosJid(resueltas[i]);
+    if (antes && despues && antes !== despues) texto = texto.split(`@${antes}`).join(`@${despues}`);
+  });
+  return { texto, mentions: [...new Set(resueltas.filter((id) => String(id).includes('@')))] };
+}
+
 function quitarCandadosPerfil() {
   const dir = path.join(sessionsDir, 'session');
   for (const nombre of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
@@ -282,19 +343,22 @@ export async function startWaClient() {
         .catch((e) => console.warn('[wa] mensaje', e.message));
     });
     setWaSender(async (jid, body) => {
-      const mentions = Array.isArray(body?.mentions) ? body.mentions.filter(Boolean) : undefined;
+      const pedidos = Array.isArray(body?.mentions) ? body.mentions.filter(Boolean) : undefined;
+      const alineado = await alinearMencionesGrupo(c, jid, body, pedidos);
+      const mentions = alineado.mentions;
+      const texto = alineado.texto;
       const enviar = async (conMencion) => {
         const marca = conMencion && mentions?.length ? mentions : undefined;
         if (body && typeof body === 'object' && body.media?.base64) {
           const media = new MessageMedia(body.media.mimetype, body.media.base64, body.media.filename);
           const documento = body.media.documento === true || !String(body.media.mimetype).startsWith('image/');
           return c.sendMessage(jid, media, {
-            caption: body.text ? String(body.text).slice(0, 900) : undefined,
+            caption: texto ? String(texto).slice(0, 1024) : undefined,
             sendMediaAsDocument: documento,
             mentions: marca,
           });
         }
-        const text = typeof body === 'string' ? body : String(body?.text ?? '');
+        const text = typeof body === 'string' ? texto : String(texto ?? '');
         return c.sendMessage(jid, text, marca ? { mentions: marca } : undefined);
       };
       try {

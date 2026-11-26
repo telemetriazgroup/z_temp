@@ -1,6 +1,7 @@
 /**
  * Seguimiento que abre la alerta automática.
- * A las 2 h y 3 h el aviso es normal. A las 4 h y 5 h etiqueta y dice que continúa.
+ * A las 2 h y 3 h el aviso es normal. A las 4 h y 5 h dice que continúa.
+ * Los números marcados del grupo se etiquetan en cada aviso.
  * Desde las 6 h pide estatus, escucha 10 minutos y avisa una vez a ztrack@zgroup.com.pe.
  */
 import nodemailer from 'nodemailer';

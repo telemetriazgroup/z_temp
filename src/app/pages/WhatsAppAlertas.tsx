@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Navigate } from 'react-router';
-import { MessageCircle, RefreshCw } from 'lucide-react';
+import { MessageCircle, RefreshCw, Download } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '../AuthContext';
 import { userIsSuperAdmin } from '../modules/usuario';
@@ -9,6 +9,7 @@ import type { DispositivoUltimoEstado } from '../types';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
+import { digitosTelefono, formatoTelefono, imagenGuiaAsistente } from '../modules/wa/guiaAsistente';
 
 const BASE = import.meta.env.VITE_CORREO_API_BASE ?? '/reefer/api/correo';
 
@@ -118,6 +119,8 @@ export default function WhatsAppAlertas() {
   const [gruposCorreo, setGruposCorreo] = useState<GrupoCorreoListo[]>([]);
   const [nombresEquipo, setNombresEquipo] = useState<NombreEquipo[]>([]);
   const [correoElegido, setCorreoElegido] = useState('');
+  const [numeroGuia, setNumeroGuia] = useState('');
+  const numeroTocado = useRef(false);
 
   const cargarEstado = useCallback(async () => {
     const estado = await api<{ data: Sesion; tiempos?: { gapChatSeg?: number } }>('/estado');
@@ -169,6 +172,26 @@ export default function WhatsAppAlertas() {
     const t = setInterval(() => cargarEstado().catch(() => {}), 4000);
     return () => clearInterval(t);
   }, [user, cargarEstado, cargarChats, cargarGruposGuardados]);
+
+  useEffect(() => {
+    if (numeroTocado.current) return;
+    if (sesion?.telefono) setNumeroGuia(sesion.telefono);
+  }, [sesion?.telefono]);
+
+  async function descargarGuia() {
+    const digitos = digitosTelefono(numeroGuia);
+    if (digitos.length < 8) {
+      toast.error('Agregue el número del asistente');
+      return;
+    }
+    const blob = await imagenGuiaAsistente(digitos);
+    const url = URL.createObjectURL(blob);
+    const enlace = document.createElement('a');
+    enlace.href = url;
+    enlace.download = 'como-hablar-con-el-asistente.png';
+    enlace.click();
+    URL.revokeObjectURL(url);
+  }
 
   function etiquetaDe(rowKey: string, d?: DispositivoUltimoEstado) {
     const imeiClave = d?.imei || String(rowKey).match(/(\d{14,16})$/)?.[1] || '';
@@ -250,7 +273,7 @@ export default function WhatsAppAlertas() {
     try {
       await api('/ajustes', { method: 'PUT', body: JSON.stringify({ gapChatSeg: n }) });
       esperaTocada.current = false;
-      toast.success(`El bot espera ${n} s entre respuestas del mismo número`);
+      toast.success(`El asistente espera ${n} s entre respuestas del mismo número`);
       await cargarEstado();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'No se pudo guardar');
@@ -323,10 +346,43 @@ export default function WhatsAppAlertas() {
             )}
           </section>
 
+          <section className="rounded-lg border p-4 space-y-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="max-w-3xl">
+                <h2 className="font-semibold">Cómo hablar con el asistente de desarrollo</h2>
+                <p className="text-sm text-muted-foreground">
+                  No lo presente como un bot. Es el asistente de desarrollo. Agregue el número de esta sesión: sale grande en la imagen para que lo guarden como asistente_desarrollo y lo etiqueten fácil en el grupo.
+                </p>
+              </div>
+              <Button onClick={() => descargarGuia().catch((e) => toast.error(e instanceof Error ? e.message : 'No se pudo descargar'))}>
+                <Download className="h-4 w-4 mr-1" /> Descargar imagen
+              </Button>
+            </div>
+            <label className="block max-w-xs text-xs">
+              Número del asistente
+              <Input
+                className="mt-1"
+                inputMode="numeric"
+                value={numeroGuia}
+                placeholder="51919860070"
+                onChange={(e) => {
+                  numeroTocado.current = true;
+                  setNumeroGuia(e.target.value);
+                }}
+              />
+            </label>
+            <p className="text-4xl font-semibold tracking-wide text-[#075e54]">
+              {digitosTelefono(numeroGuia).length >= 8 ? formatoTelefono(numeroGuia) : 'Agregue el número'}
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Recomiende guardarlo en el teléfono con el nombre <span className="font-semibold text-foreground">asistente_desarrollo</span>. En el grupo se invoca con @asistente_desarrollo.
+            </p>
+          </section>
+
           <section className="rounded-lg border p-4 space-y-2">
             <h2 className="font-semibold">Espera entre respuestas</h2>
             <p className="text-sm text-muted-foreground">
-              Segundos que el bot espera antes de contestar al mismo número. Mínimo 1, máximo 10. Las alertas
+              Segundos que el asistente espera antes de contestar al mismo número. Mínimo 1, máximo 10. Las alertas
               siguen en su propio ritmo y no usan este valor.
             </p>
             <div className="flex flex-wrap items-center gap-2">
@@ -357,10 +413,10 @@ export default function WhatsAppAlertas() {
                   Estar en un grupo no activa las alertas. Elija el grupo, los equipos por su nombre y a quién
                   saludar, y guarde.                   El aviso automático de cada grupo tiene su propio horario (de 5:00 a 22:00 si no lo cambia),
                   hora de Perú, con el saludo del momento, el análisis de 12 h y la gráfica. Fuera de ese
-                  horario el grupo no atiende solo: hay que etiquetar al bot. Un grupo activo queda guardado
+                  horario el grupo no atiende solo: hay que etiquetar al asistente de desarrollo. Un grupo activo queda guardado
                   y sus respuestas quedan en el historial; no hace falta volver a leerlo. Las alertas de
-                  WhatsApp a cada número van de 5:00 a 22:00. El correo no usa ese horario. Si alguien etiqueta al bot, la búsqueda es solo entre los
-                  equipos agregados a ese grupo. Si etiqueta y no escribe un nombre, el bot no contesta.
+                  WhatsApp a cada número van de 5:00 a 22:00. El correo no usa ese horario. Si alguien etiqueta al asistente, la búsqueda es solo entre los
+                  equipos agregados a ese grupo. Si etiqueta y no escribe un nombre, el asistente no contesta.
                   A los 5 minutos sin consulta tiene que etiquetar de nuevo.
                 </p>
               </div>
@@ -480,7 +536,7 @@ export default function WhatsAppAlertas() {
                         <div>
                           <p className="text-xs font-medium mb-1">Etiquetar en el mensaje</p>
                           <p className="mb-1 text-xs text-muted-foreground">
-                            El nombre es el trato. Si esa persona convoca al bot, la saluda así: Buenos días Sr. Mario.
+                            Los marcados se etiquetan en cada alerta automática. Cualquier persona del grupo puede pedir información. Si tiene nombre, la primera respuesta empieza con Buenos días, Buenas tardes o Buenas noches y ese nombre. Si no tiene nombre, solo va el saludo.
                           </p>
                           <div className="max-h-48 overflow-auto rounded border">
                             {grupo.participantes.length === 0 && (
@@ -522,7 +578,7 @@ export default function WhatsAppAlertas() {
                           <p className="text-xs font-medium mb-1">Añadir dispositivos</p>
                           <p className="mb-2 text-xs text-muted-foreground">
                             El selector usa los dos: grupos de correo ({gruposCorreo.filter((g) => g.origen !== 'administracion').length}) y grupos de Administración ({gruposCorreo.filter((g) => g.origen === 'administracion').length}). Agregue uno y después el otro; cada uno suma sus equipos.
-                            Cada equipo queda en el grupo y se puede pedir su gráfica de 12 horas etiquetando al bot.
+                            Cada equipo queda en el grupo y se puede pedir su gráfica de 12 horas etiquetando al asistente de desarrollo.
                             «Alerta automática» se puede apagar: el equipo sigue en el grupo, pero no avisa solo cuando hay un evento.
                           </p>
                           <div className="mb-2 flex flex-wrap items-center gap-2">

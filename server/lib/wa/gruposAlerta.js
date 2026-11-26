@@ -358,7 +358,8 @@ function nombreConfigurado(cfg, autor, telefono) {
 
 function saludoPara(cfg, autor, telefono, now = new Date()) {
   const trato = nombreConfigurado(cfg, autor, telefono);
-  return trato ? `${saludoLima(now)} ${trato}` : '';
+  const saludo = saludoLima(now);
+  return trato ? `${saludo} ${trato}` : saludo;
 }
 
 function saludoDeMenciones(cfg, now) {
@@ -640,7 +641,7 @@ export async function evaluarAvisosGrupoWhatsapp(dispositivos, now = new Date())
         : (await relatoParaGrupo(equipo).catch(() => ({ texto: '' }))).texto;
       const extra = textoFase(fase);
       const relato = conOperacionesCliente(extra ? `${relatoBase}\n${extra}` : relatoBase);
-      const etiquetar = fase !== 'normal';
+      const menciones = (cfg.menciones || []).filter((jid) => String(jid).includes('@'));
       const grafica = await graficaHoras(equipo, 12, { titulo: '12 h' }).catch(() => null);
       avisos.abiertos[rowKey] = condicion.kind;
       await registrarSeguimientoAlerta({
@@ -671,8 +672,8 @@ export async function evaluarAvisosGrupoWhatsapp(dispositivos, now = new Date())
         continue;
       }
       const texto = armarAviso({
-        saludo: etiquetar ? saludoDeMenciones(cfg, now) : saludoLima(now),
-        marcas: etiquetar ? textoMenciones(cfg.menciones) : '',
+        saludo: saludoDeMenciones(cfg, now),
+        marcas: textoMenciones(menciones),
         nombre,
         relato,
       });
@@ -685,7 +686,7 @@ export async function evaluarAvisosGrupoWhatsapp(dispositivos, now = new Date())
         telefono: cfg.jid,
         tipo: 'alerta_grupo',
         media: grafica.media,
-        mentions: etiquetar ? cfg.menciones : undefined,
+        mentions: menciones.length ? menciones : undefined,
       });
     }
   }
