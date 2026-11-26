@@ -233,3 +233,143 @@ export async function textoAnalisis(e, username) {
   lineas.push('', pieMenu());
   return lineas.filter((x) => x != null).join('\n');
 }
+
+/** Por encima de esto el condensador se comenta al especialista. */
+const CONDENSADOR_ALTO = 65;
+
+function diaLima(fecha) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Lima',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(fecha);
+}
+
+function horaLimaCorta(fecha) {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'America/Lima',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(fecha);
+}
+
+export function horaConversada(iso, now = new Date()) {
+  const ms = new Date(iso).getTime();
+  if (!Number.isFinite(ms)) return 'hace un momento';
+  const cuando = new Date(ms);
+  const hm = horaLimaCorta(cuando);
+  const ese = diaLima(cuando);
+  const hoy = diaLima(now);
+  if (ese === hoy) return `las ${hm}`;
+  const ayer = diaLima(new Date(now.getTime() - 24 * 3600000));
+  if (ese === ayer) return `ayer a las ${hm}`;
+  const fecha = new Intl.DateTimeFormat('es-PE', {
+    timeZone: 'America/Lima',
+    day: 'numeric',
+    month: 'long',
+  }).format(cuando);
+  return `el ${fecha} a las ${hm}`;
+}
+
+function unirNovedades(partes) {
+  if (partes.length === 1) return partes[0];
+  if (partes.length === 2) return `${partes[0]} y ${partes[1]}`;
+  return `${partes.slice(0, -1).join(', ')} y ${partes[partes.length - 1]}`;
+}
+
+/**
+ * Texto del grupo, para quien ya conoce el reefer.
+ * Si todo está bien, no alarma. Si algo falla, dice desde cuándo.
+ */
+export function narrarEstadoGrupo(estado, now = new Date()) {
+  if (estado?.sinLecturas) {
+    return {
+      hayNovedad: false,
+      texto: 'No tengo lecturas de las últimas 12 horas para decir cómo viene.',
+    };
+  }
+  if (estado?.sinComunicacion) {
+    return {
+      hayNovedad: true,
+      texto: `No está comunicando desde ${horaConversada(estado.sinComunicacion, now)}.`,
+    };
+  }
+  const novedades = [];
+  if (estado?.fueraDesde) {
+    novedades.push(`el retorno está fuera de rango desde ${horaConversada(estado.fueraDesde, now)}`);
+  }
+  if (estado?.evaporador?.since) {
+    const defrost = Number(estado.evaporador.horas) >= HORAS_EVAPORADOR ? '; conviene hacer defrost' : '';
+    novedades.push(`el evaporador está saturado desde ${horaConversada(estado.evaporador.since, now)}${defrost}`);
+  }
+  if (estado?.condensador?.since) {
+    novedades.push(`el condensador está alto desde ${horaConversada(estado.condensador.since, now)}`);
+  }
+  if (estado?.compresor?.since) {
+    novedades.push(`el compresor está muy caliente desde ${horaConversada(estado.compresor.since, now)}`);
+  }
+  const encendido =
+    estado?.energia === 0
+      ? estado.apagadoDesde
+        ? `Está apagado desde ${horaConversada(estado.apagadoDesde, now)}.`
+        : 'Está apagado.'
+      : estado?.energia === 1
+        ? 'Está encendido.'
+        : 'No pude confirmar si está encendido.';
+  if (!novedades.length) {
+    if (estado?.energia === 0) return { hayNovedad: true, texto: encendido };
+    return { hayNovedad: false, texto: `${encendido} En estas 12 horas todo está normal.` };
+  }
+  const detalle = unirNovedades(novedades);
+  const frase = detalle.charAt(0).toUpperCase() + detalle.slice(1);
+  return { hayNovedad: true, texto: `${encendido} ${frase}.` };
+}
+
+export async function relatoParaGrupo(e) {
+  const banda = bandaNormal(e, null);
+  const doce = await filasHistorial(e, 12);
+  let filas = (doce.filas || []).map((row) => filaConCodigo(row, e.codigo));
+  if (!filas.length) return narrarEstadoGrupo({ sinLecturas: true });
+  const ahora = new Date();
+  let fuera = computeOutOfRangeIntervals(filas, banda.opts, ahora, rowEnRangoTemperaturaParaAlerta);
+  let abierto = episodioActual(fuera);
+  const inicioVentana = filas.reduce((m, row) => {
+    const t = timestampRegistroHistorial(row);
+    return Number.isNaN(t) ? m : Math.min(m, t);
+  }, Infinity);
+  const cortaEnElBorde =
+    abierto &&
+    Number.isFinite(inicioVentana) &&
+    new Date(abierto.since).getTime() - inicioVentana < 20 * 60 * 1000;
+  if (cortaEnElBorde || (abierto && abierto.durationHours > 12)) {
+    const tres = await filasHistorial(e, 72);
+    const filas3 = (tres.filas || []).map((row) => filaConCodigo(row, e.codigo));
+    if (filas3.length) {
+      filas = filas3;
+      fuera = computeOutOfRangeIntervals(filas, banda.opts, ahora, rowEnRangoTemperaturaParaAlerta);
+      const real = episodioActual(fuera);
+      if (real) abierto = real;
+    }
+  }
+  const apagado = episodioActual(computeApagadoIntervals(filas, ahora, e.codigo));
+  const ultima = [...filas].reverse().find((row) => Number.isFinite(timestampRegistroHistorial(row)));
+  const energia = ultima ? powerStateEfectivo(ultima, e.codigo) : null;
+  const evaporador = rachaActual(filas, (row) => evaporadorSaturado(row.set_point, row.evaporation_coil));
+  const condensador = rachaActual(filas, (row) => Number(row.condensation_coil) >= CONDENSADOR_ALTO);
+  const compresor = esTermokingOTunel(e.codigo)
+    ? rachaActual(filas, (row) => compresorAlto(row.compress_coil_1))
+    : null;
+  return narrarEstadoGrupo(
+    {
+      energia,
+      apagadoDesde: apagado?.since || null,
+      fueraDesde: abierto?.since || null,
+      evaporador: evaporador ? { since: evaporador.since, horas: evaporador.horas } : null,
+      condensador: condensador ? { since: condensador.since } : null,
+      compresor: compresor ? { since: compresor.since } : null,
+    },
+    ahora
+  );
+}

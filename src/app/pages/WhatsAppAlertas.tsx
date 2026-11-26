@@ -298,9 +298,9 @@ export default function WhatsAppAlertas() {
                 <p className="text-sm text-muted-foreground max-w-3xl">
                   Estar en un grupo no activa las alertas. Elija el grupo, los equipos por su nombre y a quién
                   saludar, y guarde. El aviso automático va de 5:00 a 22:00, hora de Perú, con el saludo del
-                  momento, el análisis de 12 h y la gráfica. Si alguien etiqueta al bot, se abre una búsqueda
-                  solo con esa persona: muestra hasta 5 coincidencias y espera el ZGRU o el número. A los 5
-                  minutos sin consulta, la charla se cierra sola.
+                  momento, el análisis de 12 h y la gráfica.                   Si alguien etiqueta al bot, la búsqueda es solo entre los equipos agregados a ese grupo.
+                  Si etiqueta y no escribe un nombre, el bot no contesta. A los 5 minutos sin consulta tiene
+                  que etiquetar de nuevo.
                 </p>
               </div>
               <Button variant="outline" onClick={() => leerGrupos()}>
@@ -315,15 +315,16 @@ export default function WhatsAppAlertas() {
                 const abierto = grupoAbierto === grupo.jid;
                 const q = buscaEquipo.trim().toLowerCase();
                 const marcado = (d: DispositivoUltimoEstado) => grupo.rowKeys.includes(claveEquipo(d));
-                const seleccionados = flota.filter(marcado);
-                const equipos = flota
-                  .filter((d) => !marcado(d))
-                  .filter((d) => {
-                    if (!q) return false;
-                    return etiquetaDe(claveEquipo(d), d).toLowerCase().includes(q);
-                  })
-                  .slice(0, 12);
-                const huerfanos = grupo.rowKeys.filter((k) => !flota.some((d) => claveEquipo(d) === k));
+                const coincide = (texto: string) => !q || texto.toLowerCase().includes(q);
+                const agregados = flota.filter(marcado).filter((d) => coincide(etiquetaDe(claveEquipo(d), d)));
+                const huerfanos = grupo.rowKeys
+                  .filter((k) => !flota.some((d) => claveEquipo(d) === k))
+                  .filter((k) => coincide(etiquetaDe(k)));
+                const paraSumar = q
+                  ? flota
+                      .filter((d) => !marcado(d) && coincide(etiquetaDe(claveEquipo(d), d)))
+                      .slice(0, 12)
+                  : [];
                 return (
                   <div key={grupo.jid} className="rounded-md border">
                     <button
@@ -450,14 +451,19 @@ export default function WhatsAppAlertas() {
                           <Input
                             value={buscaEquipo}
                             onChange={(e) => setBuscaEquipo(e.target.value)}
-                            placeholder="Buscar por nombre, ZGRU, API o IMEI"
+                            placeholder="Buscar entre los agregados por nombre, ZGRU o IMEI"
                             className="mb-2"
                           />
-                          <div className="max-h-40 overflow-auto rounded border">
-                            {seleccionados.length === 0 && equipos.length === 0 && huerfanos.length === 0 && (
+                          <div className="max-h-52 overflow-auto rounded border">
+                            {agregados.length === 0 && huerfanos.length === 0 && paraSumar.length === 0 && (
                               <p className="p-2 text-xs text-muted-foreground">
-                                Escriba el nombre, el ZGRU o el IMEI. También puede tomar un grupo de correo.
+                                {q
+                                  ? 'Ningún equipo agregado coincide con ese nombre.'
+                                  : 'Todavía no hay equipos agregados. Escriba un nombre o tome un grupo de correo.'}
                               </p>
+                            )}
+                            {(agregados.length > 0 || huerfanos.length > 0) && (
+                              <p className="px-2 py-1 text-[11px] font-medium text-muted-foreground">Agregados</p>
                             )}
                             {huerfanos.map((clave) => (
                               <label key={clave} className="flex items-center gap-2 border-b px-2 py-1 text-xs">
@@ -469,19 +475,30 @@ export default function WhatsAppAlertas() {
                                 <span className="truncate">{etiquetaDe(clave)}</span>
                               </label>
                             ))}
-                            {seleccionados.concat(equipos).map((d) => {
+                            {agregados.map((d) => {
                               const clave = claveEquipo(d);
                               return (
                                 <label key={clave} className="flex items-center gap-2 border-b px-2 py-1 text-xs">
                                   <input
                                     type="checkbox"
-                                    checked={grupo.rowKeys.includes(clave)}
-                                    onChange={(e) => {
-                                      const rowKeys = e.target.checked
-                                        ? [...grupo.rowKeys, clave]
-                                        : grupo.rowKeys.filter((x) => x !== clave);
-                                      patchGrupo(grupo.jid, { rowKeys });
-                                    }}
+                                    checked
+                                    onChange={() => patchGrupo(grupo.jid, { rowKeys: grupo.rowKeys.filter((x) => x !== clave) })}
+                                  />
+                                  <span className="truncate">{etiquetaDe(clave, d)}</span>
+                                </label>
+                              );
+                            })}
+                            {paraSumar.length > 0 && (
+                              <p className="px-2 py-1 text-[11px] font-medium text-muted-foreground">Para agregar</p>
+                            )}
+                            {paraSumar.map((d) => {
+                              const clave = claveEquipo(d);
+                              return (
+                                <label key={clave} className="flex items-center gap-2 border-b px-2 py-1 text-xs">
+                                  <input
+                                    type="checkbox"
+                                    checked={false}
+                                    onChange={() => patchGrupo(grupo.jid, { rowKeys: [...grupo.rowKeys, clave] })}
                                   />
                                   <span className="truncate">{etiquetaDe(clave, d)}</span>
                                 </label>

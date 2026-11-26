@@ -411,7 +411,7 @@ function adelgazar(puntos, tope = 80) {
   return out;
 }
 
-export async function graficaHoras(e, horas) {
+export async function graficaHoras(e, horas, opts = {}) {
   const { filas, origen, nota } = await filasHistorial(e, horas);
   let puntos = dedupePuntos(filas.map((row) => puntoDe(row)).filter((p) => p.at));
   let fuente = origen;
@@ -441,7 +441,7 @@ export async function graficaHoras(e, horas) {
     .map((p) => ({ ...p, t: new Date(p.at).getTime() }))
     .filter((p) => !Number.isNaN(p.t))
     .sort((a, b) => a.t - b.t);
-  const svg = svgGrafica(adelgazar(conTiempo), `${etiqueta(e)} · ${horas} h`);
+  const svg = svgGrafica(adelgazar(conTiempo), opts.titulo || `${etiqueta(e)} · ${horas} h`);
   if (!svg) {
     return { texto: `*${etiqueta(e)}*\nLas muestras no traen temperaturas.\n\n${PIE_MENU}` };
   }
