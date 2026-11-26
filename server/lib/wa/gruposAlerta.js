@@ -12,9 +12,10 @@ import { isEquipoApagado } from '../powerState.js';
 import { effectiveEnRangoAlertaFromDispositivo } from '../historicalTelemetry.js';
 import { resolveRangoOptsForDevice } from '../deviceAlertConfigRepository.js';
 import { getSmtpConfig } from '../smtpRepository.js';
-import { getDeviceNameByImei, getDeviceNameByRowKey } from '../deviceNamesRepository.js';
+import { getDeviceNameByImei, getDeviceNameByRowKey, getDeviceNamesView } from '../deviceNamesRepository.js';
 import { loadCurrentDispositivos } from '../dashboard/fleetStore.js';
-import { fechaCorta, graficaHoras } from './consultaEquipo.js';
+import { fechaCorta, graficaHoras, pieMenu } from './consultaEquipo.js';
+import { textoAnalisis } from './analisisChat.js';
 import { encolarTexto } from './outbox.js';
 
 const FILE = 'grupos_wa_alerta.json';
@@ -172,19 +173,102 @@ function umbralDe(cfg, kind) {
   return cfg.umbralFueraRango;
 }
 
-function nombreDe(dispositivo) {
-  const rowKey = deviceRowKey(dispositivo);
-  const guardado = getDeviceNameByRowKey(rowKey) || getDeviceNameByImei(dispositivo?.imei);
-  const limpio = String(guardado || '').trim();
-  if (!limpio || limpio.toUpperCase() === 'SIN ASIGNAR') return dispositivo?.imei || rowKey;
-  return limpio;
+function nombreLimpio(value) {
+  const s = String(value || '').trim();
+  if (!s || s === '—' || s.toUpperCase() === 'SIN ASIGNAR') return '';
+  return s;
 }
 
-function equipoParaGrafica(dispositivo) {
+function zgruDe(texto) {
+  const m = String(texto || '').match(/ZGRU\d+/i);
+  return m ? m[0].toUpperCase() : null;
+}
+
+export function saludoLima(now = new Date()) {
+  const hora = horaLima(now);
+  if (hora >= 5 && hora < 12) return 'Buenos días';
+  if (hora >= 12 && hora < 19) return 'Buenas tardes';
+  return 'Buenas noches';
+}
+
+function indiceNombres() {
+  const porClave = new Map();
+  const grupos = [];
+  const raw = readJson('grupos.json', []);
+  for (const g of Array.isArray(raw) ? raw : []) {
+    const equipos = [];
+    for (const d of g.devices || []) {
+      if (d?.enabled === false) continue;
+      const imei = String(d.imei || '').trim();
+      if (!imei) continue;
+      const rowKey = String(d.rowKey || (d.codigo ? `${d.codigo}-${imei}` : imei));
+      const plataforma = nombreLimpio(d.nombrePlataforma);
+      const desc = nombreLimpio(d.descripcionEquipo);
+      const guardado = nombreLimpio(getDeviceNameByRowKey(rowKey)) || nombreLimpio(getDeviceNameByImei(imei));
+      const zgru = zgruDe(desc) || zgruDe(plataforma) || zgruDe(guardado);
+      const nombre = plataforma || guardado || (zgru ? '' : desc);
+      const prev = porClave.get(rowKey) || { alias: new Set(), zgru: null, nombre: '', imei, codigo: d.codigo || '' };
+      if (nombre && !prev.nombre) prev.nombre = nombre;
+      if (plataforma) prev.alias.add(plataforma);
+      if (desc) prev.alias.add(desc);
+      if (guardado) prev.alias.add(guardado);
+      if (zgru) prev.zgru = zgru;
+      porClave.set(rowKey, prev);
+      equipos.push({
+        rowKey,
+        imei,
+        codigo: d.codigo || '',
+        nombre: nombre || zgru || imei,
+        zgru,
+      });
+    }
+    grupos.push({ id: String(g.id || g.nombre || equipos.length), nombre: g.nombre || 'Sin nombre', equipos });
+  }
+  const view = getDeviceNamesView();
+  for (const [rowKey, name] of Object.entries(view.namesByRowKey || {})) {
+    const limpio = nombreLimpio(name);
+    if (!limpio) continue;
+    const prev = porClave.get(rowKey) || { alias: new Set(), zgru: null, nombre: '', imei: '', codigo: '' };
+    if (!prev.nombre) prev.nombre = limpio;
+    prev.alias.add(limpio);
+    const zgru = zgruDe(limpio);
+    if (zgru && !prev.zgru) prev.zgru = zgru;
+    porClave.set(rowKey, prev);
+  }
+  return { porClave, grupos };
+}
+
+export function catalogoParaUi() {
+  const { porClave, grupos } = indiceNombres();
+  const nombres = [];
+  for (const [rowKey, f] of porClave) {
+    nombres.push({
+      rowKey,
+      imei: f.imei || '',
+      codigo: f.codigo || '',
+      nombre: f.nombre || '',
+      zgru: f.zgru || null,
+    });
+  }
+  return { grupos, nombres };
+}
+
+function nombreDe(dispositivo, indice) {
+  const rowKey = deviceRowKey(dispositivo);
+  const ficha = indice?.porClave?.get(rowKey);
+  const guardado = nombreLimpio(ficha?.nombre) || nombreLimpio(getDeviceNameByRowKey(rowKey)) || nombreLimpio(getDeviceNameByImei(dispositivo?.imei));
+  const zgru = ficha?.zgru || zgruDe(guardado);
+  if (guardado && zgru && !guardado.toUpperCase().includes(zgru)) return `${guardado} · ${zgru}`;
+  if (guardado) return guardado;
+  if (zgru) return zgru;
+  return dispositivo?.imei || rowKey;
+}
+
+function equipoParaGrafica(dispositivo, indice) {
   return {
     imei: dispositivo.imei,
     codigo: dispositivo.codigo,
-    nombre: nombreDe(dispositivo),
+    nombre: nombreDe(dispositivo, indice),
     rowKey: deviceRowKey(dispositivo),
     estado_conexion: dispositivo.estado_conexion,
     ultima_actualizacion: dispositivo.ultima_actualizacion,
@@ -228,9 +312,26 @@ function textoMenciones(menciones) {
     .join(' ');
 }
 
+function armarAviso({ saludo, marcas, nombre, analisis }) {
+  const cabeza = `${saludo}${marcas ? ` ${marcas}` : ''}\nTenemos una observación en el reefer *${nombre}*.`;
+  const pie = 'Gráfica de comportamiento de las últimas 12 horas.';
+  const menu = pieMenu();
+  const cuerpo = String(analisis || '')
+    .replace(menu, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  const base = `${cabeza}\n\n${pie}`;
+  if (!cuerpo) return base;
+  const hueco = 880 - base.length - 2;
+  if (hueco < 80) return base;
+  const corto = cuerpo.length > hueco ? `${cuerpo.slice(0, hueco - 1).trimEnd()}…` : cuerpo;
+  return `${cabeza}\n\n${corto}\n\n${pie}`;
+}
+
 export async function evaluarAvisosGrupoWhatsapp(dispositivos, now = new Date()) {
   const activos = leerTodo().filter((g) => g.activo === true && (g.rowKeys || []).length > 0);
   if (!activos.length || !Array.isArray(dispositivos) || !dispositivos.length) return;
+  const indice = indiceNombres();
   const porClave = new Map(dispositivos.map((d) => [deviceRowKey(d), d]));
   const avisos = leerAvisos();
   const episodes = readJson('state.json', {}).episodes || {};
@@ -278,9 +379,7 @@ export async function evaluarAvisosGrupoWhatsapp(dispositivos, now = new Date())
       if (avisos.enviados[claveEnvio] === slot) continue;
       avisos.enviados[claveEnvio] = slot;
       cambio = true;
-      const equipo = equipoParaGrafica(dispositivo);
-      const evento = tituloEvento(condicion.kind);
-      const horasTxt = Math.round(Number(horas) * 10) / 10;
+      const equipo = equipoParaGrafica(dispositivo, indice);
       const grafica = await graficaHoras(equipo, 12).catch(() => null);
       if (!grafica?.media) {
         await correoSinGrafica({
@@ -291,15 +390,13 @@ export async function evaluarAvisosGrupoWhatsapp(dispositivos, now = new Date())
         }).catch((e) => console.warn('[wa-grupo] correo', e.message));
         continue;
       }
-      const marcas = textoMenciones(cfg.menciones);
-      const texto = [
-        `*${equipo.nombre}*`,
-        `${evento} desde ${fechaCorta(since)}. Lleva ${horasTxt} h.`,
-        `Gráfica de las últimas 12 horas.`,
-        marcas || null,
-      ]
-        .filter(Boolean)
-        .join('\n');
+      const analisis = await textoAnalisis(equipo, null).catch(() => '');
+      const texto = armarAviso({
+        saludo: saludoLima(now),
+        marcas: textoMenciones(cfg.menciones),
+        nombre: equipo.nombre,
+        analisis,
+      });
       encolarTexto(cfg.jid, texto, {
         esAlerta: true,
         telefono: cfg.jid,
@@ -319,12 +416,54 @@ export async function evaluarAvisosGrupoWhatsapp(dispositivos, now = new Date())
   if (cambio) writeJson(AVISOS, avisos);
 }
 
-function textoPideGrafica(texto) {
-  const t = String(texto || '')
+const ESPERA_CHARLA_MS = 5 * 60 * 1000;
+const charlas = new Map();
+const PALABRAS_VACIAS = new Set([
+  'grafica', 'grafico', 'horas', 'hora', 'ultimas', 'ultima', 'reefer', 'equipo', 'informacion',
+  'info', 'por', 'favor', 'hola', 'buenos', 'dias', 'buenas', 'tardes', 'noches', 'quiero', 'ver',
+  'dame', 'muestrame', 'sobre', 'del', 'los', 'las', 'una', 'uno', 'para', 'con', 'que', 'como',
+  'esta', 'este', 'alerta', 'alertas', 'comportamiento', 'analisis', 'opcion', 'numero', 'nro',
+]);
+
+function sinAcento(texto) {
+  return String(texto || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase();
-  return /grafica|12\s*h|12 horas|ultimas 12/.test(t);
+}
+
+function palabrasDe(texto) {
+  return sinAcento(texto)
+    .replace(/@\d+/g, ' ')
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length >= 2 && !PALABRAS_VACIAS.has(w) && !/^zgru\d+$/.test(w));
+}
+
+export function rankearReefers(palabras, fichas) {
+  const unicas = [...new Set(palabras)];
+  const scored = [];
+  for (const f of fichas) {
+    let n = 0;
+    for (const p of unicas) {
+      if (f.blob.includes(p)) n += 1;
+    }
+    if (n > 0) scored.push({ ...f, n });
+  }
+  scored.sort((a, b) => b.n - a.n || String(a.nombre).localeCompare(String(b.nombre), 'es'));
+  return scored.slice(0, 5);
+}
+
+export function interpretarRespuesta(texto, opciones = []) {
+  const t = sinAcento(texto).replace(/@\d+/g, ' ').trim();
+  const zgrus = t.match(/zgru\d+/g) || [];
+  if (zgrus.length === 1) return { tipo: 'zgru', zgru: zgrus[0].toUpperCase() };
+  const soloNumero = t.match(/^(?:opcion|numero|nro|la|el)?\s*([1-5])$/);
+  if (soloNumero) {
+    const indice = Number(soloNumero[1]) - 1;
+    if (opciones[indice]) return { tipo: 'numero', indice };
+  }
+  if (palabrasDe(texto).length || (t.match(/\d{14,16}/g) || []).length) return { tipo: 'buscar' };
+  return { tipo: 'vacio' };
 }
 
 function mencionaAlBot(msg, client) {
@@ -342,72 +481,165 @@ function mencionaAlBot(msg, client) {
   return Boolean(user) && body.includes(`@${user}`);
 }
 
-function buscarEquipos(flota, texto) {
-  const imeis = String(texto || '').match(/\d{14,16}/g) || [];
-  let hits = imeis.length
-    ? flota.filter((d) => imeis.includes(String(d.imei)))
-    : [];
-  if (!hits.length) {
-    const q = String(texto || '')
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
-      .replace(/grafica|12\s*h|12 horas|ultimas 12/g, ' ')
-      .replace(/@\d+/g, ' ')
-      .trim();
-    if (q.length >= 3) {
-      hits = flota.filter((d) => {
-        const nombre = nombreDe(d).toLowerCase();
-        return nombre.includes(q) || String(d.imei).includes(q);
-      });
-    }
-  }
-  const codigo = String(texto || '').toUpperCase();
-  const conCodigo = hits.filter((d) => codigo.includes(String(d.codigo || '').toUpperCase()));
-  if (conCodigo.length === 1) return conCodigo;
-  return hits;
+function autorDe(msg) {
+  return String(msg?.author || msg?.id?.participant || msg?._data?.author || '').trim();
 }
 
-export async function atenderMencionGrupo({ msg, client, jid }) {
-  if (!mencionaAlBot(msg, client)) return;
-  const texto = String(msg?.body || '').trim();
-  if (!textoPideGrafica(texto)) return;
-  const flota = await loadCurrentDispositivos().catch(() => []);
-  const hits = buscarEquipos(flota, texto);
-  if (hits.length === 0) {
-    encolarTexto(jid, 'Mención recibida. Escribe *gráfica*, el IMEI y la API (TUNEL, STARCOOL, STARCOOL2 o TERMOKING).', {
-      esAlerta: false,
-      telefono: jid,
-      tipo: 'grafica_grupo',
-    });
-    return;
+function claveCharla(jid, autor) {
+  return `${jid}|${autor}`;
+}
+
+function charlaViva(jid, autor, ahora) {
+  if (!autor) return null;
+  const clave = claveCharla(jid, autor);
+  const charla = charlas.get(clave);
+  if (!charla) return null;
+  if (ahora - charla.ultimo > ESPERA_CHARLA_MS) {
+    charlas.delete(clave);
+    return null;
   }
-  if (hits.length > 1) {
-    const lista = hits
-      .slice(0, 6)
-      .map((d) => `${d.codigo} · ${d.imei}`)
-      .join('\n');
-    encolarTexto(jid, `Ese IMEI está en más de una API. Pide la gráfica con el origen:\n${lista}`, {
-      esAlerta: false,
-      telefono: jid,
-      tipo: 'grafica_grupo',
-    });
-    return;
-  }
-  const equipo = equipoParaGrafica(hits[0]);
+  return charla;
+}
+
+function fichasDeFlota(flota, indice) {
+  return flota.map((d) => {
+    const rowKey = deviceRowKey(d);
+    const extra = indice.porClave.get(rowKey);
+    const nombre = nombreDe(d, indice);
+    const zgru = extra?.zgru || zgruDe(nombre);
+    const alias = extra ? [...extra.alias] : [];
+    const blob = sinAcento([nombre, zgru, d.imei, d.codigo, ...alias].filter(Boolean).join(' '));
+    return { dispositivo: d, rowKey, nombre, zgru, imei: d.imei, codigo: d.codigo || '', blob };
+  });
+}
+
+function lineaOpcion(ficha, n) {
+  const zgru = ficha.zgru && !String(ficha.nombre).toUpperCase().includes(ficha.zgru) ? ficha.zgru : '';
+  return `${n}. *${ficha.nombre}*${zgru ? ` · ${zgru}` : ''} · ${ficha.codigo || '—'} · ${ficha.imei}`;
+}
+
+function responderGrupo(jid, texto, autor) {
+  const mentions = autor && autor.includes('@') ? [autor] : undefined;
+  const marca = mentions ? `@${autor.split('@')[0]}\n` : '';
+  encolarTexto(jid, `${marca}${texto}`, {
+    esAlerta: false,
+    telefono: jid,
+    tipo: 'grafica_grupo',
+    mentions,
+  });
+}
+
+async function enviarGraficaElegida(jid, autor, ficha) {
+  const equipo = equipoParaGrafica(ficha.dispositivo, null);
+  equipo.nombre = ficha.nombre;
   const grafica = await graficaHoras(equipo, 12).catch(() => null);
+  const marca = autor && autor.includes('@') ? `@${autor.split('@')[0]}\n` : '';
   if (!grafica?.media) {
-    encolarTexto(jid, grafica?.texto || `No hay gráfica de 12 horas para *${equipo.nombre}*.`, {
+    encolarTexto(jid, `${marca}No hay gráfica de 12 horas para *${ficha.nombre}*.`, {
       esAlerta: false,
       telefono: jid,
       tipo: 'grafica_grupo',
+      mentions: autor && autor.includes('@') ? [autor] : undefined,
     });
     return;
   }
-  encolarTexto(jid, grafica.texto, {
+  const analisis = await textoAnalisis(equipo, null).catch(() => '');
+  const menu = pieMenu();
+  const cuerpo = String(analisis || '').replace(menu, '').trim();
+  const pie = `Gráfica de comportamiento de las últimas 12 horas de *${ficha.nombre}*.`;
+  const hueco = 880 - marca.length - pie.length - 4;
+  const corto = cuerpo && hueco > 80 ? (cuerpo.length > hueco ? `${cuerpo.slice(0, hueco - 1).trimEnd()}…` : cuerpo) : '';
+  encolarTexto(jid, [marca.trimEnd(), corto, pie].filter(Boolean).join('\n\n'), {
     esAlerta: false,
     telefono: jid,
     tipo: 'grafica_grupo',
     media: grafica.media,
+    mentions: autor && autor.includes('@') ? [autor] : undefined,
   });
+}
+
+function guardarCharla(jid, autor, opciones) {
+  if (!autor) return;
+  charlas.set(claveCharla(jid, autor), { opciones, ultimo: Date.now() });
+}
+
+async function abrirBusqueda(jid, autor, texto, flota, indice) {
+  const palabras = palabrasDe(texto);
+  const imeis = String(texto || '').match(/\d{14,16}/g) || [];
+  const fichas = fichasDeFlota(flota, indice);
+  let ranked = rankearReefers([...palabras, ...imeis], fichas);
+  if (!palabras.length && !imeis.length) {
+    responderGrupo(jid, 'Dígame el nombre o el ZGRU del reefer.', autor);
+    guardarCharla(jid, autor, []);
+    return;
+  }
+  if (!ranked.length) {
+    responderGrupo(jid, 'No hay coincidencias de lo que busca.', autor);
+    guardarCharla(jid, autor, []);
+    return;
+  }
+  const lista = ranked.map((f, i) => lineaOpcion(f, i + 1)).join('\n');
+  responderGrupo(
+    jid,
+    `Encontré estas opciones, de mayor a menor coincidencia:\n${lista}\n\n¿De cuál quiere ver la gráfica? Indique el ZGRU o el número del 1 al ${ranked.length}.`,
+    autor
+  );
+  guardarCharla(jid, autor, ranked);
+}
+
+export async function atenderMencionGrupo({ msg, client, jid }) {
+  const ahora = Date.now();
+  for (const [clave, charla] of charlas) {
+    if (ahora - charla.ultimo > ESPERA_CHARLA_MS) charlas.delete(clave);
+  }
+  const autor = autorDe(msg);
+  const mencionado = mencionaAlBot(msg, client);
+  const charla = charlaViva(jid, autor, ahora);
+  if (!mencionado && !charla) return;
+  const texto = String(msg?.body || '').trim();
+  const decision = interpretarRespuesta(texto, charla?.opciones || []);
+  if (charla && decision.tipo === 'numero') {
+    charla.ultimo = ahora;
+    await enviarGraficaElegida(jid, autor, charla.opciones[decision.indice]);
+    return;
+  }
+  const flota = await loadCurrentDispositivos().catch(() => []);
+  const indice = indiceNombres();
+  if (decision.tipo === 'zgru') {
+    const fichas = fichasDeFlota(flota, indice);
+    const hits = fichas.filter((f) => f.zgru === decision.zgru || f.blob.includes(decision.zgru.toLowerCase()));
+    if (hits.length === 1) {
+      guardarCharla(jid, autor, hits);
+      await enviarGraficaElegida(jid, autor, hits[0]);
+      return;
+    }
+    if (charla) {
+      const enLista = (charla.opciones || []).filter((f) => f.zgru === decision.zgru);
+      if (enLista.length === 1) {
+        charla.ultimo = ahora;
+        await enviarGraficaElegida(jid, autor, enLista[0]);
+        return;
+      }
+    }
+    if (!hits.length) {
+      responderGrupo(jid, `No hay coincidencias de ${decision.zgru}.`, autor);
+      guardarCharla(jid, autor, []);
+      return;
+    }
+    const ranked = hits.slice(0, 5);
+    const lista = ranked.map((f, i) => lineaOpcion(f, i + 1)).join('\n');
+    responderGrupo(
+      jid,
+      `${decision.zgru} está en más de un origen:\n${lista}\n\nIndique el número del 1 al ${ranked.length}.`,
+      autor
+    );
+    guardarCharla(jid, autor, ranked);
+    return;
+  }
+  if (!mencionado && decision.tipo === 'vacio') {
+    responderGrupo(jid, 'Indique el ZGRU o el número del 1 al 5. Si escribe un nombre, busco de nuevo.', autor);
+    if (charla) charla.ultimo = ahora;
+    return;
+  }
+  await abrirBusqueda(jid, autor, texto, flota, indice);
 }

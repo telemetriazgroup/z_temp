@@ -324,10 +324,10 @@ function svgGrafica(puntos, titulo) {
   const x = (t) => L + ((t - minT) / (maxT - minT || 1)) * (W - L - R);
   const y = (v) => T + ((maxY - v) / (maxY - minY || 1)) * (H - T - B);
   const series = [
-    ['set', '#2563eb', 'Set'],
-    ['sup', '#16a34a', 'Suministro'],
-    ['ret', '#dc2626', 'Retorno'],
-    ['eva', '#7c3aed', 'Evaporador'],
+    ['set', '#FDD835', 'Set Temp', 2.5],
+    ['eva', '#9E9E9E', 'Evaporador', 2],
+    ['sup', '#1B5E20', 'Suministro', 2],
+    ['ret', '#E53935', 'Retorno', 2],
   ];
   const grid = [];
   for (let i = 0; i <= 4; i++) {
@@ -344,16 +344,22 @@ function svgGrafica(puntos, titulo) {
       `<text x="${x(p.t).toFixed(1)}" y="${H - 12}" font-size="11" text-anchor="middle" fill="#444">${escapeXml(horaLima(new Date(p.t).toISOString()))}</text>`
   );
   const paths = series
-    .map(([key, color]) => {
+    .map(([key, color, , ancho]) => {
       const d = pathDe(puntos, key, x, y);
-      return d ? `<path d="${d}" fill="none" stroke="${color}" stroke-width="2"/>` : '';
+      return d ? `<path d="${d}" fill="none" stroke="${color}" stroke-width="${ancho}"/>` : '';
     })
     .join('');
-  const leyenda = series
+  const leyendaOrden = [
+    ['sup', '#1B5E20', 'Suministro'],
+    ['ret', '#E53935', 'Retorno'],
+    ['eva', '#9E9E9E', 'Evaporador'],
+    ['set', '#FDD835', 'Set Temp'],
+  ];
+  const leyenda = leyendaOrden
     .map(
       ([, color, nombre], i) =>
-        `<line x1="${L + i * 150}" y1="34" x2="${L + 22 + i * 150}" y2="34" stroke="${color}" stroke-width="3"/>` +
-        `<text x="${L + 28 + i * 150}" y="38" font-size="12" fill="#333">${nombre}</text>`
+        `<line x1="${L + i * 175}" y1="34" x2="${L + 22 + i * 175}" y2="34" stroke="${color}" stroke-width="3"/>` +
+        `<text x="${L + 28 + i * 175}" y="38" font-size="12" fill="#333">${nombre}</text>`
     )
     .join('');
   return `<?xml version="1.0" encoding="UTF-8"?>

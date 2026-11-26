@@ -37,6 +37,8 @@ type Mensaje = {
   creado_en: string;
 };
 type ParticipanteWa = { jid: string; numero: string; nombre: string; admin: boolean };
+type NombreEquipo = { rowKey: string; imei: string; codigo: string; nombre: string; zgru: string | null };
+type GrupoCorreoListo = { id: string; nombre: string; equipos: NombreEquipo[] };
 type GrupoWa = {
   jid: string;
   nombre: string;
@@ -98,6 +100,9 @@ export default function WhatsAppAlertas() {
   const [grupoAbierto, setGrupoAbierto] = useState('');
   const [flota, setFlota] = useState<DispositivoUltimoEstado[]>([]);
   const [buscaEquipo, setBuscaEquipo] = useState('');
+  const [gruposCorreo, setGruposCorreo] = useState<GrupoCorreoListo[]>([]);
+  const [nombresEquipo, setNombresEquipo] = useState<NombreEquipo[]>([]);
+  const [correoElegido, setCorreoElegido] = useState('');
 
   const cargarEstado = useCallback(async () => {
     const estado = await api<{ data: Sesion; tiempos?: { gapChatSeg?: number } }>('/estado');
@@ -129,10 +134,24 @@ export default function WhatsAppAlertas() {
     return () => clearInterval(t);
   }, [user, cargarEstado, cargarChats]);
 
+  function etiquetaDe(rowKey: string, d?: DispositivoUltimoEstado) {
+    const n = nombresEquipo.find((x) => x.rowKey === rowKey);
+    const titulo = n?.nombre || '';
+    const zgru = n?.zgru && !titulo.toUpperCase().includes(n.zgru) ? n.zgru : '';
+    const codigo = d?.codigo || n?.codigo || '';
+    const imei = d?.imei || n?.imei || rowKey;
+    return [titulo, zgru, codigo, imei].filter(Boolean).join(' · ');
+  }
+
   async function leerGrupos() {
     try {
-      const body = await api<{ data: GrupoWa[] }>('/grupos');
+      const [body, correo] = await Promise.all([
+        api<{ data: GrupoWa[] }>('/grupos'),
+        api<{ data: { grupos: GrupoCorreoListo[]; nombres: NombreEquipo[] } }>('/grupos-correo'),
+      ]);
       setGrupos(body.data);
+      setGruposCorreo(correo.data.grupos || []);
+      setNombresEquipo(correo.data.nombres || []);
       if (flota.length === 0) {
         const flotaRes = await fetchUltimoEstadoDispositivos();
         setFlota(flotaRes.data.dispositivos ?? []);
@@ -277,9 +296,11 @@ export default function WhatsAppAlertas() {
               <div>
                 <h2 className="font-semibold">Grupos de WhatsApp</h2>
                 <p className="text-sm text-muted-foreground max-w-3xl">
-                  Estar en un grupo no activa las alertas. Elija el grupo, los equipos, las horas y a quién
-                  etiquetar, y guarde. El envío automático va de 5:00 a 22:00, hora de Perú. Fuera de ese
-                  horario el bot solo responde si lo mencionan y piden una gráfica.
+                  Estar en un grupo no activa las alertas. Elija el grupo, los equipos por su nombre y a quién
+                  saludar, y guarde. El aviso automático va de 5:00 a 22:00, hora de Perú, con el saludo del
+                  momento, el análisis de 12 h y la gráfica. Si alguien etiqueta al bot, se abre una búsqueda
+                  solo con esa persona: muestra hasta 5 coincidencias y espera el ZGRU o el número. A los 5
+                  minutos sin consulta, la charla se cierra sola.
                 </p>
               </div>
               <Button variant="outline" onClick={() => leerGrupos()}>
@@ -299,9 +320,10 @@ export default function WhatsAppAlertas() {
                   .filter((d) => !marcado(d))
                   .filter((d) => {
                     if (!q) return false;
-                    return `${d.codigo ?? ''} ${d.imei}`.toLowerCase().includes(q);
+                    return etiquetaDe(claveEquipo(d), d).toLowerCase().includes(q);
                   })
                   .slice(0, 12);
+                const huerfanos = grupo.rowKeys.filter((k) => !flota.some((d) => claveEquipo(d) === k));
                 return (
                   <div key={grupo.jid} className="rounded-md border">
                     <button
@@ -393,18 +415,60 @@ export default function WhatsAppAlertas() {
                         </div>
                         <div>
                           <p className="text-xs font-medium mb-1">Equipos que este grupo recibe</p>
+                          <div className="mb-2 flex flex-wrap items-center gap-2">
+                            <select
+                              className="h-9 min-w-56 rounded-md border bg-background px-2 text-sm"
+                              value={correoElegido}
+                              onChange={(e) => setCorreoElegido(e.target.value)}
+                            >
+                              <option value="">Tomar un grupo de correo ya armado</option>
+                              {gruposCorreo.map((g) => (
+                                <option key={g.id} value={g.id}>
+                                  {g.nombre} ({g.equipos.length})
+                                </option>
+                              ))}
+                            </select>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => {
+                                const origen = gruposCorreo.find((g) => g.id === correoElegido);
+                                if (!origen) {
+                                  toast.error('Elija un grupo de correo');
+                                  return;
+                                }
+                                const rowKeys = [...new Set([...grupo.rowKeys, ...origen.equipos.map((e) => e.rowKey)])];
+                                patchGrupo(grupo.jid, { rowKeys });
+                                toast.success(
+                                  `${origen.equipos.length} equipo(s) de ${origen.nombre} quedaron marcados. Guarde este grupo. El interruptor no cambia.`
+                                );
+                              }}
+                            >
+                              Agregar esos equipos
+                            </Button>
+                          </div>
                           <Input
                             value={buscaEquipo}
                             onChange={(e) => setBuscaEquipo(e.target.value)}
-                            placeholder="Filtrar por IMEI, API o nombre"
+                            placeholder="Buscar por nombre, ZGRU, API o IMEI"
                             className="mb-2"
                           />
                           <div className="max-h-40 overflow-auto rounded border">
-                            {seleccionados.length === 0 && equipos.length === 0 && (
+                            {seleccionados.length === 0 && equipos.length === 0 && huerfanos.length === 0 && (
                               <p className="p-2 text-xs text-muted-foreground">
-                                Escriba un IMEI o la API para marcar equipos. Nada queda activo hasta guardar.
+                                Escriba el nombre, el ZGRU o el IMEI. También puede tomar un grupo de correo.
                               </p>
                             )}
+                            {huerfanos.map((clave) => (
+                              <label key={clave} className="flex items-center gap-2 border-b px-2 py-1 text-xs">
+                                <input
+                                  type="checkbox"
+                                  checked
+                                  onChange={() => patchGrupo(grupo.jid, { rowKeys: grupo.rowKeys.filter((x) => x !== clave) })}
+                                />
+                                <span className="truncate">{etiquetaDe(clave)}</span>
+                              </label>
+                            ))}
                             {seleccionados.concat(equipos).map((d) => {
                               const clave = claveEquipo(d);
                               return (
@@ -419,9 +483,7 @@ export default function WhatsAppAlertas() {
                                       patchGrupo(grupo.jid, { rowKeys });
                                     }}
                                   />
-                                  <span className="truncate">
-                                    {d.codigo} · {d.imei}
-                                  </span>
+                                  <span className="truncate">{etiquetaDe(clave, d)}</span>
                                 </label>
                               );
                             })}

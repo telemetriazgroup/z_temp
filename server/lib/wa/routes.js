@@ -20,7 +20,7 @@ import {
 } from './repository.js';
 import { enviarPrueba } from './conversacion.js';
 import { enviarMensajePrueba, estadoWa, listarGruposEnSesion, reiniciarWaClient, startWaClient } from './client.js';
-import { guardarGrupoAlerta, mezclarGrupos } from './gruposAlerta.js';
+import { catalogoParaUi, guardarGrupoAlerta, mezclarGrupos } from './gruposAlerta.js';
 import { guardarNumeroPropio, sincronizarNumeroUsuario } from './cuenta.js';
 import { normalizarTelefono } from './telefono.js';
 import { leerAjustesWa, guardarGapChatSeg } from './ajustes.js';
@@ -413,6 +413,12 @@ export function createWaRouter({ actorOf }) {
     const contacto = await contactoPorUsername(req.params.username);
     if (!contacto) return res.status(404).json({ ok: false, error: 'Ese usuario no tiene número de WhatsApp' });
     res.json({ ok: true, data: await aprobarManual(contacto.id) });
+  });
+
+  r.get('/grupos-correo', (req, res) => {
+    const user = actorOf(req);
+    if (!esSuper(user)) return res.status(403).json({ ok: false, error: 'Se requiere superadmin' });
+    res.json({ ok: true, data: catalogoParaUi() });
   });
 
   r.get('/grupos', async (req, res) => {
