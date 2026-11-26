@@ -94,6 +94,10 @@ import {
 } from './lib/ayudaSoporteRepository.js';
 
 import { createAnalisisRouter } from './lib/analisis/routes.js';
+import {
+  createApiExternaAdminRouter,
+  createApiExternaPublicRouter,
+} from './lib/apiExterna/rutas.js';
 import { createDashboardRouter } from './lib/dashboard/routes.js';
 import { createSenalRouter } from './lib/senal/routes.js';
 import { createInformeRouter } from './lib/informe/routes.js';
@@ -122,6 +126,8 @@ const app = express();
 
 app.use(express.json({ limit: '2mb' }));
 app.use('/reefer/api/analisis', createAnalisisRouter());
+app.use('/reefer/api/v1', createApiExternaPublicRouter());
+app.use('/reefer/api/correo/api-externa', createApiExternaAdminRouter());
 app.use('/reefer/api/correo/dashboard', createDashboardRouter());
 app.use('/reefer/api/senal', createSenalRouter());
 app.use('/reefer/api/informes', createCampanasRouter());

@@ -79,6 +79,7 @@ export const esMessages: MessageTree = {
     configAlarmas: 'Configuración Alarmas',
     correo: 'Correo',
     whatsapp: 'WhatsApp',
+    apiExterna: 'API externa',
     incidentesCorreo: 'Incidentes correo',
     ubicanos: 'Ubícanos',
     ayuda: 'Ayuda/Soporte',

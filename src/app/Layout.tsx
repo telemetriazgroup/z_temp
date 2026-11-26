@@ -51,6 +51,7 @@ import {
   RefreshCw,
   FileBarChart,
   Folders,
+  KeyRound,
 } from 'lucide-react';
 import type { GrupoCorreo } from './modules/correo/types';
 import { cn } from './components/ui/utils';
@@ -184,7 +185,11 @@ export default function Layout() {
 
   useEffect(() => {
     if (!user || userIsSuperAdmin(user)) return;
-    if (location.pathname === '/whatsapp' || location.pathname === '/informes-masivos') {
+    if (
+      location.pathname === '/whatsapp' ||
+      location.pathname === '/informes-masivos' ||
+      location.pathname === '/api-externa'
+    ) {
       navigate('/', { replace: true });
     }
   }, [user, location.pathname, navigate]);
@@ -275,6 +280,11 @@ export default function Layout() {
               path: '/whatsapp' as const,
               label: t('nav.whatsapp'),
               icon: MessageCircle,
+            },
+            {
+              path: '/api-externa' as const,
+              label: t('nav.apiExterna'),
+              icon: KeyRound,
             },
           ]
         : []),

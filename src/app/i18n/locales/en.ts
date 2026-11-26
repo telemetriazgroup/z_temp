@@ -79,6 +79,7 @@ export const enMessages: MessageTree = {
     configAlarmas: 'Alarm settings',
     correo: 'Email',
     whatsapp: 'WhatsApp',
+    apiExterna: 'External API',
     incidentesCorreo: 'Email incidents',
     ubicanos: 'Locations',
     ayuda: 'Help / Support',

@@ -25,6 +25,7 @@ import AnalisisSenal from "./pages/AnalisisSenal";
 import Sincronizacion from "./pages/Sincronizacion";
 import GeneradorInformes from "./pages/GeneradorInformes";
 import CampanasInformes from "./pages/CampanasInformes";
+import ApiExterna from "./pages/ApiExterna";
 import {
   appBasenameNoSlash,
   ensureBasenameTrailingSlash,
@@ -153,6 +154,10 @@ const routeTree = [
       {
         path: "informes-masivos",
         element: <CampanasInformes />,
+      },
+      {
+        path: "api-externa",
+        element: <ApiExterna />,
       },
       {
         path: "analisis-senal/:imei",
