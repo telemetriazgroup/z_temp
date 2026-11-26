@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Navigate } from 'react-router';
+import { Navigate, useNavigate } from 'react-router';
 import { useAuth } from '../AuthContext';
 import type { Empresa, User, UserRole, UserSexo, UserCategory } from '../types';
 import {
@@ -47,7 +47,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../components/ui/dialog';
-import { Plus, Pencil, Trash2, Shield, Thermometer, LineChart } from 'lucide-react';
+import { Plus, Pencil, Trash2, Shield, Thermometer, LineChart, LogIn } from 'lucide-react';
 import { useT } from '../i18n';
 
 const emptyForm = {
@@ -95,7 +95,8 @@ function personalPayload(form: typeof emptyForm) {
 
 export default function Usuarios() {
   const t = useT();
-  const { user: currentUser, refreshUser } = useAuth();
+  const navigate = useNavigate();
+  const { user: currentUser, refreshUser, enterAs } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -286,6 +287,16 @@ export default function Usuarios() {
     }
   };
 
+  const handleEnter = async (u: User) => {
+    setError(null);
+    try {
+      await enterAs(u);
+      navigate('/listado', { replace: true });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo entrar a esa cuenta');
+    }
+  };
+
   const handleDelete = async (u: User) => {
     if (u.id === currentUser?.id) {
       alert('No puede eliminar su propia sesión desde aquí.');
@@ -328,6 +339,9 @@ export default function Usuarios() {
           <CardTitle>Listado</CardTitle>
           <CardDescription>
             Incluye datos personales opcionales y empresa asignada.
+            {isSuper
+              ? ' El icono de entrar abre esa cuenta para verla y probarla; puede volver a la suya en cualquier momento.'
+              : ''}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -407,6 +421,16 @@ export default function Usuarios() {
                       </div>
                     </TableCell>
                     <TableCell className="text-right space-x-1">
+                      {isSuper && u.id !== currentUser?.id && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title={`Entrar como ${u.username}`}
+                          onClick={() => void handleEnter(u)}
+                        >
+                          <LogIn className="h-4 w-4" />
+                        </Button>
+                      )}
                       <Button
                         variant="ghost"
                         size="icon"

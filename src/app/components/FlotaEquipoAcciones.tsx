@@ -40,6 +40,9 @@ type Incidente = {
   solucion: string | null;
   creadoEn: string;
   cerradoEn: string | null;
+  origen: string | null;
+  alertaSuspendida: boolean;
+  escaladoEn: string | null;
   notas: Nota[];
   fotos: string[];
 };
@@ -467,6 +470,32 @@ export function IncidentePanel({ device }: { device: Equipo }) {
     }
   }
 
+  async function decidirAlerta(id: string, activo: boolean) {
+    try {
+      await api(`/incidentes/${id}/suspender`, {
+        method: 'POST',
+        body: JSON.stringify({ activo }),
+      });
+      toast.success(activo ? 'Alerta suspendida' : 'Alerta reanudada');
+      await cargar();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'No se pudo cambiar la alerta');
+    }
+  }
+
+  async function escalar(id: string) {
+    try {
+      await api(`/incidentes/${id}/escalar`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      toast.success('Escalado a gerencia');
+      await cargar();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'No se pudo escalar');
+    }
+  }
+
   async function cerrar(id: string) {
     try {
       await api(`/incidentes/${id}/cerrar`, {
@@ -488,8 +517,9 @@ export function IncidentePanel({ device }: { device: Equipo }) {
         <div>
           <h2 className="text-lg font-semibold">Incidentes · {device.nombreAsignado}</h2>
           <p className="text-sm text-muted-foreground">
-            Aquí quedan los casos abiertos y cerrados de este equipo. Cada 6 horas WhatsApp recuerda
-            anotar el seguimiento o cerrarlo.
+            La alerta automática abre el seguimiento. Si el equipo vuelve a rango, se cierra solo.
+            En el grupo se guardan los mensajes de los 3 minutos siguientes (10 minutos si ya es urgente).
+            Desde las 6 horas puede suspender la alerta o escalarla a gerencia.
           </p>
         </div>
 
@@ -501,7 +531,7 @@ export function IncidentePanel({ device }: { device: Equipo }) {
               value={tipo}
               onChange={(e) => setTipo(e.target.value)}
             >
-              {tipos.map((t) => (
+              {tipos.filter((t) => t.id !== 'alerta_automatica').map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.label}
                 </option>
@@ -572,6 +602,23 @@ export function IncidentePanel({ device }: { device: Equipo }) {
                 </div>
               )}
             </div>
+            {seleccionado.estado === 'seguimiento' && seleccionado.origen === 'automatica' && (
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => void decidirAlerta(seleccionado.id, !seleccionado.alertaSuspendida)}
+                >
+                  {seleccionado.alertaSuspendida ? 'Reanudar alerta' : 'Suspender alerta'}
+                </Button>
+                <Button
+                  variant="outline"
+                  disabled={seleccionado.escaladoEn != null}
+                  onClick={() => void escalar(seleccionado.id)}
+                >
+                  {seleccionado.escaladoEn ? 'Escalado a gerencia' : 'Escalar a gerencia'}
+                </Button>
+              </div>
+            )}
             {seleccionado.estado === 'seguimiento' && (
               <>
                 <textarea

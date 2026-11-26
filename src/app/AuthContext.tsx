@@ -6,6 +6,7 @@ import {
   getUserById,
   migrateLegacyUsersIfNeeded,
   postAuditEvent,
+  userIsSuperAdmin,
 } from './modules/usuario';
 import { AUDIT_ACTIONS } from './modules/usuario/auditActions';
 import { ensureAlarmCatalog } from './modules/alarma';
@@ -15,6 +16,11 @@ import {
 } from './modules/administracion';
 
 const SESSION_KEY = 'ztrack_user';
+const ACTOR_KEY = 'ztrack_actor';
+
+function sinClave(user: User): User {
+  return { ...user, password: '' };
+}
 
 async function hydrateGruposCache(username: string | undefined | null) {
   if (!username?.trim()) {
@@ -31,10 +37,14 @@ async function hydrateGruposCache(username: string | undefined | null) {
 
 interface AuthContextType {
   user: User | null;
+  /** Superusuario real mientras se ve otra cuenta. */
+  impersonator: User | null;
   login: (username: string, password: string) => Promise<User | null>;
   logout: () => void;
   refreshUser: () => Promise<void>;
   applyUser: (user: User) => void;
+  enterAs: (target: User) => Promise<void>;
+  exitImpersonation: () => Promise<void>;
   isAuthenticated: boolean;
   authReady: boolean;
 }
@@ -66,11 +76,31 @@ function persistSession(user: User | null): void {
     localStorage.removeItem(SESSION_KEY);
     return;
   }
-  localStorage.setItem(SESSION_KEY, JSON.stringify(user));
+  localStorage.setItem(SESSION_KEY, JSON.stringify(sinClave(user)));
+}
+
+function readActor(): User | null {
+  try {
+    const stored = localStorage.getItem(ACTOR_KEY);
+    if (!stored) return null;
+    const parsed = JSON.parse(stored) as User;
+    return parsed?.id ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistActor(user: User | null): void {
+  if (user == null) {
+    localStorage.removeItem(ACTOR_KEY);
+    return;
+  }
+  localStorage.setItem(ACTOR_KEY, JSON.stringify(sinClave(user)));
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(() => readStoredSession());
+  const [impersonator, setImpersonator] = useState<User | null>(() => readActor());
   const [authReady, setAuthReady] = useState(false);
 
   useEffect(() => {
@@ -80,7 +110,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await ensureUserRegistry();
       ensureAlarmCatalog();
 
+      const actor = readActor();
+      if (actor && !userIsSuperAdmin(actor)) {
+        persistActor(null);
+        if (!cancelled) setImpersonator(null);
+      } else if (!cancelled) {
+        setImpersonator(actor);
+      }
       const stored = readStoredSession();
+      if (!stored && actor && userIsSuperAdmin(actor)) {
+        persistActor(null);
+        if (!cancelled) {
+          setImpersonator(null);
+          setUser(actor);
+          persistSession(actor);
+        }
+      }
       if (stored?.id) {
         try {
           const fresh = await getUserById(stored.id);
@@ -103,6 +148,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (username: string, password: string): Promise<User | null> => {
     const foundUser = await authenticate(username, password);
     if (foundUser) {
+      persistActor(null);
+      setImpersonator(null);
       setUser(foundUser);
       persistSession(foundUser);
       await hydrateGruposCache(foundUser.username);
@@ -116,7 +163,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const username = current?.username;
     // Limpiar sesión primero para que ProtectedRoute redirija de inmediato
     setUser(null);
+    setImpersonator(null);
     persistSession(null);
+    persistActor(null);
     setGruposEquiposCache([]);
     if (username) {
       void postAuditEvent(username, {
@@ -147,14 +196,70 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     persistSession(next);
   }, []);
 
+  const enterAs = useCallback(async (target: User) => {
+    const actor = readActor() ?? readStoredSession();
+    if (!actor || !userIsSuperAdmin(actor)) {
+      throw new Error('Solo el superusuario puede entrar como otra cuenta');
+    }
+    if (!target?.id) throw new Error('Esa cuenta no existe');
+    if (target.id === actor.id) {
+      persistActor(null);
+      setImpersonator(null);
+      const propio = (await getUserById(actor.id)) ?? actor;
+      setUser(propio);
+      persistSession(propio);
+      await hydrateGruposCache(propio.username);
+      return;
+    }
+    const fresco = (await getUserById(target.id)) ?? target;
+    if (!readActor()) persistActor(actor);
+    setImpersonator(sinClave(actor));
+    setUser(sinClave(fresco));
+    persistSession(fresco);
+    await hydrateGruposCache(fresco.username);
+    void postAuditEvent(actor.username, {
+      action: AUDIT_ACTIONS.IMPERSONATE,
+      module: 'auth',
+      summary: `${actor.username} entró como ${fresco.username} para soporte`,
+      targetUsername: fresco.username,
+      targetId: fresco.id,
+    });
+  }, []);
+
+  const exitImpersonation = useCallback(async () => {
+    const actor = readActor();
+    if (!actor) return;
+    const visto = readStoredSession();
+    persistActor(null);
+    setImpersonator(null);
+    setUser(actor);
+    persistSession(actor);
+    await hydrateGruposCache(actor.username);
+    void getUserById(actor.id).then((propio) => {
+      if (propio == null || readActor()) return;
+      setUser(propio);
+      persistSession(propio);
+    });
+    void postAuditEvent(actor.username, {
+      action: AUDIT_ACTIONS.IMPERSONATE_END,
+      module: 'auth',
+      summary: `${actor.username} salió de la cuenta ${visto?.username ?? ''}`.trim(),
+      targetUsername: visto?.username,
+      targetId: visto?.id,
+    });
+  }, []);
+
   return (
     <AuthContext.Provider
       value={{
         user,
+        impersonator,
         login,
         logout,
         refreshUser,
         applyUser,
+        enterAs,
+        exitImpersonation,
         isAuthenticated: !!user,
         authReady,
       }}

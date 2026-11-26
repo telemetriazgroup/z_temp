@@ -60,7 +60,8 @@ function pointsInInterval(datos, sinceIso, untilIso) {
         Number.isNaN(Number(ret)) ||
         evap == null ||
         Number.isNaN(Number(evap)) ||
-        Number(evap) > 99
+        Number(evap) > 99 ||
+        Number(evap) < -70
       ) {
         return null;
       }

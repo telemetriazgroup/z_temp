@@ -39,11 +39,12 @@ export function resolvePowerState(
   return powerStateEfectivo(row, codigo);
 }
 
-function inRange(n: number, def: HistorialFieldDef): boolean {
+function inRange(n: number, def: HistorialFieldDef, lado: 'chart' | 'table' = 'table'): boolean {
   if (def.transform === 'power_kwh_min') {
     return n > 0.1;
   }
-  if (def.min != null && n < def.min) return false;
+  const min = lado === 'chart' && def.chartMin != null ? def.chartMin : def.min;
+  if (min != null && n < min) return false;
   if (
     def.max != null &&
     Number.isFinite(def.max) &&
@@ -64,7 +65,7 @@ export function sanitizeChartValue(
   if (!def?.chartable) return null;
   const n = rawFieldValue(row, def, codigo);
   if (n == null) return null;
-  if (!inRange(n, def)) return null;
+  if (!inRange(n, def, 'chart')) return null;
   return n;
 }
 

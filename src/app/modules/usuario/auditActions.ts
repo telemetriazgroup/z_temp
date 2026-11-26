@@ -3,6 +3,8 @@ export const AUDIT_ACTIONS = {
   LOGIN: 'login',
   LOGOUT: 'logout',
   LOGIN_FAILED: 'login.failed',
+  IMPERSONATE: 'auth.impersonate',
+  IMPERSONATE_END: 'auth.impersonate_end',
   USER_CREATE: 'user.create',
   USER_UPDATE: 'user.update',
   USER_DELETE: 'user.delete',

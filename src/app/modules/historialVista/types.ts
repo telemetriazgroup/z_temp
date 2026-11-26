@@ -18,6 +18,8 @@ export interface HistorialFieldDef {
   /** Eje si chartable; null = solo tabla. */
   axis: HistorialAxis | null;
   min?: number;
+  /** Mínimo de la gráfica cuando es más estricto que el de la tabla. */
+  chartMin?: number;
   max?: number;
   unit?: string;
   transform?: HistorialFieldTransform;

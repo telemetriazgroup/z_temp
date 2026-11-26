@@ -9,6 +9,7 @@ import React, {
   type ReactNode,
 } from 'react';
 import { fetchUltimoEstadoDispositivos } from './api/termoking';
+import { useAuth } from './AuthContext';
 import type {
   DispositivoUltimoEstado,
   UltimoEstadoDispositivosResponse,
@@ -61,6 +62,7 @@ const DispositivosFleetContext = createContext<DispositivosFleetContextValue | n
 );
 
 export function DispositivosFleetProvider({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
   const [data, setData] = useState<UltimoEstadoDispositivosResponse | null>(null);
   const [fetchedAt, setFetchedAt] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
@@ -172,6 +174,22 @@ export function DispositivosFleetProvider({ children }: { children: ReactNode })
     },
     [data]
   );
+
+  const vistaRef = useRef<string | null>(null);
+  useEffect(() => {
+    const next = user?.username ?? '';
+    if (vistaRef.current == null) {
+      vistaRef.current = next;
+      return;
+    }
+    if (vistaRef.current === next) return;
+    vistaRef.current = next;
+    setData(null);
+    dataRef.current = null;
+    setFetchedAt(null);
+    fetchedAtRef.current = null;
+    if (next) void refreshFleet();
+  }, [user?.username, refreshFleet]);
 
   // Tick para isStale + auto-refresh a los 10 min
   useEffect(() => {

@@ -103,7 +103,7 @@ function userTypeLabel(
 export default function Layout() {
   const [sidebarExpanded, setSidebarExpanded] = useState(readSidebarExpanded);
   const [gruposCorreo, setGruposCorreo] = useState<GrupoCorreo[]>([]);
-  const { logout, user } = useAuth();
+  const { logout, user, impersonator, exitImpersonation } = useAuth();
   const { theme, toggleTheme, setTheme, ready: themeReady } = useAppTheme();
   const { t, intlLocale, locale } = useLocale();
   const navigate = useNavigate();
@@ -472,6 +472,16 @@ export default function Layout() {
                     </div>
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />
+                  {impersonator && (
+                    <DropdownMenuItem
+                      onClick={() => {
+                        void exitImpersonation().then(() => navigate('/usuarios', { replace: true }));
+                      }}
+                    >
+                      <Shield className="h-4 w-4" />
+                      Volver a {impersonator.username}
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuItem onClick={() => navigate('/perfil')}>
                     <UserCircle className="h-4 w-4" />
                     {t('layout.viewProfile')}
@@ -506,6 +516,25 @@ export default function Layout() {
             )}
           </div>
         </header>
+
+        {impersonator && user && (
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-950">
+            <p>
+              Está viendo la cuenta de <strong>{displayName}</strong> (@{user.username}) como soporte.
+              Lo que haga se guarda en esta cuenta.
+            </p>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                void exitImpersonation().then(() => navigate('/usuarios', { replace: true }));
+              }}
+            >
+              Volver a {impersonator.username}
+            </Button>
+          </div>
+        )}
 
         <RecordatorioIncidentes />
         <main className="flex-1 overflow-auto p-6 bg-background">

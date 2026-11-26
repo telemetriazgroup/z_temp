@@ -32,6 +32,7 @@ export function puedeIncidenteDeEquipo(user, imei) {
 }
 
 export const TIPOS_INCIDENTE = [
+  { id: 'alerta_automatica', label: 'Alerta automática' },
   { id: 'sin_conexion', label: 'Sin conexión' },
   { id: 'averia_telemetria', label: 'Avería en telemetría' },
   { id: 'sin_2g', label: 'No hay cobertura de 2G' },
@@ -95,6 +96,9 @@ function filaPublica(row, notas, fotos) {
     solucion: row.solucion,
     creadoEn: row.creado_en,
     cerradoEn: row.cerrado_en,
+    origen: row.origen || null,
+    alertaSuspendida: row.alerta_suspendida === true,
+    escaladoEn: row.escalado_en || null,
     notas: notas.map((n) => ({
       id: n.id,
       texto: n.texto,

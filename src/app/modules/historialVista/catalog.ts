@@ -1,6 +1,6 @@
 import type { HistorialFieldDef } from './types';
 
-/** Catálogo normativo. USDA menor a −30 °C y evaporador mayor a 99 °C son dato erróneo. */
+/** Catálogo normativo. USDA menor a −30 °C y evaporador mayor a 99 °C o menor a −70 °C son dato erróneo. La gráfica del evaporador llega hasta −50 °C. */
 export const HISTORIAL_FIELD_CATALOG: HistorialFieldDef[] = [
   {
     key: 'temp_supply_1',
@@ -43,7 +43,8 @@ export const HISTORIAL_FIELD_CATALOG: HistorialFieldDef[] = [
     chartable: true,
     tableable: true,
     axis: 'temp',
-    min: -45,
+    min: -70,
+    chartMin: -50,
     max: 99,
     unit: '°C',
     color: '#9E9E9E',

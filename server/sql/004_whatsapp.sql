@@ -74,6 +74,10 @@ CREATE TABLE IF NOT EXISTS wa_incidente (
 
 CREATE INDEX IF NOT EXISTS idx_wa_incidente_row ON wa_incidente (row_key, creado_en DESC);
 
+ALTER TABLE wa_incidente ADD COLUMN IF NOT EXISTS origen TEXT;
+ALTER TABLE wa_incidente ADD COLUMN IF NOT EXISTS alerta_suspendida BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE wa_incidente ADD COLUMN IF NOT EXISTS escalado_en TIMESTAMPTZ;
+
 CREATE TABLE IF NOT EXISTS wa_incidente_nota (
   id TEXT PRIMARY KEY,
   incidente_id TEXT NOT NULL REFERENCES wa_incidente(id) ON DELETE CASCADE,

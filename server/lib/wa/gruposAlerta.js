@@ -18,6 +18,16 @@ import { loadCurrentDispositivos } from '../dashboard/fleetStore.js';
 import { fechaCorta, graficaHoras } from './consultaEquipo.js';
 import { horaConversada, relatoParaGrupo } from './analisisChat.js';
 import { encolarTexto } from './outbox.js';
+import {
+  alertaSuspendida,
+  avisarSituacionGrave,
+  cerrarSeguimientoAutomatico,
+  faseDeHoras,
+  guardarMensajesDeVentana,
+  motivoCierre,
+  registrarSeguimientoAlerta,
+  textoFase,
+} from './seguimientoAlerta.js';
 
 const FILE = 'grupos_wa_alerta.json';
 const AVISOS = 'grupos_wa_avisos.json';
@@ -205,10 +215,21 @@ export function historialDeGrupo(jid) {
 }
 
 function leerAvisos() {
-  const raw = readJson(AVISOS, { episodios: {}, enviados: {} });
+  const raw = readJson(AVISOS, { episodios: {}, enviados: {}, suspendidos: {}, escuchas: [], graves: {}, abiertos: {} });
   if (!raw.episodios) raw.episodios = {};
   if (!raw.enviados) raw.enviados = {};
+  if (!raw.suspendidos) raw.suspendidos = {};
+  if (!Array.isArray(raw.escuchas)) raw.escuchas = [];
+  if (!raw.graves) raw.graves = {};
+  if (!raw.abiertos) raw.abiertos = {};
   return raw;
+}
+
+function guardarAvisos(avisos) {
+  const fresco = readJson(AVISOS, {});
+  if (fresco.suspendidos) avisos.suspendidos = fresco.suspendidos;
+  if (fresco.graves) avisos.graves = { ...avisos.graves, ...fresco.graves };
+  writeJson(AVISOS, avisos);
 }
 
 function condicionDe(dispositivo, now) {
@@ -420,9 +441,15 @@ export async function evaluarAvisosGrupoWhatsapp(dispositivos, now = new Date())
       vistos.add(claveEp);
       const condicion = condicionDe(dispositivo, now);
       if (!condicion) {
-        if (avisos.episodios[claveEp]) {
+        if (avisos.episodios[claveEp] || avisos.graves?.[rowKey] || avisos.abiertos?.[rowKey]) {
+          const kindPrevio = avisos.abiertos?.[rowKey] || avisos.episodios[claveEp]?.kind;
           delete avisos.episodios[claveEp];
+          if (avisos.graves) delete avisos.graves[rowKey];
+          if (avisos.abiertos) delete avisos.abiertos[rowKey];
           cambio = true;
+          void cerrarSeguimientoAutomatico(rowKey, motivoCierre(kindPrevio)).catch((e) =>
+            console.warn('[wa-grupo] cierre', e.message)
+          );
         }
         continue;
       }
@@ -452,13 +479,41 @@ export async function evaluarAvisosGrupoWhatsapp(dispositivos, now = new Date())
           cambio = true;
         }
       }
+      if (alertaSuspendida(rowKey)) continue;
       if (!enVentanaDeGrupo(cfg, now) || !(Number(horas) >= umbralDe(cfg, condicion.kind))) continue;
       const claveEnvio = `${cfg.jid}|${rowKey}|${condicion.kind}`;
       if (avisos.enviados[claveEnvio] === slot) continue;
       avisos.enviados[claveEnvio] = slot;
       cambio = true;
+      const fase = faseDeHoras(horas);
       const equipo = equipoParaGrafica(dispositivo, indice);
+      const nombre = nombreVisible(equipo.nombre);
+      const relatoBase = condicion.kind === 'fuera_linea'
+        ? `No está comunicando desde ${horaConversada(since, now)}.`
+        : (await relatoParaGrupo(equipo).catch(() => ({ texto: '' }))).texto;
+      const extra = textoFase(fase);
+      const relato = extra ? `${relatoBase}\n${extra}` : relatoBase;
+      const etiquetar = fase !== 'normal';
       const grafica = await graficaHoras(equipo, 12, { titulo: '12 h' }).catch(() => null);
+      avisos.abiertos[rowKey] = condicion.kind;
+      await registrarSeguimientoAlerta({
+        rowKey,
+        imei: dispositivo.imei,
+        codigo: dispositivo.codigo,
+        nombre,
+        texto: `Alerta automática de grupo (${Math.round(Number(horas) * 10) / 10} h). ${tituloEvento(condicion.kind)}. ${extra}`.trim(),
+      }).catch((e) => console.warn('[wa-grupo] incidente', e.message));
+      if (fase === 'urgente') {
+        await avisarSituacionGrave({
+          rowKey,
+          nombre,
+          imei: dispositivo.imei,
+          codigo: dispositivo.codigo,
+          horas,
+          since,
+          kind: condicion.kind,
+        }, avisos).catch((e) => console.warn('[wa-grupo] grave', e.message));
+      }
       if (!grafica?.media) {
         await correoSinGrafica({
           dispositivo,
@@ -468,22 +523,22 @@ export async function evaluarAvisosGrupoWhatsapp(dispositivos, now = new Date())
         }).catch((e) => console.warn('[wa-grupo] correo', e.message));
         continue;
       }
-      const relato = await relatoParaGrupo(equipo).catch(() => ({ texto: '' }));
       const texto = armarAviso({
         saludo: saludoLima(now),
-        marcas: textoMenciones(cfg.menciones),
-        nombre: nombreVisible(equipo.nombre),
-        relato: condicion.kind === 'fuera_linea'
-          ? `No está comunicando desde ${horaConversada(since, now)}.`
-          : relato.texto,
+        marcas: etiquetar ? textoMenciones(cfg.menciones) : '',
+        nombre,
+        relato,
       });
+      const hasta = new Date(now.getTime() + (fase === 'urgente' ? 10 : 3) * 60 * 1000).toISOString();
+      avisos.escuchas = avisos.escuchas.filter((e) => new Date(e.hasta).getTime() > now.getTime());
+      avisos.escuchas.push({ jid: cfg.jid, rowKey, hasta });
       anotarHistorialGrupo(cfg.jid, texto, 'alerta');
       encolarTexto(cfg.jid, texto, {
         esAlerta: true,
         telefono: cfg.jid,
         tipo: 'alerta_grupo',
         media: grafica.media,
-        mentions: cfg.menciones,
+        mentions: etiquetar ? cfg.menciones : undefined,
       });
     }
   }
@@ -494,7 +549,7 @@ export async function evaluarAvisosGrupoWhatsapp(dispositivos, now = new Date())
       cambio = true;
     }
   }
-  if (cambio) writeJson(AVISOS, avisos);
+  if (cambio) guardarAvisos(avisos);
 }
 
 const ESPERA_CHARLA_MS = 5 * 60 * 1000;
@@ -826,6 +881,9 @@ export async function atenderMencionGrupo({ msg, client, jid }) {
   const autor = autorDe(msg);
   const textoPrevio = String(msg?.body || '').trim();
   if (esEcoPropio(textoPrevio) || !reservarTurno(jid, autor, textoPrevio)) return;
+  if (textoPrevio) {
+    void guardarMensajesDeVentana(jid, autor, textoPrevio).catch((e) => console.warn('[wa] ventana', e.message));
+  }
   const mencionado = await mencionaAlBot(msg, client);
   const charla = charlaViva(jid, autor, ahora);
   if (!mencionado && !charla) {

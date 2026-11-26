@@ -39,6 +39,7 @@ import {
   listarIncidentes,
   puedeIncidenteDeEquipo,
 } from './incidentes.js';
+import { escalarSeguimiento, suspenderSeguimiento } from './seguimientoAlerta.js';
 
 function esSuper(actor) {
   return actor?.superUser === true || actor?.category === 'superadmin';
@@ -244,6 +245,32 @@ export function createWaRouter({ actorOf }) {
         fotos: req.body?.fotos,
       });
       res.json({ ok: true, data });
+    } catch (e) {
+      res.status(400).json({ ok: false, error: e.message });
+    }
+  });
+
+  r.post('/incidentes/:id/suspender', async (req, res) => {
+    const user = incidentesDe(req, res, await imeiDeIncidente(req.params.id));
+    if (!user) return;
+    try {
+      await suspenderSeguimiento({
+        id: req.params.id,
+        username: user.username,
+        activo: req.body?.activo !== false,
+      });
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(400).json({ ok: false, error: e.message });
+    }
+  });
+
+  r.post('/incidentes/:id/escalar', async (req, res) => {
+    const user = incidentesDe(req, res, await imeiDeIncidente(req.params.id));
+    if (!user) return;
+    try {
+      await escalarSeguimiento({ id: req.params.id, username: user.username });
+      res.json({ ok: true });
     } catch (e) {
       res.status(400).json({ ok: false, error: e.message });
     }

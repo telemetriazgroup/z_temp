@@ -131,7 +131,7 @@ function buildDetalleItems(
       label: 'Evaporador',
       Icon: Snowflake,
       iconClass: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300',
-      value: tempFiltrada(d.evaporation_coil, { max: 99 }),
+      value: tempFiltrada(d.evaporation_coil, { min: -70, max: 99 }),
     },
     {
       id: 'condensation_coil',

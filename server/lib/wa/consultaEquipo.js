@@ -6,7 +6,7 @@ import { resolveRangoOptsForDevice } from '../deviceAlertConfigRepository.js';
 import { fetchHistorialUltimasHoras } from '../historicalTelemetry.js';
 import { getHistorialVistaPrefs } from '../historialVistaPrefsRepository.js';
 import { parseTelemetryTimestamp } from '../timezone.js';
-import { evaporadorValido, usdaValido } from '../lecturasValidas.js';
+import { evaporadorParaGrafica, evaporadorValido, usdaValido } from '../lecturasValidas.js';
 import { etiqueta } from './equiposCuenta.js';
 import { rangoWhatsappDe } from './controlFlota.js';
 
@@ -180,7 +180,7 @@ function puntoDe(row) {
     set: num(t.set_point),
     sup: num(t.temp_supply_1),
     ret: num(t.return_air),
-    eva: evaporadorValido(t.evaporation_coil),
+    eva: evaporadorParaGrafica(t.evaporation_coil),
     power: num(t.power_state),
   };
 }

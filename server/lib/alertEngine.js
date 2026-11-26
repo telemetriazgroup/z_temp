@@ -28,6 +28,13 @@ import { drenarPendientesWhatsapp, publicarAlertaIndividual } from './wa/alertas
 import { evaluarAvisosGrupoWhatsapp } from './wa/gruposAlerta.js';
 import { sincronizarControlWhatsapp } from './wa/controlFlota.js';
 import { recordarIncidentes } from './wa/incidentes.js';
+import {
+  alertaSuspendida,
+  avisarSituacionGrave,
+  cerrarSeguimientoAutomatico,
+  motivoCierre,
+  registrarSeguimientoAlerta,
+} from './wa/seguimientoAlerta.js';
 import { permiteReporteAutomatico } from './wa/decisionFlota.js';
 import { getSmtpConfig } from './smtpRepository.js';
 import { getApiAsistenciaEmails } from './apiAsistenciaRepository.js';
@@ -147,6 +154,9 @@ function clearEpisode(state, rowKey, now, meta = {}) {
   }
 
   delete state.episodes[rowKey];
+  void cerrarSeguimientoAutomatico(rowKey, motivoCierre(episodeKind(ep))).catch((e) =>
+    console.warn('[alerta] cierre seguimiento', e.message)
+  );
   return recovered;
 }
 
@@ -511,6 +521,30 @@ function addIncidente(entry) {
   const all = getIncidentes();
   all.unshift(entry);
   writeJson('incidentes.json', all.slice(0, 1000));
+  if (entry?.tipo === 'correo_enviado' && entry.rowKey) {
+    const horas = Number(entry.umbralHoras ?? entry.horasFueraRango ?? entry.horasAcumuladas ?? entry.horasOffline);
+    const nombre = entry.nombrePlataforma || entry.descripcionEquipo;
+    void registrarSeguimientoAlerta({
+      rowKey: entry.rowKey,
+      imei: entry.imei,
+      codigo: entry.codigo,
+      nombre,
+      texto: `Alerta automática por correo: ${entry.alertKind || 'alerta'}${Number.isFinite(horas) ? ` · ${horas} h` : ''}.`,
+    })
+      .then(() => {
+        if (!(horas >= 6)) return null;
+        return avisarSituacionGrave({
+          rowKey: entry.rowKey,
+          nombre,
+          imei: entry.imei,
+          codigo: entry.codigo,
+          horas,
+          since: entry.referenciaDesde,
+          kind: entry.alertKind,
+        });
+      })
+      .catch((e) => console.warn('[alerta] seguimiento', e.message));
+  }
   return entry;
 }
 
@@ -1283,6 +1317,16 @@ export async function runAlertCycle(options = {}) {
           accion: 'ninguna',
           criterio:
             'El superadmin dejó este equipo sin seguimiento automático. No se alerta ni se abre incidente.',
+        });
+        continue;
+      }
+
+      if (alertaSuspendida(assignment.rowKey)) {
+        pushEval(evaluaciones, {
+          ...base,
+          estado: 'alerta_suspendida',
+          accion: 'ninguna',
+          criterio: 'El administrador suspendió la alerta de este equipo hasta que la reanude o el evento termine.',
         });
         continue;
       }
