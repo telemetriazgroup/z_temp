@@ -179,6 +179,15 @@ function nombreLimpio(value) {
   return s;
 }
 
+/** Teléfono pegado al nombre del equipo: empieza en 9 y tiene 9 dígitos. No se muestra. */
+export function nombreVisible(value) {
+  const limpio = String(value || '')
+    .replace(/(?:^|\s)9\d{8}(?=\s|$)/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return limpio || String(value || '').trim();
+}
+
 function zgruDe(texto) {
   const m = String(texto || '').match(/ZGRU\d+/i);
   return m ? m[0].toUpperCase() : null;
@@ -324,6 +333,7 @@ export async function evaluarAvisosGrupoWhatsapp(dispositivos, now = new Date())
   if (!activos.length || !Array.isArray(dispositivos) || !dispositivos.length) return;
   const indice = indiceNombres();
   const porClave = new Map(dispositivos.map((d) => [deviceRowKey(d), d]));
+  const porImei = new Map(dispositivos.filter((d) => d?.imei).map((d) => [String(d.imei), d]));
   const avisos = leerAvisos();
   const episodes = readJson('state.json', {}).episodes || {};
   const ventana = enVentanaAlertaGrupo(now);
@@ -333,7 +343,7 @@ export async function evaluarAvisosGrupoWhatsapp(dispositivos, now = new Date())
 
   for (const cfg of activos) {
     for (const rowKey of cfg.rowKeys) {
-      const dispositivo = porClave.get(rowKey);
+      const dispositivo = dispositivoGuardado(porClave, porImei, rowKey);
       if (!dispositivo) continue;
       const claveEp = `${rowKey}`;
       vistos.add(claveEp);
@@ -385,7 +395,7 @@ export async function evaluarAvisosGrupoWhatsapp(dispositivos, now = new Date())
       const texto = armarAviso({
         saludo: saludoLima(now),
         marcas: textoMenciones(cfg.menciones),
-        nombre: equipo.nombre,
+        nombre: nombreVisible(equipo.nombre),
         relato: condicion.kind === 'fuera_linea'
           ? `No está comunicando desde ${horaConversada(since, now)}.`
           : relato.texto,
@@ -564,9 +574,37 @@ function charlaViva(jid, autor, ahora) {
   return charla;
 }
 
+function imeiDeClave(rowKey) {
+  const m = String(rowKey || '').match(/(\d{14,16})$/);
+  return m ? m[1] : '';
+}
+
+function dispositivoGuardado(porClave, porImei, rowKey) {
+  const directo = porClave.get(rowKey);
+  if (directo) return directo;
+  const imei = imeiDeClave(rowKey);
+  return imei ? porImei.get(imei) || null : null;
+}
+
+function clavesGuardadas(jid) {
+  const set = new Set();
+  for (const rowKey of configDeGrupo(jid)?.rowKeys || []) {
+    const s = String(rowKey || '').trim();
+    if (!s) continue;
+    set.add(s);
+    set.add(s.toUpperCase());
+    const imei = imeiDeClave(s);
+    if (imei) set.add(imei);
+  }
+  return set;
+}
+
 function fichasAgregadas(flota, indice, jid) {
-  const claves = new Set(configDeGrupo(jid)?.rowKeys || []);
-  return fichasDeFlota(flota, indice).filter((f) => claves.has(f.rowKey));
+  const claves = clavesGuardadas(jid);
+  if (!claves.size) return [];
+  return fichasDeFlota(flota, indice).filter(
+    (f) => claves.has(f.rowKey) || claves.has(String(f.rowKey).toUpperCase()) || (f.imei && claves.has(String(f.imei)))
+  );
 }
 
 function fichasDeFlota(flota, indice) {
@@ -582,13 +620,48 @@ function fichasDeFlota(flota, indice) {
 }
 
 function lineaOpcion(ficha, n) {
-  return `${n}. *${ficha.nombre}*`;
+  return `${n}. *${nombreVisible(ficha.nombre)}*`;
+}
+
+const dichos = [];
+const turnos = new Map();
+
+function recordarDicho(texto) {
+  const limpio = String(texto || '').trim();
+  if (!limpio) return;
+  dichos.push({ texto: limpio, at: Date.now() });
+  if (dichos.length > 40) dichos.shift();
+}
+
+function esEcoPropio(texto) {
+  const t = sinAcento(textoSinMencion(texto));
+  if (!t) return false;
+  const ahora = Date.now();
+  return dichos.some((d) => {
+    if (ahora - d.at > 2 * 60 * 1000) return false;
+    const propio = sinAcento(textoSinMencion(d.texto));
+    return propio && (t === propio || t.includes(propio.slice(0, 80)));
+  });
+}
+
+function reservarTurno(jid, autor, texto) {
+  const clave = `${jid}|${autor}|${sinAcento(textoSinMencion(texto))}`;
+  const ahora = Date.now();
+  for (const [k, at] of turnos) {
+    if (ahora - at > 60 * 1000) turnos.delete(k);
+  }
+  const previo = turnos.get(clave) || 0;
+  if (ahora - previo < 8000) return false;
+  turnos.set(clave, ahora);
+  return true;
 }
 
 function responderGrupo(jid, texto, autor) {
   const mentions = autor && autor.includes('@') ? [autor] : undefined;
   const marca = mentions ? `@${autor.split('@')[0]}\n` : '';
-  encolarTexto(jid, `${marca}${texto}`, {
+  const completo = `${marca}${texto}`;
+  recordarDicho(completo);
+  encolarTexto(jid, completo, {
     esAlerta: false,
     telefono: jid,
     tipo: 'grafica_grupo',
@@ -596,13 +669,23 @@ function responderGrupo(jid, texto, autor) {
   });
 }
 
+function textoSinFichas(jid, flota) {
+  if (!Array.isArray(flota) || flota.length === 0) return '';
+  const guardados = configDeGrupo(jid)?.rowKeys?.length || 0;
+  if (guardados > 0) return 'No pude leer ahora los equipos de este grupo.';
+  return 'Este grupo todavía no tiene equipos agregados.';
+}
+
 async function enviarGraficaElegida(jid, autor, ficha) {
   const equipo = equipoParaGrafica(ficha.dispositivo, null);
-  equipo.nombre = ficha.nombre;
+  equipo.nombre = nombreVisible(ficha.nombre);
   const grafica = await graficaHoras(equipo, 12, { titulo: '12 h' }).catch(() => null);
   const marca = autor && autor.includes('@') ? `@${autor.split('@')[0]}\n` : '';
+  const visible = nombreVisible(ficha.nombre);
   if (!grafica?.media) {
-    encolarTexto(jid, `${marca}No hay gráfica de 12 horas para *${ficha.nombre}*.`, {
+    const aviso = `${marca}No hay gráfica de 12 horas para *${visible}*.`;
+    recordarDicho(aviso);
+    encolarTexto(jid, aviso, {
       esAlerta: false,
       telefono: jid,
       tipo: 'grafica_grupo',
@@ -611,7 +694,9 @@ async function enviarGraficaElegida(jid, autor, ficha) {
     return;
   }
   const relato = await relatoParaGrupo(equipo).catch(() => ({ texto: 'No pude leer las últimas 12 horas.' }));
-  encolarTexto(jid, [marca.trimEnd(), `*${ficha.nombre}*`, relato.texto].filter(Boolean).join('\n'), {
+  const caption = [marca.trimEnd(), `*${visible}*`, relato.texto].filter(Boolean).join('\n');
+  recordarDicho(caption);
+  encolarTexto(jid, caption, {
     esAlerta: false,
     telefono: jid,
     tipo: 'grafica_grupo',
@@ -631,7 +716,10 @@ async function abrirBusqueda(jid, autor, texto, flota, indice) {
   if (!palabras.length && !imeis.length) return;
   const fichas = fichasAgregadas(flota, indice, jid);
   if (!fichas.length) {
-    responderGrupo(jid, 'Este grupo todavía no tiene equipos agregados.', autor);
+    if (charlas.get(claveCharla(jid, autor))?.opciones?.length) return;
+    const aviso = textoSinFichas(jid, flota);
+    if (!aviso) return;
+    responderGrupo(jid, aviso, autor);
     guardarCharla(jid, autor, []);
     return;
   }
@@ -656,6 +744,8 @@ export async function atenderMencionGrupo({ msg, client, jid }) {
     if (ahora - charla.ultimo > ESPERA_CHARLA_MS) charlas.delete(clave);
   }
   const autor = autorDe(msg);
+  const textoPrevio = String(msg?.body || '').trim();
+  if (esEcoPropio(textoPrevio) || !reservarTurno(jid, autor, textoPrevio)) return;
   const mencionado = await mencionaAlBot(msg, client);
   const charla = charlaViva(jid, autor, ahora);
   if (!mencionado && !charla) {
@@ -696,13 +786,12 @@ export async function atenderMencionGrupo({ msg, client, jid }) {
       }
     }
     if (!hits.length) {
-      responderGrupo(
-        jid,
-        fichas.length
-          ? `No hay coincidencias de ${decision.zgru} entre los equipos agregados a este grupo.`
-          : 'Este grupo todavía no tiene equipos agregados.',
-        autor
-      );
+      if (!fichas.length && charlas.get(claveCharla(jid, autor))?.opciones?.length) return;
+      const aviso = fichas.length
+        ? `No hay coincidencias de ${decision.zgru} entre los equipos agregados a este grupo.`
+        : textoSinFichas(jid, flota);
+      if (!aviso) return;
+      responderGrupo(jid, aviso, autor);
       guardarCharla(jid, autor, []);
       return;
     }

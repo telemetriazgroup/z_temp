@@ -24,7 +24,7 @@ import {
 import { buildTrazabilidadEmailPack } from './emailTraceability.js';
 import { deviceRowKey } from './telemetry.js';
 import { loadCurrentDispositivos, loadSourceDispositivos } from './dashboard/fleetStore.js';
-import { encolarAlertaEquipo } from './wa/alertas.js';
+import { drenarPendientesWhatsapp, publicarAlertaIndividual } from './wa/alertas.js';
 import { evaluarAvisosGrupoWhatsapp } from './wa/gruposAlerta.js';
 import { sincronizarControlWhatsapp } from './wa/controlFlota.js';
 import { recordarIncidentes } from './wa/incidentes.js';
@@ -751,8 +751,6 @@ function pushEval(evaluaciones, eval_) {
   evaluaciones.push(eval_);
 }
 
-const avisosWaRecientes = new Map();
-
 function nombreAlerta(assignment, dispositivo) {
   const { nombrePlataforma } = resolveLabels(assignment, dispositivo);
   const imei = String(dispositivo?.imei || assignment?.imei || '');
@@ -776,14 +774,11 @@ function lineaAhora(dispositivo) {
 
 function espejoWhatsapp({ assignment, dispositivo, titulo, detalle, grupo, marca = '' }) {
   const clave = `${assignment?.rowKey}|${titulo}|${marca}`;
-  const previo = avisosWaRecientes.get(clave) || 0;
-  if (Date.now() - previo < 15 * 60 * 1000) return;
-  avisosWaRecientes.set(clave, Date.now());
   const nombre = nombreAlerta(assignment, dispositivo);
   const texto = [`*${nombre}*`, titulo, detalle || null, lineaAhora(dispositivo), 'Escribe *resumen* o *menu* para ver el equipo.']
     .filter(Boolean)
     .join('\n');
-  void encolarAlertaEquipo({
+  void publicarAlertaIndividual(clave, {
     rowKey: assignment?.rowKey,
     imei: dispositivo?.imei,
     nombre: nombre ? String(nombre) : '',
@@ -1170,6 +1165,7 @@ export async function runAlertCycle(options = {}) {
   };
 
   recordarIncidentes().catch((e) => console.warn('[wa] recordatorio incidente', e.message));
+  drenarPendientesWhatsapp().catch((e) => console.warn('[wa] pendientes', e.message));
 
   const smtp = getSmtpConfig();
   if (!smtp?.user || !smtp?.appPassword) {

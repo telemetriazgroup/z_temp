@@ -298,9 +298,11 @@ export default function WhatsAppAlertas() {
                 <p className="text-sm text-muted-foreground max-w-3xl">
                   Estar en un grupo no activa las alertas. Elija el grupo, los equipos por su nombre y a quién
                   saludar, y guarde. El aviso automático va de 5:00 a 22:00, hora de Perú, con el saludo del
-                  momento, el análisis de 12 h y la gráfica.                   Si alguien etiqueta al bot, la búsqueda es solo entre los equipos agregados a ese grupo.
-                  Si etiqueta y no escribe un nombre, el bot no contesta. A los 5 minutos sin consulta tiene
-                  que etiquetar de nuevo.
+                  momento, el análisis de 12 h y la gráfica. Desde las 22:00 y hasta las 5:00 el grupo no
+                  atiende solo: hay que etiquetar al bot. Las alertas de WhatsApp a cada número usan ese
+                  mismo horario; el correo no. Si alguien etiqueta al bot, la búsqueda es solo entre los
+                  equipos agregados a ese grupo. Si etiqueta y no escribe un nombre, el bot no contesta.
+                  A los 5 minutos sin consulta tiene que etiquetar de nuevo.
                 </p>
               </div>
               <Button variant="outline" onClick={() => leerGrupos()}>
