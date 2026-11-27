@@ -7,7 +7,6 @@
 import nodemailer from 'nodemailer';
 import { readJson, writeJson } from '../store.js';
 import { deviceRowKey } from '../telemetry.js';
-import { horasSinComunicacion } from '../enlaceCaido.js';
 import { isEquipoApagado } from '../powerState.js';
 import { effectiveEnRangoAlertaFromDispositivo } from '../historicalTelemetry.js';
 import { ajusteDefrostAlerta } from '../analisis/defrostAlerta.js';
@@ -18,6 +17,9 @@ import { listGruposEquipos } from '../gruposEquiposRepository.js';
 import { loadCurrentDispositivos } from '../dashboard/fleetStore.js';
 import { fechaCorta, graficaHoras } from './consultaEquipo.js';
 import { horaConversada, relatoParaGrupo } from './analisisChat.js';
+import { decisionDeAlerta, horasTexto, marcaCobertura, textoCoberturaInestable } from './cobertura.js';
+import { leerAjustesWa } from './ajustes.js';
+import { jidDeTelefono } from './telefono.js';
 import { encolarTexto } from './outbox.js';
 import {
   alertaSuspendida,
@@ -277,13 +279,12 @@ function guardarAvisos(avisos) {
 }
 
 function condicionDe(dispositivo, now) {
-  const estado = String(dispositivo?.estado_conexion || '').toLowerCase();
-  if (estado === 'offline' || estado === 'historial' || dispositivo?.ausente_api === true) {
-    const horas = horasSinComunicacion(dispositivo, now);
+  const cobertura = marcaCobertura(dispositivo, now);
+  if (cobertura.inestable) {
     return {
       kind: 'fuera_linea',
-      horas,
-      since: dispositivo?.ultima_actualizacion || null,
+      horas: cobertura.horas,
+      since: cobertura.since || dispositivo?.ultima_actualizacion || null,
     };
   }
   if (isEquipoApagado(dispositivo) === true) {
@@ -300,13 +301,32 @@ function condicionDe(dispositivo, now) {
 
 function tituloEvento(kind) {
   if (kind === 'apagado') return 'Apagado';
-  if (kind === 'fuera_linea') return 'Fuera de línea';
+  if (kind === 'fuera_linea') return 'Cobertura inestable';
   return 'Fuera de rango';
+}
+
+function avisarCoberturaAlDesarrollo({ avisos, imei, nombre, grupo, since, now }) {
+  const tel = String(leerAjustesWa().telefonoDesarrollo || '').trim();
+  const jid = jidDeTelefono(tel);
+  if (!jid || !imei) return false;
+  const slot = slotHorario(now);
+  if (!avisos.enviados) avisos.enviados = {};
+  const clave = `interno|${imei}|${slot}`;
+  if (avisos.enviados[clave] === slot) return false;
+  avisos.enviados[clave] = slot;
+  const texto = [
+    'Aviso interno de desarrollo.',
+    `Cobertura inestable: *${nombre || imei}* (${imei}).`,
+    grupo ? `Grupo: ${grupo}.` : 'Alguien consultó el equipo en un grupo.',
+    textoCoberturaInestable(since, now),
+  ].join('\n');
+  encolarTexto(jid, texto, { esAlerta: true, telefono: tel, tipo: 'aviso_interno' });
+  return true;
 }
 
 function umbralDe(cfg, kind) {
   if (kind === 'apagado') return cfg.umbralApagado;
-  if (kind === 'fuera_linea') return cfg.umbralFueraLinea;
+  if (kind === 'fuera_linea') return Math.max(Number(cfg.umbralFueraLinea) || 0, 2);
   return cfg.umbralFueraRango;
 }
 
@@ -402,7 +422,7 @@ function indiceNombres() {
       const rowKey = String(d.rowKey || (d.codigo ? `${d.codigo}-${imei}` : imei));
       const plataforma = nombreLimpio(d.nombrePlataforma);
       const desc = nombreLimpio(d.descripcionEquipo);
-      const guardado = nombreLimpio(getDeviceNameByRowKey(rowKey)) || nombreLimpio(getDeviceNameByImei(imei));
+      const guardado = nombreLimpio(getDeviceNameByRowKey(rowKey));
       const zgru = zgruDe(desc) || zgruDe(plataforma) || zgruDe(guardado);
       const nombre = plataforma || guardado || (zgru ? '' : desc);
       const prev = porClave.get(rowKey) || { alias: new Set(), zgru: null, nombre: '', imei, codigo: d.codigo || '' };
@@ -650,11 +670,21 @@ export async function evaluarAvisosGrupoWhatsapp(dispositivos, now = new Date())
       const equipo = equipoParaGrafica(dispositivo, indice);
       const nombre = nombreVisible(equipo.nombre);
       const relatoBase = condicion.kind === 'fuera_linea'
-        ? `No está comunicando desde ${horaConversada(since, now)}.`
+        ? textoCoberturaInestable(since, now)
         : (await relatoParaGrupo(equipo).catch(() => ({ texto: '' }))).texto;
       const extra = textoFase(fase);
       const relato = conOperacionesCliente(extra ? `${relatoBase}\n${extra}` : relatoBase);
       const menciones = (cfg.menciones || []).filter((jid) => String(jid).includes('@'));
+      if (condicion.kind === 'fuera_linea') {
+        avisarCoberturaAlDesarrollo({
+          avisos,
+          imei: dispositivo.imei,
+          nombre,
+          grupo: cfg.nombre,
+          since,
+          now,
+        });
+      }
       const grafica = await graficaHoras(equipo, 12, { titulo: '12 h' }).catch(() => null);
       avisos.abiertos[rowKey] = condicion.kind;
       await registrarSeguimientoAlerta({
@@ -728,6 +758,141 @@ export async function evaluarAvisosGrupoWhatsapp(dispositivos, now = new Date())
     }
   }
   if (cambio) guardarAvisos(avisos);
+}
+
+function criterioDe(kind) {
+  if (kind === 'fuera_linea') {
+    return 'Cobertura inestable: solo si lleva más de 2 horas en WAIT, OFFLINE o sin trama reciente. No se concluye que la temperatura esté normal. Si el umbral del grupo es mayor, espera ese umbral.';
+  }
+  if (kind === 'apagado') return 'El equipo figura apagado. Avisa al cumplir el umbral de apagado.';
+  if (kind === 'fuera_rango') {
+    return 'El retorno está fuera de la banda. Un deshielo de hasta 2 h se descuenta al momento de enviar. Avisa al cumplir el umbral de fuera de rango.';
+  }
+  return 'El enlace es reciente y no hay apagado ni salida de rango. No corresponde alerta.';
+}
+
+export async function auditarAlertasGrupo(now = new Date()) {
+  const flota = await loadCurrentDispositivos().catch(() => []);
+  const porClave = new Map(flota.map((d) => [deviceRowKey(d), d]));
+  const porImei = new Map(flota.filter((d) => d?.imei).map((d) => [String(d.imei), d]));
+  const indice = indiceNombres();
+  const avisos = leerAvisos();
+  const episodes = readJson('state.json', {}).episodes || {};
+  const slot = slotHorario(now);
+  const tel = String(leerAjustesWa().telefonoDesarrollo || '').trim();
+  const filas = [];
+  for (const cfg of leerTodo()) {
+    if (cfg.activo !== true) continue;
+    for (const rowKey of clavesAlertaAutomatica(cfg)) {
+      const dispositivo = dispositivoGuardado(porClave, porImei, rowKey);
+      const condicion = dispositivo ? condicionDe(dispositivo, now) : null;
+      let horas = condicion?.horas ?? null;
+      let since = condicion?.since || null;
+      if (condicion && condicion.kind !== 'fuera_linea') {
+        const motor = episodes[rowKey];
+        const previo = avisos.episodios?.[rowKey];
+        if (motor?.kind === condicion.kind && motor.since) since = motor.since;
+        else if (previo?.kind === condicion.kind && previo.since) since = previo.since;
+        else since = now.toISOString();
+        const ms = new Date(since).getTime();
+        horas = Number.isFinite(ms) ? (now.getTime() - ms) / 3600000 : 0;
+      }
+      const umbral = condicion ? umbralDe(cfg, condicion.kind) : null;
+      const decision = decisionDeAlerta({
+        condicion: condicion?.kind || null,
+        horas,
+        umbral: umbral ?? 0,
+        enVentana: enVentanaDeGrupo(cfg, now),
+        yaEnviado: condicion ? avisos.enviados?.[`${cfg.jid}|${rowKey}|${condicion.kind}`] === slot : false,
+        suspendida: alertaSuspendida(rowKey),
+      });
+      filas.push({
+        jid: cfg.jid,
+        grupo: cfg.nombre || cfg.jid,
+        rowKey,
+        imei: dispositivo?.imei || '',
+        codigo: dispositivo?.codigo || '',
+        nombre: dispositivo ? nombreVisible(nombreDe(dispositivo, indice)) : rowKey,
+        estado: String(dispositivo?.estado_conexion || 'sin dato'),
+        condicion: condicion?.kind || null,
+        titulo: condicion ? tituloEvento(condicion.kind) : 'Sin novedad',
+        horas,
+        horasTexto: horasTexto(horas),
+        umbral,
+        enviar: decision.enviar,
+        pronto: decision.pronto,
+        motivo: decision.motivo,
+        criterio: criterioDe(condicion?.kind),
+        ultimoDato: dispositivo?.ultima_actualizacion || null,
+      });
+    }
+  }
+  return { filas, telefonoDesarrollo: tel || null, avisoInterno: Boolean(jidDeTelefono(tel)) };
+}
+
+export async function enviarAlertaGrupoManual({ jid, rowKey }) {
+  const cfg = configDeGrupo(jid);
+  if (!cfg) {
+    const error = new Error('Ese grupo no está guardado.');
+    error.status = 404;
+    throw error;
+  }
+  const flota = await loadCurrentDispositivos().catch(() => []);
+  const porClave = new Map(flota.map((d) => [deviceRowKey(d), d]));
+  const porImei = new Map(flota.filter((d) => d?.imei).map((d) => [String(d.imei), d]));
+  const dispositivo = dispositivoGuardado(porClave, porImei, rowKey);
+  if (!dispositivo) {
+    const error = new Error('Ese equipo no está en la flota actual.');
+    error.status = 404;
+    throw error;
+  }
+  const now = new Date();
+  const condicion = condicionDe(dispositivo, now);
+  if (!condicion) {
+    const error = new Error('Este equipo no tiene una condición para alertar.');
+    error.status = 400;
+    throw error;
+  }
+  const indice = indiceNombres();
+  const equipo = equipoParaGrafica(dispositivo, indice);
+  const nombre = nombreVisible(equipo.nombre);
+  const since = condicion.since;
+  const relatoBase = condicion.kind === 'fuera_linea'
+    ? textoCoberturaInestable(since, now)
+    : (await relatoParaGrupo(equipo).catch(() => ({ texto: '' }))).texto;
+  const relato = conOperacionesCliente(`Envío manual del superadmin.\n${relatoBase}`);
+  const menciones = (cfg.menciones || []).filter((id) => String(id).includes('@'));
+  const grafica = await graficaHoras(equipo, 12, { titulo: '12 h' }).catch(() => null);
+  const texto = armarAviso({
+    saludo: saludoDeMenciones(cfg, now),
+    marcas: textoMenciones(menciones),
+    nombre,
+    relato,
+  });
+  anotarHistorialGrupo(cfg.jid, texto, 'manual');
+  if (grafica?.media) {
+    encolarTexto(cfg.jid, texto, {
+      esAlerta: true,
+      telefono: cfg.jid,
+      tipo: 'alerta_grupo',
+      media: grafica.media,
+      mentions: menciones.length ? menciones : undefined,
+    });
+  }
+  const avisos = leerAvisos();
+  const slot = slotHorario(now);
+  if (!avisos.enviados) avisos.enviados = {};
+  avisos.enviados[`${cfg.jid}|${rowKey}|${condicion.kind}`] = slot;
+  if (condicion.kind === 'fuera_linea') {
+    avisarCoberturaAlDesarrollo({ avisos, imei: dispositivo.imei, nombre, grupo: cfg.nombre, since, now });
+  }
+  guardarAvisos(avisos);
+  if (!grafica?.media) {
+    const error = new Error('No hay gráfica de 12 horas. No se envió el mensaje al grupo.');
+    error.status = 409;
+    throw error;
+  }
+  return { nombre, titulo: tituloEvento(condicion.kind) };
 }
 
 const ESPERA_CHARLA_MS = 5 * 60 * 1000;
@@ -1280,6 +1445,18 @@ async function enviarGraficaElegida(jid, autor, ficha) {
     return;
   }
   const relato = await relatoParaGrupo(equipo).catch(() => ({ texto: 'No pude leer las últimas 12 horas.' }));
+  if (relato.coberturaInestable) {
+    const avisos = leerAvisos();
+    const aviso = avisarCoberturaAlDesarrollo({
+      avisos,
+      imei: equipo.imei,
+      nombre: visible,
+      grupo: configDeGrupo(jid)?.nombre,
+      since: equipo.ultima_actualizacion,
+      now: new Date(),
+    });
+    if (aviso) guardarAvisos(avisos);
+  }
   const caption = [cabeza, `*${visible}*`, relato.texto].filter(Boolean).join('\n');
   recordarDicho(caption);
   anotarHistorialGrupo(jid, caption, 'grafica');

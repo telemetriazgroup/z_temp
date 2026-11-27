@@ -20,10 +20,10 @@ import {
 } from './repository.js';
 import { enviarPrueba } from './conversacion.js';
 import { enviarMensajePrueba, estadoWa, listarGruposEnSesion, reiniciarWaClient, startWaClient } from './client.js';
-import { catalogoParaUi, guardarGrupoAlerta, historialDeGrupo, listarGruposGuardados, mezclarGrupos } from './gruposAlerta.js';
+import { catalogoParaUi, guardarGrupoAlerta, historialDeGrupo, listarGruposGuardados, mezclarGrupos, auditarAlertasGrupo, enviarAlertaGrupoManual } from './gruposAlerta.js';
 import { guardarNumeroPropio, sincronizarNumeroUsuario } from './cuenta.js';
 import { normalizarTelefono } from './telefono.js';
-import { leerAjustesWa, guardarGapChatSeg } from './ajustes.js';
+import { leerAjustesWa, guardarGapChatSeg, guardarTelefonoDesarrollo } from './ajustes.js';
 import { TIEMPOS_WA } from './tiempos.js';
 import { colaPendiente } from './outbox.js';
 import { esCuentaFlotaCompleta, guardarControl, leerControlDe } from './controlFlota.js';
@@ -316,6 +316,7 @@ export function createWaRouter({ actorOf }) {
         gapChatSeg: leerAjustesWa().gapChatSeg,
         gapChatMinSeg: leerAjustesWa().minSeg,
         gapChatMaxSeg: leerAjustesWa().maxSeg,
+        telefonoDesarrollo: leerAjustesWa().telefonoDesarrollo,
         activoMin: TIEMPOS_WA.activoMs / 60000,
         avisoNoActivoSeg: TIEMPOS_WA.avisoNoActivoMs / 1000,
         respuestasRequeridas: TIEMPOS_WA.respuestasRequeridas,
@@ -325,10 +326,33 @@ export function createWaRouter({ actorOf }) {
 
   r.put('/ajustes', (req, res) => {
     try {
+      if (req.body?.telefonoDesarrollo != null) {
+        const data = guardarTelefonoDesarrollo(req.body.telefonoDesarrollo);
+        return res.json({ ok: true, data });
+      }
       const data = guardarGapChatSeg(req.body?.gapChatSeg);
       res.json({ ok: true, data });
     } catch (e) {
       res.status(400).json({ ok: false, error: e.message });
+    }
+  });
+
+  r.get('/alertas-auditoria', async (req, res) => {
+    if (!esSuper(actorOf(req))) return res.status(403).json({ ok: false, error: 'Se requiere superadmin' });
+    const data = await auditarAlertasGrupo();
+    res.json({ ok: true, data });
+  });
+
+  r.post('/alertas-auditoria/enviar', async (req, res) => {
+    if (!esSuper(actorOf(req))) return res.status(403).json({ ok: false, error: 'Se requiere superadmin' });
+    try {
+      const data = await enviarAlertaGrupoManual({
+        jid: String(req.body?.jid || ''),
+        rowKey: String(req.body?.rowKey || ''),
+      });
+      res.json({ ok: true, data });
+    } catch (e) {
+      res.status(e.status || 400).json({ ok: false, error: e.message });
     }
   });
 

@@ -21,7 +21,7 @@ export function ultimaActualizacionMs(value) {
   return new Date(`${s}-05:00`).getTime();
 }
 
-function preferirEntreStarcool(a, b) {
+export function preferirEntreStarcool(a, b) {
   const aVivo = a.ausente_api !== true && a.estado_conexion !== 'historial';
   const bVivo = b.ausente_api !== true && b.estado_conexion !== 'historial';
   if (aVivo !== bVivo) return aVivo ? a : b;
@@ -58,6 +58,68 @@ export function mergeStarcoolOrigenes(dispositivos) {
     else porImei.set(d.imei, preferirEntreStarcool(prev, d));
   }
   return [...resto, ...porImei.values()];
+}
+
+/** Cuántos IMEI comparten señal y cuál de las dos queda en pantalla. */
+export function resumenSenalesStarcool(dispositivos) {
+  const porImei = new Map();
+  const tunel = new Set();
+  const termo = new Set();
+  let soloStarcool = 0;
+  let soloStarcool2 = 0;
+  for (const d of dispositivos || []) {
+    const imei = String(d?.imei || '');
+    if (!imei) continue;
+    if (d.codigo === 'TUNEL') tunel.add(imei);
+    else if (d.codigo === 'TERMOKING' || d.codigo === 'THERMOKING') termo.add(imei);
+    else if (STARCOOL_CODIGOS.has(d.codigo)) {
+      if (!porImei.has(imei)) porImei.set(imei, []);
+      porImei.get(imei).push(d);
+    }
+  }
+  let enAmbas = 0;
+  let muestraStarcool = 0;
+  let muestraStarcool2 = 0;
+  let masRecienteStarcool = 0;
+  let masRecienteStarcool2 = 0;
+  let empate = 0;
+  let sinFecha = 0;
+  let tambienTunel = 0;
+  let tambienThermoking = 0;
+  for (const [imei, lista] of porImei) {
+    const tiene1 = lista.some((d) => d.codigo === 'STARCOOL');
+    const tiene2 = lista.some((d) => d.codigo === 'STARCOOL2');
+    if (tiene1 && !tiene2) soloStarcool += 1;
+    if (tiene2 && !tiene1) soloStarcool2 += 1;
+    if (!tiene1 || !tiene2) continue;
+    enAmbas += 1;
+    const a = lista.find((d) => d.codigo === 'STARCOOL');
+    const b = lista.find((d) => d.codigo === 'STARCOOL2');
+    const ta = ultimaActualizacionMs(a.ultima_actualizacion);
+    const tb = ultimaActualizacionMs(b.ultima_actualizacion);
+    if (Number.isNaN(ta) && Number.isNaN(tb)) sinFecha += 1;
+    else if (!Number.isNaN(tb) && (Number.isNaN(ta) || tb > ta)) masRecienteStarcool2 += 1;
+    else if (!Number.isNaN(ta) && (Number.isNaN(tb) || ta > tb)) masRecienteStarcool += 1;
+    else empate += 1;
+    const visible = preferirEntreStarcool(a, b).codigo;
+    if (visible === 'STARCOOL') muestraStarcool += 1;
+    else muestraStarcool2 += 1;
+    if (tunel.has(imei)) tambienTunel += 1;
+    if (termo.has(imei)) tambienThermoking += 1;
+  }
+  return {
+    enAmbas,
+    soloStarcool,
+    soloStarcool2,
+    masRecienteStarcool,
+    masRecienteStarcool2,
+    empate,
+    sinFecha,
+    muestraStarcool,
+    muestraStarcool2,
+    tambienTunel,
+    tambienThermoking,
+  };
 }
 
 async function fetchSource(source, { timeoutMs = 50_000 } = {}) {

@@ -39,7 +39,9 @@ import {
   actorMayAccessImei,
 } from './lib/correoPermissions.js';
 import { asegurarContactoAlerta } from './lib/wa/repository.js';
-import { mergeDeviceNames, getDeviceNameByImei, getDeviceNamesView, setDeviceName, getDeviceNameHistory } from './lib/deviceNamesRepository.js';
+import { mergeDeviceNames, getDeviceNamesView, setDeviceName, getDeviceNameHistory, listarRegistroNombres } from './lib/deviceNamesRepository.js';
+import { loadSourceDispositivos } from './lib/dashboard/fleetStore.js';
+import { resumenSenalesStarcool } from './lib/telemetry.js';
 import {
   getHistorialVistaPrefs,
   saveHistorialVistaPrefs,
@@ -1013,6 +1015,18 @@ app.post('/reefer/api/correo/device-names/sync', (req, res) => {
 
 app.get('/reefer/api/correo/device-names', (_req, res) => {
   res.json({ ok: true, data: getDeviceNamesView() });
+});
+
+app.get('/reefer/api/correo/nombres-equipos', async (req, res) => {
+  if (!requireSuperUser(req, res)) return;
+  const registro = listarRegistroNombres();
+  let starcool = null;
+  try {
+    starcool = resumenSenalesStarcool(await loadSourceDispositivos());
+  } catch (e) {
+    console.warn('[nombres] señales', e.message);
+  }
+  res.json({ ok: true, data: { ...registro, starcool } });
 });
 
 app.get('/reefer/api/correo/device-names/history', (req, res) => {

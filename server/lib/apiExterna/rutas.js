@@ -28,7 +28,7 @@ import {
 import { guiaEstructurada, guiaMarkdown } from './guia.js';
 import { origenCanonico, presentarEquipo, marcaDe, resumirFlota, serieHistorial, ventanaHistorial } from './presentar.js';
 import { deviceRowKey } from '../telemetry.js';
-import { getDeviceNameByImei, getDeviceNameByRowKey } from '../deviceNamesRepository.js';
+import { getDeviceNameByRowKey } from '../deviceNamesRepository.js';
 
 const IMEI_RE = /^\d{10,20}$/;
 
@@ -181,7 +181,7 @@ export function createApiExternaAdminRouter() {
             imei: String(d.imei),
             origen,
             marca: marcaDe(origen),
-            nombre: getDeviceNameByRowKey(rowKey) || getDeviceNameByImei(d.imei) || null,
+            nombre: getDeviceNameByRowKey(rowKey) || null,
             conexion: d.estado_conexion ?? null,
           };
         })

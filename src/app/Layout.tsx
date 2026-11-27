@@ -52,6 +52,7 @@ import {
   FileBarChart,
   Folders,
   KeyRound,
+  Tags,
 } from 'lucide-react';
 import type { GrupoCorreo } from './modules/correo/types';
 import { cn } from './components/ui/utils';

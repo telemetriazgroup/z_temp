@@ -26,6 +26,7 @@ import Sincronizacion from "./pages/Sincronizacion";
 import GeneradorInformes from "./pages/GeneradorInformes";
 import CampanasInformes from "./pages/CampanasInformes";
 import ApiExterna from "./pages/ApiExterna";
+import NombresEquipos from "./pages/NombresEquipos";
 import {
   appBasenameNoSlash,
   ensureBasenameTrailingSlash,
@@ -158,6 +159,10 @@ const routeTree = [
       {
         path: "api-externa",
         element: <ApiExterna />,
+      },
+      {
+        path: "nombres-equipos",
+        element: <NombresEquipos />,
       },
       {
         path: "analisis-senal/:imei",

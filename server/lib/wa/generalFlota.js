@@ -1,6 +1,6 @@
 import { query } from '../db.js';
 import { loadCurrentDispositivos } from '../dashboard/fleetStore.js';
-import { getDeviceNameByImei, getDeviceNameByRowKey } from '../deviceNamesRepository.js';
+import { getDeviceNameByRowKey } from '../deviceNamesRepository.js';
 import { getUserByUsername, isSuperAdminUser } from '../usersRepository.js';
 
 export function esContactoSuperadmin(contacto) {
@@ -14,7 +14,7 @@ function estadoDe(d) {
 
 function nombreDe(d) {
   const rowKey = d?.codigo && d?.imei ? `${d.codigo}-${d.imei}` : null;
-  const guardado = getDeviceNameByRowKey(rowKey) || getDeviceNameByImei(d?.imei);
+  const guardado = getDeviceNameByRowKey(rowKey);
   const limpio = String(guardado || d?.descripcion || d?.nombre || '').trim();
   if (!limpio || limpio.toUpperCase() === 'SIN ASIGNAR' || limpio === String(d?.imei)) {
     return d?.imei || 'Sin nombre';

@@ -25,7 +25,12 @@ import {
 } from './repository.js';
 import { listSenalUbicaciones, getSenalUbicacion } from './ubicacionRepository.js';
 import { pickTelemetryFromSample, pickTelemetryFromHistorialRow } from './telemetry.js';
-import { getDeviceNameByImei } from '../deviceNamesRepository.js';
+import { getDeviceNameByImei, getDeviceNameByRowKey } from '../deviceNamesRepository.js';
+
+function nombreDeImei(imei, codigo) {
+  if (codigo && imei) return getDeviceNameByRowKey(`${codigo}-${imei}`);
+  return getDeviceNameByImei(imei);
+}
 import {
   classifySenalTipo,
   mergeAndClassifyLazos,
@@ -555,7 +560,7 @@ async function buildFleetCacheReport(anio, mes, range, catchUp) {
     devices.push({
       imei: r.imei,
       codigo: r.codigo,
-      nombre: r.nombre || getDeviceNameByImei(r.imei) || null,
+      nombre: r.nombre || nombreDeImei(r.imei, r.codigo) || null,
       lastDisconnectAt,
       rowKey: st?.row_key ?? r.imei,
       samples: r.samples_seen,
@@ -585,7 +590,7 @@ async function buildFleetCacheReport(anio, mes, range, catchUp) {
     devices.push({
       imei: k.imei,
       codigo: k.codigo ?? null,
-      nombre: getDeviceNameByImei(k.imei) || null,
+      nombre: nombreDeImei(k.imei, k.codigo) || null,
       lastDisconnectAt: open ? open.startedAt : null,
       rowKey: k.row_key ?? k.imei,
       samples: 0,
@@ -711,7 +716,7 @@ export async function getPersistedMonthReport(anio, mes, imei = null) {
     return {
       imei: r.imei,
       codigo: r.codigo,
-      nombre: r.nombre || getDeviceNameByImei(r.imei) || null,
+      nombre: r.nombre || nombreDeImei(r.imei, r.codigo) || null,
       lastDisconnectAt,
       rowKey: st?.row_key ?? r.imei,
       samples: r.samples_seen,
@@ -743,7 +748,7 @@ export async function getPersistedMonthReport(anio, mes, imei = null) {
       devices.push({
         imei: k.imei,
         codigo: k.codigo ?? null,
-        nombre: getDeviceNameByImei(k.imei) || null,
+        nombre: nombreDeImei(k.imei, k.codigo) || null,
         lastDisconnectAt: null,
         rowKey: k.row_key ?? k.imei,
         samples: 0,
@@ -952,7 +957,7 @@ export async function getDeviceSenalHistory(imei) {
   return {
     imei: key,
     codigo,
-    nombre: getDeviceNameByImei(key) || null,
+    nombre: nombreDeImei(key, codigo) || null,
     lastEstado: st?.last_estado ?? null,
     lastCapturedAt: st?.last_captured_at
       ? new Date(st.last_captured_at).toISOString()

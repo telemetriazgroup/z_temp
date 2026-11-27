@@ -7,7 +7,7 @@ import {
   timestampRegistroHistorial,
 } from '../historicalTelemetry.js';
 import { deviceRowKey } from '../telemetry.js';
-import { getDeviceNameByImei, getDeviceNameByRowKey } from '../deviceNamesRepository.js';
+import { getDeviceNameByRowKey } from '../deviceNamesRepository.js';
 
 const SLOTS = [
   'numero_alarma',
@@ -80,7 +80,7 @@ function encendidoDe(row, codigo) {
 
 function nombreDe(dispositivo) {
   const rowKey = deviceRowKey(dispositivo);
-  return getDeviceNameByRowKey(rowKey) || getDeviceNameByImei(dispositivo?.imei) || null;
+  return getDeviceNameByRowKey(rowKey) || null;
 }
 
 export function presentarEquipo(dispositivo) {

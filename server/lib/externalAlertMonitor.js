@@ -14,7 +14,7 @@ import {
   resolveUmbralesForDevice,
   resolveRangoOptsForDevice,
 } from './deviceAlertConfigRepository.js';
-import { getDeviceNameByImei } from './deviceNamesRepository.js';
+import { getDeviceNameByRowKey } from './deviceNamesRepository.js';
 import { deviceRowKey } from './telemetry.js';
 import { loadCurrentDispositivos } from './dashboard/fleetStore.js';
 import {

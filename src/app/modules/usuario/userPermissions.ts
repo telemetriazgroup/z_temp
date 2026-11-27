@@ -112,7 +112,7 @@ export function displayNameForDevice(
   sinAsignar: string,
   imeiCompartido = false
 ): string {
-  const local = localNames[rowKey]?.trim();
+  const local = nombreLocalCompartido(localNames, imei, rowKey);
   if (local) return local;
   if (!imeiCompartido) {
     const profile = user?.deviceNames?.[imei]?.trim();

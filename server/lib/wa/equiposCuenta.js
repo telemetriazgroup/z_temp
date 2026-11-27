@@ -11,7 +11,7 @@ import {
   resolveUserEffectiveImeis,
 } from '../gruposEquiposRepository.js';
 import { loadCurrentDispositivos } from '../dashboard/fleetStore.js';
-import { getDeviceNameByImei, getDeviceNameByRowKey } from '../deviceNamesRepository.js';
+import { getDeviceNameByRowKey } from '../deviceNamesRepository.js';
 import { readJson } from '../store.js';
 import { normalizarTelefono } from './telefono.js';
 import { listarAsignaciones } from './repository.js';
@@ -194,7 +194,7 @@ export async function equiposEfectivosDeContacto(contacto) {
     e.codigo = e.codigo || d.codigo || null;
     e.rowKey = e.rowKey || `${d.codigo || 'EQ'}-${d.imei}`;
     const deCuenta = partirNombre(e.nombre, e.imei);
-    const deServidor = partirNombre(getDeviceNameByRowKey(e.rowKey) || getDeviceNameByImei(e.imei), e.imei);
+    const deServidor = partirNombre(getDeviceNameByRowKey(e.rowKey), e.imei);
     e.nombre = deCuenta.nombre || deServidor.nombre;
     e.celular = deCuenta.celular || deServidor.celular;
     e.estado_conexion = d.estado_conexion;
@@ -205,7 +205,7 @@ export async function equiposEfectivosDeContacto(contacto) {
 
   for (const e of porClave.values()) {
     if (e.nombre && e.celular) continue;
-    const deServidor = partirNombre(getDeviceNameByRowKey(e.rowKey) || getDeviceNameByImei(e.imei), e.imei);
+    const deServidor = partirNombre(getDeviceNameByRowKey(e.rowKey), e.imei);
     if (!e.nombre) e.nombre = deServidor.nombre;
     if (!e.celular) e.celular = deServidor.celular;
   }

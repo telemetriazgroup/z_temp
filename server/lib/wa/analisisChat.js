@@ -16,6 +16,7 @@ import {
   marcaDe,
   pieMenu,
 } from './consultaEquipo.js';
+import { marcaCobertura, textoCoberturaInestable } from './cobertura.js';
 import {
   compresorAlto,
   esTermokingOTunel,
@@ -329,10 +330,16 @@ export function narrarEstadoGrupo(estado, now = new Date()) {
 }
 
 export async function relatoParaGrupo(e) {
+  const cobertura = marcaCobertura(e);
   const banda = bandaNormal(e, null);
   const doce = await filasHistorial(e, 12);
   let filas = (doce.filas || []).map((row) => filaConCodigo(row, e.codigo));
-  if (!filas.length) return narrarEstadoGrupo({ sinLecturas: true });
+  if (!filas.length) {
+    if (cobertura.inestable) {
+      return { hayNovedad: true, coberturaInestable: true, texto: textoCoberturaInestable(cobertura.since) };
+    }
+    return narrarEstadoGrupo({ sinLecturas: true });
+  }
   const ahora = new Date();
   let fuera = computeOutOfRangeIntervals(filas, banda.opts, ahora, rowEnRangoTemperaturaParaAlerta);
   let abierto = episodioActual(fuera);
@@ -368,7 +375,7 @@ export async function relatoParaGrupo(e) {
   const compresor = esTermokingOTunel(e.codigo)
     ? rachaActual(filas, (row) => compresorAlto(row.compress_coil_1))
     : null;
-  return narrarEstadoGrupo(
+  const narrado = narrarEstadoGrupo(
     {
       energia,
       apagadoDesde: apagado?.since || null,
@@ -379,4 +386,11 @@ export async function relatoParaGrupo(e) {
     },
     ahora
   );
+  if (!cobertura.inestable) return narrado;
+  const historico = narrado.hayNovedad ? `\nEn las horas que sí transmitió: ${narrado.texto}` : '';
+  return {
+    hayNovedad: true,
+    coberturaInestable: true,
+    texto: `${textoCoberturaInestable(cobertura.since, ahora)}${historico}`,
+  };
 }

@@ -1,4 +1,5 @@
 import { readJson, writeJson } from '../store.js';
+import { normalizarTelefono } from './telefono.js';
 
 const FILE = 'waAjustes.json';
 const MIN_SEG = 1;
@@ -15,7 +16,8 @@ export function leerAjustesWa() {
   const raw = readJson(FILE, {});
   const pedido = raw?.gapChatSeg;
   const gapChatSeg = pedido == null || pedido === '' ? DEF_SEG : acotar(pedido);
-  return { gapChatSeg, minSeg: MIN_SEG, maxSeg: MAX_SEG };
+  const telefonoDesarrollo = normalizarTelefono(raw?.telefonoDesarrollo || '');
+  return { gapChatSeg, minSeg: MIN_SEG, maxSeg: MAX_SEG, telefonoDesarrollo };
 }
 
 export function guardarGapChatSeg(seg) {
@@ -26,6 +28,17 @@ export function guardarGapChatSeg(seg) {
   const actual = readJson(FILE, {});
   const gapChatSeg = Math.round(n);
   writeJson(FILE, { ...actual, gapChatSeg });
+  return leerAjustesWa();
+}
+
+export function guardarTelefonoDesarrollo(valor) {
+  const texto = String(valor ?? '').trim();
+  const telefonoDesarrollo = texto ? normalizarTelefono(texto) : '';
+  if (texto && telefonoDesarrollo.length < 8) {
+    throw new Error('El número interno necesita prefijo de país, por ejemplo 51987654321.');
+  }
+  const actual = readJson(FILE, {});
+  writeJson(FILE, { ...actual, telefonoDesarrollo });
   return leerAjustesWa();
 }
 

@@ -40,7 +40,7 @@ import { getSmtpConfig } from './smtpRepository.js';
 import { getApiAsistenciaEmails } from './apiAsistenciaRepository.js';
 import { detectarEnlacesCaidos, horasSinComunicacion } from './enlaceCaido.js';
 import { getLinkStatuses } from './dashboard/linkHealth.js';
-import { getDeviceNameByImei } from './deviceNamesRepository.js';
+import { getDeviceNameByImei, getDeviceNameByRowKey } from './deviceNamesRepository.js';
 import {
   evaporadorSaturado,
   compresorAlto,
@@ -563,7 +563,9 @@ function resolveLabels(assignment, dispositivo) {
   const nombreAsignado = assignment.nombrePlataforma?.trim();
   const imei = dispositivo?.imei ?? assignment.imei ?? '—';
   const codigo = dispositivo?.codigo ?? assignment.codigo ?? '';
-  const fromServer = getDeviceNameByImei(imei);
+  const fromServer = codigo && imei && imei !== '—'
+    ? getDeviceNameByRowKey(`${codigo}-${imei}`)
+    : getDeviceNameByImei(imei);
   const fallbackTecnico = codigo ? `${codigo} · ${imei}` : imei;
 
   const nombreCliente =

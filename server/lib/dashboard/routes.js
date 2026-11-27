@@ -2,7 +2,7 @@ import express from 'express';
 import { ensureDashboardSchema } from '../db.js';
 import { getEnvios, getIncidentes } from '../alertEngine.js';
 import { getUserByUsername } from '../usersRepository.js';
-import { getDeviceNameByImei, getDeviceNameByRowKey } from '../deviceNamesRepository.js';
+import { getDeviceNameByRowKey } from '../deviceNamesRepository.js';
 import { deviceRowKey } from '../telemetry.js';
 import { dispositivoPermitido, imeisDuplicadosEn } from '../asignacionEquipo.js';
 import {
@@ -57,7 +57,7 @@ function restrictedImeis(user) {
 
 function nombreDeEquipo(device) {
   const rowKey = device?.rowKey || deviceRowKey(device);
-  return getDeviceNameByRowKey(rowKey) || getDeviceNameByImei(device?.imei) || null;
+  return getDeviceNameByRowKey(rowKey) || null;
 }
 
 function weekStatusFromSeries(series, averages) {

@@ -80,6 +80,7 @@ export const enMessages: MessageTree = {
     correo: 'Email',
     whatsapp: 'WhatsApp',
     apiExterna: 'External API',
+    nombresEquipos: 'Equipment names',
     incidentesCorreo: 'Email incidents',
     ubicanos: 'Locations',
     ayuda: 'Help / Support',

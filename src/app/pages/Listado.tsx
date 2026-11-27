@@ -666,8 +666,15 @@ export default function Listado() {
 
         setLocalNames((prev) => {
           const next = { ...prev };
-          if (trimmed === '') delete next[rowKey];
-          else next[rowKey] = trimmed;
+          const codigoUp = String(codigo || '').toUpperCase();
+          const claves =
+            codigoUp === 'STARCOOL' || codigoUp === 'STARCOOL2'
+              ? [`STARCOOL-${imei}`, `STARCOOL2-${imei}`]
+              : [rowKey];
+          for (const clave of claves) {
+            if (trimmed === '') delete next[clave];
+            else next[clave] = trimmed;
+          }
           persistDeviceLocalNames(next);
           return next;
         });

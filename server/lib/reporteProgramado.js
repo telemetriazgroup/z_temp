@@ -2,7 +2,7 @@ import nodemailer from 'nodemailer';
 import { query } from './db.js';
 import { readJson, writeJson, uid } from './store.js';
 import { getSmtpConfig } from './smtpRepository.js';
-import { getDeviceNameByImei } from './deviceNamesRepository.js';
+import { getDeviceNameByRowKey } from './deviceNamesRepository.js';
 import { getUserByUsername } from './usersRepository.js';
 import { resolveUserEffectiveImeis } from './gruposEquiposRepository.js';
 

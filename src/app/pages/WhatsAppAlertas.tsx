@@ -10,6 +10,7 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { digitosTelefono, formatoTelefono, imagenGuiaAsistente } from '../modules/wa/guiaAsistente';
+import { AuditoriaAlertasGrupo } from './AuditoriaAlertasGrupo';
 
 const BASE = import.meta.env.VITE_CORREO_API_BASE ?? '/reefer/api/correo';
 
@@ -112,6 +113,8 @@ export default function WhatsAppAlertas() {
   const [hasta, setHasta] = useState('');
   const [espera, setEspera] = useState('2');
   const esperaTocada = useRef(false);
+  const [telefonoDesarrollo, setTelefonoDesarrollo] = useState('');
+  const telefonoTocado = useRef(false);
   const [grupos, setGrupos] = useState<GrupoWa[]>([]);
   const [historial, setHistorial] = useState<HistorialGrupo[]>([]);
   const [grupoAbierto, setGrupoAbierto] = useState('');
@@ -124,10 +127,13 @@ export default function WhatsAppAlertas() {
   const numeroTocado = useRef(false);
 
   const cargarEstado = useCallback(async () => {
-    const estado = await api<{ data: Sesion; tiempos?: { gapChatSeg?: number } }>('/estado');
+    const estado = await api<{ data: Sesion; tiempos?: { gapChatSeg?: number; telefonoDesarrollo?: string } }>('/estado');
     setSesion(estado.data);
     if (!esperaTocada.current && estado.tiempos?.gapChatSeg != null) {
       setEspera(String(estado.tiempos.gapChatSeg));
+    }
+    if (!telefonoTocado.current && estado.tiempos?.telefonoDesarrollo != null) {
+      setTelefonoDesarrollo(estado.tiempos.telefonoDesarrollo);
     }
   }, []);
 
@@ -281,6 +287,17 @@ export default function WhatsAppAlertas() {
     }
   }
 
+  async function guardarTelefonoInterno() {
+    try {
+      await api('/ajustes', { method: 'PUT', body: JSON.stringify({ telefonoDesarrollo }) });
+      telefonoTocado.current = false;
+      toast.success(telefonoDesarrollo.trim() ? 'Número interno guardado' : 'Número interno quitado');
+      await cargarEstado();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'No se pudo guardar el número');
+    }
+  }
+
   async function accion(path: string, ok: string) {
     try {
       await api(path, { method: 'POST' });
@@ -309,6 +326,7 @@ export default function WhatsAppAlertas() {
       <Tabs defaultValue="configuracion">
         <TabsList>
           <TabsTrigger value="configuracion">Configuración</TabsTrigger>
+          <TabsTrigger value="auditoria">Alertas del grupo</TabsTrigger>
           <TabsTrigger value="historial">Historial</TabsTrigger>
         </TabsList>
 
@@ -402,6 +420,29 @@ export default function WhatsAppAlertas() {
               <span className="text-sm text-muted-foreground">segundos</span>
               <Button variant="outline" onClick={() => guardarEspera()}>
                 Guardar
+              </Button>
+            </div>
+          </section>
+
+          <section className="rounded-lg border p-4 space-y-2">
+            <h2 className="font-semibold">Aviso interno de cobertura</h2>
+            <p className="text-sm text-muted-foreground">
+              Número de un integrante del equipo de desarrollo. Cuando un equipo no tiene información actualizada,
+              el grupo recibe cobertura inestable y este número recibe un aviso interno. No es un aviso al cliente.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                className="w-52"
+                inputMode="numeric"
+                placeholder="51987654321"
+                value={telefonoDesarrollo}
+                onChange={(e) => {
+                  telefonoTocado.current = true;
+                  setTelefonoDesarrollo(e.target.value);
+                }}
+              />
+              <Button variant="outline" onClick={() => void guardarTelefonoInterno()}>
+                Guardar número
               </Button>
             </div>
           </section>
@@ -804,6 +845,10 @@ export default function WhatsAppAlertas() {
               )}
             </div>
           </section>
+        </TabsContent>
+
+        <TabsContent value="auditoria" className="space-y-4">
+          <AuditoriaAlertasGrupo />
         </TabsContent>
 
         <TabsContent value="historial">

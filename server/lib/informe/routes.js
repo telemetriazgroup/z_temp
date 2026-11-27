@@ -4,7 +4,7 @@ import path from 'path';
 import { ensureUserRegistry, getUserByUsername } from '../usersRepository.js';
 import { loadCurrentDispositivos } from '../dashboard/fleetStore.js';
 import { filterDispositivosForUser } from '../dashboard/snapshot.js';
-import { getDeviceNameByImei, getDeviceNameByRowKey } from '../deviceNamesRepository.js';
+import { getDeviceNameByRowKey, tieneNombreEnOtraFamilia } from '../deviceNamesRepository.js';
 import { getInformeJob, informeFilePath, startInformeJob } from './generador.js';
 
 function actorFrom(req) {
