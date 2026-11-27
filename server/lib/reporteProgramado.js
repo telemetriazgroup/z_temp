@@ -263,7 +263,7 @@ export async function buildComportamiento({ desde, hasta, imeis = null }) {
     imei: row.imei,
     codigo: row.codigo,
     rowKey: row.row_key,
-    nombre: getDeviceNameByImei(row.imei) || row.imei,
+    nombre: getDeviceNameByRowKey(row.row_key) || row.imei,
     muestras: row.muestras,
     horasOnline: horasDeMuestras(row.online),
     horasWait: horasDeMuestras(row.wait),

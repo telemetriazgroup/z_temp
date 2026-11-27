@@ -138,7 +138,7 @@ export async function buildExternalAlertMonitor(options = {}) {
       const evalCiclo = evalByRowKey.get(rowKey) ?? null;
       const nombreAsignado =
         assignment.nombrePlataforma?.trim() ||
-        getDeviceNameByImei(assignment.imei) ||
+        getDeviceNameByRowKey(rowKey) ||
         assignment.descripcionEquipo ||
         null;
 

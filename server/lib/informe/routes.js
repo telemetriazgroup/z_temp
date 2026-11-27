@@ -15,12 +15,16 @@ function actorFrom(req) {
 }
 
 function nombreTelemetria(actor, device) {
+  const codigo = device.codigo ? String(device.codigo).toUpperCase() : '';
+  const rowKey = codigo ? `${codigo}-${device.imei}` : device.imei;
+  const porFila = getDeviceNameByRowKey(rowKey);
+  if (porFila) return porFila;
+  if (tieneNombreEnOtraFamilia(codigo, device.imei)) return null;
   const perfil = actor?.deviceNames?.[device.imei];
-  if (typeof perfil === 'string' && perfil.trim() && perfil.trim() !== 'SIN ASIGNAR') {
+  if (typeof perfil === 'string' && perfil.trim() && perfil.trim().toUpperCase() !== 'SIN ASIGNAR') {
     return perfil.trim();
   }
-  const rowKey = device.codigo ? `${String(device.codigo).toUpperCase()}-${device.imei}` : device.imei;
-  return getDeviceNameByRowKey(rowKey) || getDeviceNameByImei(device.imei) || null;
+  return null;
 }
 
 function dispositivoVisible(actor, codigo, imei) {

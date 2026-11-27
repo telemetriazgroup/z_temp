@@ -104,6 +104,39 @@ export function userMayAccessDispositivo(
   return allowed.includes(dispositivo.codigo);
 }
 
+function nombreLocalLimpio(value: string | undefined): string | null {
+  const s = value?.trim() ?? '';
+  if (!s || s === '—' || s.toUpperCase() === 'SIN ASIGNAR') return null;
+  return s;
+}
+
+/** StarCool y StarCool2 comparten el nombre guardado en el navegador. Túnel y ThermoKing no. */
+function nombreLocalCompartido(
+  localNames: Record<string, string>,
+  imei: string,
+  rowKey: string
+): string | null {
+  const directo = nombreLocalLimpio(localNames[rowKey]);
+  if (directo) return directo;
+  const dash = rowKey.indexOf('-');
+  const codigo = (dash >= 0 ? rowKey.slice(0, dash) : '').toUpperCase();
+  const id = (dash >= 0 ? rowKey.slice(dash + 1) : imei).trim();
+  if (!id) return null;
+  if (codigo === 'STARCOOL' || codigo === 'STARCOOL2') {
+    return (
+      nombreLocalLimpio(localNames[`STARCOOL-${id}`]) ||
+      nombreLocalLimpio(localNames[`STARCOOL2-${id}`])
+    );
+  }
+  if (codigo === 'TERMOKING' || codigo === 'THERMOKING') {
+    return (
+      nombreLocalLimpio(localNames[`TERMOKING-${id}`]) ||
+      nombreLocalLimpio(localNames[`THERMOKING-${id}`])
+    );
+  }
+  return null;
+}
+
 export function displayNameForDevice(
   user: User | null,
   imei: string,
